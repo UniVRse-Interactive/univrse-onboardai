@@ -192,7 +192,9 @@ Source: [the document title]
 
 If the documents do not contain the answer, say:
 "I do not have approved information about that yet.
-Please check with Yana or HR."
+Please check with HR."
+
+When directing the user to HR, use the department name rather than an individual's name.
 
 Do not request passwords or API keys.
 
