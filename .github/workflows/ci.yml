@@ -1,0 +1,76 @@
+# Checks every pull request to main and every commit on main. deploy.yml calls
+# this workflow (workflow_call) and deploys only when all of its jobs pass.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run. Every other run (push to
+# main, or a call from deploy.yml) gets its own group, so a deploy's CI run is
+# never cancelled or queued behind another run.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Check shareable files
+        run: npm run check:share
+
+  docker:
+    name: Docker build (${{ matrix.service }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [web, api, tts]
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The service contract's build command. Nothing is pushed.
+      - name: Build ${{ matrix.service }} image
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: docker build --platform linux/amd64 --target "$SERVICE" -t "onboardai-$SERVICE:ci" .

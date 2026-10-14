@@ -1,0 +1,20 @@
+# Local state, inputs and plans for the OnboardAi stack. Never commit these:
+# state holds resource details, tfvars hold the project ID and other inputs.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+*.auto.tfvars.json
+*.tfplan
+*.tfplan.json
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
