@@ -1,0 +1,206 @@
+import * as T from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+export async function createAvatarScene(
+  container,
+  { signal, getSpeechFrame, getReducedMotion, onPhase = () => {} },
+) {
+  let renderer;
+  try {
+    renderer = new T.WebGLRenderer({
+      alpha: true,
+      antialias: true,
+      powerPreference: 'high-performance',
+    });
+  } catch {
+    throw new Error(
+      '3D rendering is unavailable on this device. You can still use chat and voice.',
+    );
+  }
+  const scene = new T.Scene(),
+    camera = new T.PerspectiveCamera(32, 1, 0.01, 20);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.toneMapping = T.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.8;
+  renderer.outputColorSpace = T.SRGBColorSpace;
+  renderer.domElement.setAttribute('aria-label', 'Alya, your original animated 3D avatar');
+  renderer.domElement.setAttribute('role', 'img');
+  container.appendChild(renderer.domElement);
+  const pmrem = new T.PMREMGenerator(renderer),
+    room = new RoomEnvironment();
+  const environment = pmrem.fromScene(room, 0.03);
+  scene.environment = environment.texture;
+  room.dispose();
+  pmrem.dispose();
+  scene.add(new T.HemisphereLight('#ffe9dc', '#4a4057', 0.16));
+  for (const [color, power, position] of [
+    ['#fff0de', 1.8, [-1, 2.8, 3]],
+    ['#d5e4ff', 0.3, [1, 1.8, 2]],
+    ['#ffe2ba', 0.6, [1, 2, -1]],
+  ]) {
+    const light = new T.DirectionalLight(color, power);
+    light.position.set(...position);
+    scene.add(light);
+  }
+  let model = null,
+    raf = 0,
+    disposed = false,
+    lastFrame = 0;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+  function resize() {
+    const { width, height } = container.getBoundingClientRect();
+    if (!width || !height) return;
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    const compact = height < 400;
+    camera.position.set(
+      0,
+      compact ? 1.73 : 1.62,
+      compact ? 1.3 : camera.aspect < 0.65 ? 2.25 : 1.95,
+    );
+    camera.lookAt(0, compact ? 1.67 : 1.57, 0);
+    camera.updateProjectionMatrix();
+  }
+  const observer = new ResizeObserver(resize);
+  observer.observe(container);
+  resize();
+  const contextLost = (event) => {
+    event.preventDefault();
+    onPhase(
+      'unavailable',
+      'The 3D view needs more graphics memory. Chat and voice are still available.',
+    );
+  };
+  renderer.domElement.addEventListener('webglcontextlost', contextLost);
+  function disposeModel(root) {
+    const materials = new Set(),
+      textures = new Set();
+    root?.traverse((o) => {
+      o.geometry?.dispose();
+      if (o.skeleton?.boneTexture) textures.add(o.skeleton.boneTexture);
+      for (const material of Array.isArray(o.material)
+        ? o.material
+        : o.material
+          ? [o.material]
+          : []) {
+        materials.add(material);
+        for (const value of Object.values(material)) if (value?.isTexture) textures.add(value);
+      }
+    });
+    textures.forEach((t) => t.dispose());
+    materials.forEach((m) => m.dispose());
+  }
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    cancelAnimationFrame(raf);
+    observer.disconnect();
+    renderer.domElement.removeEventListener('webglcontextlost', contextLost);
+    disposeModel(model);
+    environment.dispose();
+    renderer.dispose();
+    renderer.forceContextLoss();
+    renderer.domElement.remove();
+  }
+  signal.addEventListener('abort', dispose, { once: true });
+  try {
+    onPhase('loading', 'Loading your original avatar…');
+    const metadataResponse = await fetch('/avatars/alya/manifest.json', { signal });
+    if (!metadataResponse.ok) throw new Error('Avatar metadata could not load.');
+    const metadata = await metadataResponse.json();
+    const response = await fetch(
+      '/avatars/alya/alya.glb?v=' + encodeURIComponent(metadata.sha256.slice(0, 12)),
+      { signal },
+    );
+    if (!response.ok) throw new Error('The avatar file could not load.');
+    const bytes = await response.arrayBuffer();
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    onPhase('loading', 'Preparing the 3D view…');
+    const gltf = await new GLTFLoader().parseAsync(bytes, '');
+    model = gltf.scene;
+    if (signal.aborted) {
+      disposeModel(model);
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    scene.add(model);
+    const morphs = new Map();
+    model.traverse((o) => {
+      for (const material of Array.isArray(o.material)
+        ? o.material
+        : o.material
+          ? [o.material]
+          : [])
+        material.envMapIntensity = 0.25;
+      for (const [name, index] of Object.entries(o.morphTargetDictionary || {})) {
+        if (!morphs.has(name)) morphs.set(name, []);
+        morphs.get(name).push([o, index]);
+      }
+    });
+    const set = (name, value) => {
+      for (const [mesh, index] of morphs.get(name) || []) mesh.morphTargetInfluences[index] = value;
+    };
+    const mouthNames = [...morphs.keys()].filter((name) => name.startsWith('viseme_'));
+    const levels = new Map(mouthNames.map((name) => [name, 0]));
+    const head = model.getObjectByName('Head'),
+      neck = model.getObjectByName('Neck');
+    const headRest = head?.rotation.clone(),
+      neckRest = neck?.rotation.clone();
+    let nextBlink = performance.now() + 2400,
+      blinkStart = 0,
+      ready = false;
+    function tick(now) {
+      if (disposed || signal.aborted) return;
+      raf = requestAnimationFrame(tick);
+      if (now - lastFrame < 1000 / 30 || document.hidden) return;
+      const dt = Math.min(0.1, (now - lastFrame) / 1000);
+      lastFrame = now;
+      const frame = getSpeechFrame?.(now) || { speaking: false, viseme: 'sil', value: 0 };
+      for (const name of mouthNames) {
+        const target = name === 'viseme_' + frame.viseme ? frame.value : 0;
+        const next = T.MathUtils.lerp(levels.get(name), target, 1 - Math.exp(-dt * 28));
+        levels.set(name, next);
+        set(name, next);
+      }
+      if (now > nextBlink && !blinkStart) {
+        blinkStart = now;
+        nextBlink = now + 3200 + Math.random() * 2200;
+      }
+      const blink = blinkStart ? Math.max(0, Math.sin((Math.PI * (now - blinkStart)) / 230)) : 0;
+      if (blinkStart && now - blinkStart > 230) blinkStart = 0;
+      const reduced = reduce.matches || getReducedMotion?.();
+      set('eyeBlinkLeft', reduced ? 0 : blink);
+      set('eyeBlinkRight', reduced ? 0 : blink);
+      set('mouthSmileLeft', frame.speaking ? 0.035 : 0.065);
+      set('mouthSmileRight', frame.speaking ? 0.035 : 0.065);
+      if (!reduced) {
+        const seconds = now / 1000;
+        model.position.y = Math.sin(seconds * 1.4) * 0.0015;
+        if (head) {
+          head.rotation.x =
+            headRest.x +
+            Math.sin(seconds * (frame.speaking ? 3.1 : 0.7)) * (frame.speaking ? 0.014 : 0.005);
+          head.rotation.y = headRest.y + Math.sin(seconds * 0.65) * 0.012;
+        }
+        if (neck) neck.rotation.z = neckRest.z + Math.sin(seconds * 0.8) * 0.003;
+      } else {
+        model.position.y = 0;
+        if (head) head.rotation.copy(headRest);
+        if (neck) neck.rotation.copy(neckRest);
+      }
+      renderer.render(scene, camera);
+      if (!ready) {
+        ready = true;
+        onPhase('ready', 'Alya is ready');
+      }
+    }
+    raf = requestAnimationFrame(tick);
+    return { dispose };
+  } catch (error) {
+    dispose();
+    if (error.name === 'AbortError') throw error;
+    throw new Error(
+      error.message || 'The 3D avatar could not load. Chat and voice remain available.',
+    );
+  }
+}

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.cache/
+artifacts/
+.git/
+.env
+.env.*
+private/
+credentials*.json
+service-account*.json
+client_secret*.json
+application_default_credentials.json
+*.sqlite*
+*.db
+*.pem
+*.key

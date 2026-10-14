@@ -1,0 +1,135 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import {
+  readDriveKnowledge,
+  DriveKnowledgeError,
+  driveFailure,
+} from '../server/google-drive-documents.mjs';
+import { createApp } from '../server/api-routes.mjs';
+
+function driveClient(text, listing = { files: [{ id: 'doc-1', name: 'Test handbook' }] }) {
+  return {
+    request: async (options) =>
+      options.url.endsWith('/export') ? { data: text } : { data: listing },
+  };
+}
+
+test('the connected handbook size is accepted and export uses read-only text access', async () => {
+  const requests = [];
+  const client = {
+    request: async (options) => {
+      requests.push(options);
+      return options.url.endsWith('/export')
+        ? { data: 'a'.repeat(61145) }
+        : { data: { files: [{ id: 'doc-1', name: 'Test handbook' }] } };
+    },
+  };
+  const documents = await readDriveKnowledge('test-folder', { client });
+  assert.equal(documents.length, 1);
+  assert.equal(documents[0].text.length, 61145);
+  assert.match(requests[0].params.q, /'test-folder' in parents/);
+  assert.equal(requests[1].params.mimeType, 'text/plain');
+});
+
+test('empty, oversized and too-many-document errors are specific', async () => {
+  for (const [client, code] of [
+    [driveClient(''), 'DRIVE_EMPTY_DOCUMENTS'],
+    [driveClient('a'.repeat(120001)), 'DRIVE_KNOWLEDGE_TOO_LARGE'],
+    [driveClient('', { files: [] }), 'DRIVE_NO_DOCUMENTS'],
+    [driveClient('', { files: [], nextPageToken: 'another-page' }), 'DRIVE_TOO_MANY_DOCUMENTS'],
+  ]) {
+    await assert.rejects(
+      readDriveKnowledge('test-folder', { client }),
+      (error) => error instanceof DriveKnowledgeError && error.code === code,
+    );
+  }
+});
+
+test('raw Google errors and credentials are never exposed in Drive failure messages', () => {
+  const error = new Error('Bearer test-private-token');
+  error.response = { status: 403, data: { error: { message: 'test-private-token' } } };
+  const failure = driveFailure(error);
+  assert.equal(failure.code, 'DRIVE_ACCESS_DENIED');
+  assert.ok(!JSON.stringify(failure).includes('test-private-token'));
+  assert.equal(driveFailure(new Error('private-key-data')).code, 'DRIVE_UNAVAILABLE');
+});
+
+async function withServer(options, callback) {
+  const server = createApp(options).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    await callback(`http://127.0.0.1:${server.address().port}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+const ask = (url) =>
+  fetch(url + '/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question: 'What are the working hours?',
+      taskId: 'quiz-part-1',
+      speechEnabled: false,
+    }),
+  });
+
+test('chat sends Drive reference text to Gemini and returns its answer with source metadata', async () => {
+  let requestBody;
+  await withServer(
+    {
+      env: { GEMINI_API_KEY: 'test-server-key', GOOGLE_DRIVE_FOLDER_ID: 'test-folder' },
+      loadDriveKnowledge: async (folder) => {
+        assert.equal(folder, 'test-folder');
+        return [{ title: 'Test handbook', text: 'Test company hours: 10 AM to 6 PM.' }];
+      },
+      fetchImpl: async (url, options) => {
+        requestBody = JSON.parse(options.body);
+        return Response.json({
+          candidates: [
+            {
+              content: { parts: [{ text: 'Test hours are 10 AM to 6 PM. Source: Test handbook' }] },
+            },
+          ],
+        });
+      },
+    },
+    async (url) => {
+      const response = await ask(url),
+        data = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(data.mode, 'gemini');
+      assert.match(data.source, /Test handbook/);
+      assert.match(requestBody.systemInstruction.parts[0].text, /Test company hours/);
+      assert.match(requestBody.systemInstruction.parts[0].text, /reference data/);
+      assert.ok(!JSON.stringify(data).includes('test-server-key'));
+    },
+  );
+});
+
+test('Drive failures stop the Gemini request and retain a safe actionable error', async () => {
+  let called = false;
+  await withServer(
+    {
+      env: { GEMINI_API_KEY: 'test-server-key', GOOGLE_DRIVE_FOLDER_ID: 'test-folder' },
+      loadDriveKnowledge: async () => {
+        throw new DriveKnowledgeError(
+          'DRIVE_EMPTY_DOCUMENTS',
+          'The knowledge documents are empty.',
+        );
+      },
+      fetchImpl: async () => {
+        called = true;
+        throw new Error('should not call Gemini');
+      },
+    },
+    async (url) => {
+      const response = await ask(url),
+        data = await response.json();
+      assert.equal(response.status, 503);
+      assert.equal(data.code, 'DRIVE_EMPTY_DOCUMENTS');
+      assert.equal(called, false);
+    },
+  );
+});

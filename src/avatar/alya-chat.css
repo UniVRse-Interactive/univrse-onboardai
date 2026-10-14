@@ -1,0 +1,1352 @@
+.alya-page-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 25px;
+  padding: 39px 0 30px;
+}
+.alya-page-heading .uv-eyebrow {
+  margin-bottom: 17px;
+}
+.alya-page-heading h1 {
+  font-size: 45px;
+  letter-spacing: -0.055em;
+  line-height: 1.06;
+}
+.alya-page-heading > p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+  padding-bottom: 4px;
+}
+.alya-conversation-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.1fr);
+  border: 1px solid #42404b;
+  background: #17171e;
+  min-height: 680px;
+  height: min(790px, 80dvh);
+  isolation: isolate;
+}
+.alya-avatar-stage {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: #444047;
+}
+.alya-office {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(130deg, #6f726b, #c4b7a5 38%, #958b87 64%, #6b676d);
+  filter: blur(3px);
+}
+.alya-office:after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 58% 24%, #ffffff20, transparent 65%),
+    linear-gradient(0deg, #15132399, transparent 60%);
+}
+.alya-office-window {
+  position: absolute;
+  top: 0;
+  left: -15%;
+  width: 65%;
+  height: 82%;
+  background: repeating-linear-gradient(0deg, #f0e5d1 0, #e4dac3 6px, #d6cfc0 7px, #a4aa9b 8px);
+  transform: skewY(-2deg);
+  border: 15px solid #524b47;
+  box-shadow: 15px 0 25px #25232244;
+}
+.alya-office-frame {
+  position: absolute;
+  top: 14%;
+  right: 10%;
+  width: 19%;
+  height: 27%;
+  border: 9px solid #4b403a;
+  background: linear-gradient(40deg, #d6c5b2, #9b8c76 45%, #d4caba 48%, #716c5f 70%, #d0bdaa);
+  box-shadow: 0 7px 14px #29232055;
+}
+.alya-office-frame.frame-two {
+  right: 33%;
+  top: 20%;
+  height: 20%;
+  width: 14%;
+}
+.alya-office-shelf {
+  position: absolute;
+  bottom: 15%;
+  right: -5%;
+  width: 48%;
+  height: 26%;
+  background: linear-gradient(
+    0deg,
+    #3f322d 0 8%,
+    #8b7162 8% 15%,
+    #51443d 15% 85%,
+    #8b7162 85% 94%,
+    #3f322d 94%
+  );
+  border: 8px solid #8c7060;
+}
+.alya-office-plant {
+  position: absolute;
+  bottom: 35%;
+  right: 3%;
+  height: 17%;
+  width: 12%;
+  background:
+    radial-gradient(ellipse at 50% 85%, #3e4333 15%, transparent 18%),
+    radial-gradient(ellipse at 15% 45%, #4b5937 30%, transparent 34%),
+    radial-gradient(ellipse at 67% 34%, #66744b 30%, transparent 34%);
+}
+.alya-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  transition: opacity 0.45s;
+  pointer-events: none;
+}
+.alya-canvas canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+.alya-avatar-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 38%;
+  z-index: 1;
+}
+.alya-stage-top {
+  position: absolute;
+  top: 25px;
+  left: 26px;
+  right: 26px;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  z-index: 4;
+  color: #fff8eb;
+  text-shadow: 0 1px 8px #0008;
+  font-size: 8px;
+  letter-spacing: 0.12em;
+}
+.alya-original-label {
+  font-size: 7px;
+  opacity: 0.8;
+}
+.alya-stage-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  padding: 55px 27px 27px;
+  z-index: 4;
+  background: linear-gradient(transparent, #16121cd9);
+}
+.alya-avatar-name {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.alya-avatar-name strong {
+  font:
+    500 30px 'Space Grotesk',
+    sans-serif;
+  letter-spacing: -0.04em;
+}
+.alya-avatar-name small {
+  display: block;
+  font-size: 10px;
+  color: #d7cbd9;
+  margin-top: 6px;
+}
+.alya-presence {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9px;
+  color: #e9dfeb;
+  padding: 9px 12px;
+  border: 1px solid #a7a2aa55;
+  background: #201a2499;
+  white-space: nowrap;
+}
+.alya-presence.speaking {
+  border-color: #c9f28a55;
+  color: var(--mint);
+}
+.alya-wave {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
+}
+.alya-wave i {
+  display: block;
+  width: 2px;
+  height: 12px;
+  background: var(--mint);
+  animation: alya-wave 700ms ease-in-out infinite alternate;
+}
+.alya-wave i:nth-child(2) {
+  animation-delay: 120ms;
+  height: 6px;
+}
+.alya-wave i:nth-child(3) {
+  animation-delay: 320ms;
+  height: 14px;
+}
+.alya-wave i:nth-child(4) {
+  animation-delay: 200ms;
+  height: 7px;
+}
+@keyframes alya-wave {
+  to {
+    transform: scaleY(0.35);
+  }
+}
+.alya-thinking-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--pink);
+  border-radius: 50%;
+  animation: alya-pulse 1s infinite alternate;
+}
+@keyframes alya-pulse {
+  to {
+    opacity: 0.25;
+  }
+}
+.alya-model-state {
+  position: absolute;
+  top: 64px;
+  left: 26px;
+  right: 26px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  font-size: 10px;
+  line-height: 1.6;
+  background: #17121dde;
+  border: 1px solid #7d6a80;
+  padding: 12px 15px;
+  color: #e7dce7;
+}
+.alya-model-state > span:not(.alya-loader) {
+  flex: 1;
+}
+.alya-model-state button {
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--mint);
+  text-decoration: underline;
+  padding: 0;
+}
+.alya-loader {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1px solid #e6c6de33;
+  border-top-color: var(--mint);
+  border-radius: 50%;
+  animation: alya-spin 1s linear infinite;
+}
+@keyframes alya-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.alya-chat-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid #42404b;
+  background: #17151d;
+}
+.alya-chat-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 22px 25px;
+  border-bottom: 1px solid #39303f;
+  flex-shrink: 0;
+}
+.alya-chat-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.alya-chat-heading > div > svg {
+  color: var(--pink);
+}
+.alya-chat-heading h2 {
+  font-size: 23px;
+}
+.alya-new-chat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  color: #c6b5ce;
+  padding: 8px 0;
+}
+.alya-new-chat:hover {
+  color: var(--mint);
+}
+.alya-connection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 25px;
+  font-size: 9px;
+  color: #ae9cb8;
+  background: #211b28;
+  border-bottom: 1px solid #352b3d;
+  flex-shrink: 0;
+}
+.alya-no-ai-bill {
+  font-size: 6px;
+  letter-spacing: 0.06em;
+  border: 1px solid #645369;
+  color: #c7b5d0;
+  padding: 3px 4px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.alya-chat-log {
+  flex: 1;
+  min-height: 140px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #62506b transparent;
+  padding: 27px 24px 18px;
+}
+.alya-message {
+  margin-bottom: 26px;
+}
+.alya-message.user {
+  padding: 15px 18px;
+  background: #38303e;
+  border: 1px solid #514355;
+  margin-left: 40px;
+}
+.alya-message.user > span {
+  font-size: 8px;
+  letter-spacing: 0.05em;
+  color: #d69cbe;
+}
+.alya-message.user > p {
+  font-size: 13px;
+  line-height: 1.65;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.alya-message-author {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.alya-message-mark {
+  display: grid;
+  place-items: center;
+  background: #3f2537;
+  border: 1px solid #78475f;
+  width: 27px;
+  height: 27px;
+  font:
+    500 13px 'Space Grotesk',
+    sans-serif;
+  color: #f492c9;
+  flex-shrink: 0;
+}
+.alya-message-author strong {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+}
+.alya-message-author small {
+  font-size: 6px;
+  letter-spacing: 0.08em;
+  color: #a990b2;
+  margin-left: auto;
+}
+.alya-answer-body {
+  padding-left: 37px;
+}
+.alya-answer-body > p,
+.alya-passage > p {
+  font-size: 13px;
+  line-height: 1.75;
+  color: #ded3e3;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.alya-passage + .alya-passage {
+  margin-top: 18px;
+}
+.alya-answer-footer {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-top: 15px;
+}
+.alya-answer-footer > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 8px;
+  color: #9e86a9;
+  line-height: 1.5;
+  flex: 1;
+}
+.alya-answer-footer > button {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  color: #a990b2;
+}
+.alya-answer-footer > button:hover {
+  color: var(--mint);
+}
+.alya-passage details {
+  margin-top: 13px;
+  border-top: 1px solid #3c3044;
+}
+.alya-passage summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9px;
+  color: #b695c4;
+  padding: 12px 0;
+  line-height: 1.5;
+}
+.alya-passage summary::-webkit-details-marker {
+  display: none;
+}
+.alya-passage summary > svg:last-child {
+  margin-left: auto;
+}
+.alya-passage details[open] summary > svg:last-child {
+  transform: rotate(180deg);
+}
+.alya-passage details > div {
+  background: #221c29;
+  padding: 15px;
+  border-left: 2px solid #6f4773;
+}
+.alya-passage details > div > span {
+  display: block;
+  font-size: 8px;
+  color: #b293be;
+  margin-bottom: 12px;
+}
+.alya-passage details p {
+  font-size: 12px;
+  white-space: pre-wrap;
+  line-height: 1.8;
+  color: #c6b7cf;
+  overflow-wrap: anywhere;
+}
+.alya-chat-thinking {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 10px;
+  color: #b1a0ba;
+  padding: 6px 0 18px;
+}
+.alya-chat-thinking i {
+  width: 4px;
+  height: 4px;
+  background: #d083b3;
+  border-radius: 50%;
+  animation: alya-pulse 600ms infinite alternate;
+}
+.alya-chat-thinking i:nth-last-child(2) {
+  animation-delay: 200ms;
+}
+.alya-chat-thinking i:last-child {
+  animation-delay: 400ms;
+}
+.alya-suggestions {
+  padding: 0 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex-shrink: 0;
+}
+.alya-suggestions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 11px 13px;
+  border: 1px solid #4a384f;
+  font-size: 10px;
+  color: #d6bfdc;
+  text-align: left;
+  background: #251c2c;
+}
+.alya-suggestions button:hover {
+  border-color: #c177a8;
+  background: #352238;
+}
+.alya-inline-error {
+  padding: 15px 25px;
+  color: #efb4ab;
+  background: #44292b;
+}
+.alya-inline-error p {
+  font-size: 11px;
+}
+.alya-inline-error button {
+  font-size: 11px;
+  margin-top: 8px;
+  padding: 0;
+  text-decoration: underline;
+  color: #ffe4db;
+}
+.alya-message.error .alya-answer-body > p {
+  color: #efb4ab;
+  font-size: 12px;
+}
+.alya-retry {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: #f4c5e0;
+  font-size: 10px;
+  padding: 0;
+  margin-top: 13px;
+}
+.alya-voice-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 24px;
+  background: #30252a;
+  color: #e7bdaa;
+  font-size: 10px;
+  line-height: 1.65;
+  flex-shrink: 0;
+}
+.alya-voice-error > svg {
+  margin-top: 2px;
+}
+.alya-composer-area {
+  padding: 18px 24px 15px;
+  border-top: 1px solid #3d3046;
+  flex-shrink: 0;
+  position: relative;
+}
+.alya-composer {
+  border: 1px solid #65516d;
+  background: #201a26;
+  transition: border-color 0.2s;
+}
+.alya-composer:focus-within {
+  border-color: #de80b9;
+}
+.alya-question-label {
+  position: absolute;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 0;
+  margin: 0;
+}
+.alya-composer textarea {
+  background: none;
+  border: 0;
+  width: 100%;
+  padding: 15px 15px 3px;
+  margin: 0;
+  resize: none;
+  min-height: 58px;
+  max-height: 90px;
+  font-size: 12px;
+  line-height: 1.65;
+  outline: none;
+}
+.alya-composer textarea:focus-visible {
+  outline: none;
+}
+.alya-composer textarea::placeholder {
+  color: #a38aad;
+}
+.alya-composer-bottom {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 8px 8px 15px;
+}
+.alya-composer-bottom > span {
+  font-size: 7px;
+  color: #a590b0;
+  flex: 1;
+}
+.alya-send {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 34px;
+  background: var(--pink);
+  color: #190e19;
+  flex-shrink: 0;
+}
+.alya-send:not(:disabled):hover {
+  background: #ff83c3;
+}
+.alya-send.cancel {
+  background: #3d3148;
+  color: #ecbade;
+  border: 1px solid #986c8f;
+}
+.alya-voice-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 13px;
+}
+.alya-voice-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  font-size: 10px;
+  color: #a68daf;
+}
+.alya-voice-toggle.on {
+  color: var(--mint);
+}
+.alya-stop-voice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #e1b4d0;
+  font-size: 9px;
+  padding: 0;
+}
+.alya-voice-settings {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  color: #ab90b9;
+}
+.alya-voice-settings:hover {
+  color: var(--pink);
+}
+.alya-chat-caption {
+  font-size: 8px;
+  color: #8e789b;
+  line-height: 1.6;
+  margin-top: 9px;
+}
+.alya-voice-options {
+  position: absolute;
+  bottom: 102px;
+  right: 24px;
+  left: 24px;
+  padding: 20px 20px 16px;
+  background: #292030;
+  border: 1px solid #9b71a4;
+  box-shadow: 0 10px 50px #0009;
+  z-index: 8;
+}
+.alya-voice-options label {
+  font-size: 10px;
+  margin-bottom: 16px;
+}
+.alya-voice-options select {
+  font-size: 11px;
+  background: #201725;
+  border-color: #684a74;
+}
+.alya-voice-options p {
+  font-size: 9px;
+  line-height: 1.65;
+  color: #b5a0bf;
+}
+.alya-page-footnote {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 21px 0;
+}
+.alya-page-footnote > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9px;
+  color: #96889e;
+}
+.alya-page-footnote > button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  font-size: 10px;
+  color: #d5bfdc;
+}
+.alya-page-footnote > button:hover {
+  color: var(--mint);
+}
+.alya-copy-toast {
+  position: fixed;
+  bottom: 25px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 15px 20px;
+  background: #293021;
+  border: 1px solid #647446;
+  color: #dcebc1;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+.alya-page + .uv-footer {
+  margin-top: 28px;
+}
+.alya-conversation-shell {
+  min-height: 660px;
+  height: clamp(660px, calc(100dvh - 300px), 840px);
+}
+.alya-shared-voice-label {
+  padding-bottom: 16px;
+  margin-bottom: 17px;
+  border-bottom: 1px solid #604868;
+}
+.alya-shared-voice-label strong {
+  font:
+    500 17px 'Space Grotesk',
+    sans-serif;
+  color: #eed8ec;
+}
+.alya-shared-voice-label p {
+  margin-top: 8px;
+}
+.alya-voice-preparing {
+  font-size: 8px;
+  color: #b5a0bf;
+}
+@media (max-width: 1100px) {
+  .alya-conversation-shell {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
+    min-height: 660px;
+  }
+  .alya-stage-bottom {
+    padding: 50px 20px 23px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .alya-avatar-name strong {
+    font-size: 27px;
+  }
+  .alya-avatar-name small {
+    font-size: 9px;
+  }
+  .alya-presence {
+    font-size: 8px;
+  }
+  .alya-stage-top {
+    left: 20px;
+    right: 20px;
+    font-size: 7px;
+  }
+  .alya-original-label {
+    display: none;
+  }
+  .alya-chat-heading {
+    padding: 20px;
+  }
+  .alya-chat-log {
+    padding: 25px 20px 15px;
+  }
+  .alya-connection {
+    padding: 12px 20px;
+    font-size: 8px;
+  }
+  .alya-composer-area {
+    padding: 16px 20px;
+  }
+  .alya-suggestions {
+    padding: 0 20px 20px;
+  }
+  .alya-page-heading h1 {
+    font-size: 41px;
+  }
+  .alya-message-author small {
+    font-size: 5px;
+  }
+  .alya-voice-options {
+    left: 20px;
+    right: 20px;
+  }
+}
+@media (max-width: 800px) {
+  .alya-page-heading h1 {
+    font-size: 36px;
+  }
+  .alya-page-heading > p {
+    font-size: 11px;
+  }
+  .alya-page-heading .uv-eyebrow {
+    font-size: 7px;
+  }
+  .alya-conversation-shell {
+    grid-template-columns: 1fr;
+    min-height: 0;
+    height: auto;
+  }
+  .alya-avatar-stage {
+    height: 330px;
+  }
+  .alya-chat-panel {
+    border-left: 0;
+    border-top: 1px solid #42404b;
+  }
+  .alya-chat-log {
+    min-height: 190px;
+    max-height: 420px;
+  }
+  .alya-avatar-poster {
+    object-position: center 35%;
+  }
+  .alya-stage-bottom {
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    padding: 50px 23px 20px;
+  }
+  .alya-avatar-name strong {
+    font-size: 26px;
+  }
+  .alya-stage-top {
+    left: 23px;
+    right: 23px;
+    top: 22px;
+  }
+  .alya-chat-heading {
+    padding: 19px 23px;
+  }
+  .alya-chat-heading h2 {
+    font-size: 22px;
+  }
+  .alya-connection {
+    padding: 12px 23px;
+  }
+  .alya-chat-log {
+    padding: 23px;
+  }
+  .alya-message-author small {
+    font-size: 7px;
+  }
+  .alya-no-ai-bill {
+    font-size: 7px;
+  }
+  .alya-composer-area {
+    padding: 18px 23px;
+  }
+  .alya-suggestions {
+    padding: 0 23px 20px;
+  }
+  .alya-voice-options {
+    left: 23px;
+    right: 23px;
+  }
+  .alya-page-footnote {
+    flex-wrap: wrap;
+    gap: 13px;
+  }
+  .alya-model-state {
+    left: 23px;
+    right: 23px;
+    top: 58px;
+    font-size: 9px;
+  }
+  .alya-avatar-stage .alya-office-frame {
+    display: none;
+  }
+}
+@media (max-width: 540px) {
+  .alya-page-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 31px 0 24px;
+    gap: 19px;
+  }
+  .alya-page-heading h1 {
+    font-size: 35px;
+  }
+  .alya-page-heading .uv-eyebrow {
+    font-size: 7px;
+    margin-bottom: 17px;
+  }
+  .alya-page-heading > p {
+    font-size: 12px;
+    line-height: 1.7;
+    padding: 0;
+  }
+  .alya-page-heading > p br {
+    display: none;
+  }
+  .alya-avatar-stage {
+    height: 292px;
+  }
+  .alya-stage-top {
+    left: 17px;
+    right: 17px;
+    top: 18px;
+    font-size: 6px;
+  }
+  .alya-stage-bottom {
+    padding: 45px 17px 18px;
+    gap: 10px;
+  }
+  .alya-avatar-name {
+    gap: 8px;
+  }
+  .alya-avatar-name strong {
+    font-size: 23px;
+  }
+  .alya-avatar-name small {
+    font-size: 8px;
+    max-width: 107px;
+    line-height: 1.5;
+  }
+  .alya-presence {
+    font-size: 7px;
+    padding: 8px;
+    gap: 6px;
+  }
+  .alya-presence svg {
+    width: 12px;
+  }
+  .alya-model-state {
+    left: 17px;
+    right: 17px;
+    top: 46px;
+    font-size: 8px;
+    padding: 9px 10px;
+    gap: 8px;
+  }
+  .alya-chat-heading {
+    padding: 18px;
+  }
+  .alya-chat-heading h2 {
+    font-size: 22px;
+  }
+  .alya-new-chat {
+    font-size: 9px;
+  }
+  .alya-connection {
+    padding: 12px 18px;
+    font-size: 8px;
+    gap: 7px;
+  }
+  .alya-no-ai-bill {
+    font-size: 5px;
+    letter-spacing: 0;
+    padding: 3px;
+  }
+  .alya-chat-log {
+    padding: 22px 17px 12px;
+    max-height: 390px;
+    min-height: 170px;
+  }
+  .alya-message {
+    margin-bottom: 23px;
+  }
+  .alya-message.user {
+    margin-left: 22px;
+    padding: 13px 15px;
+  }
+  .alya-message.user > p {
+    font-size: 12px;
+  }
+  .alya-message-author {
+    gap: 8px;
+  }
+  .alya-message-author small {
+    font-size: 5px;
+    letter-spacing: 0;
+  }
+  .alya-message-mark {
+    width: 25px;
+    height: 25px;
+  }
+  .alya-answer-body {
+    padding-left: 33px;
+  }
+  .alya-answer-body > p,
+  .alya-passage > p {
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .alya-answer-footer > span {
+    font-size: 7px;
+  }
+  .alya-passage summary {
+    font-size: 8px;
+  }
+  .alya-passage details > div {
+    padding: 13px;
+  }
+  .alya-passage details p {
+    font-size: 11px;
+  }
+  .alya-suggestions {
+    padding: 0 17px 20px;
+  }
+  .alya-suggestions button {
+    font-size: 10px;
+    padding: 12px;
+  }
+  .alya-composer-area {
+    padding: 17px;
+  }
+  .alya-composer textarea {
+    font-size: 12px;
+    padding: 13px 13px 3px;
+    min-height: 56px;
+  }
+  .alya-composer-bottom {
+    padding-left: 13px;
+  }
+  .alya-composer-bottom > span {
+    font-size: 6px;
+  }
+  .alya-chat-caption {
+    font-size: 7px;
+  }
+  .alya-voice-options {
+    left: 17px;
+    right: 17px;
+    padding: 16px;
+  }
+  .alya-page-footnote > span {
+    font-size: 8px;
+    align-items: flex-start;
+    line-height: 1.6;
+  }
+  .alya-page-footnote > span > svg {
+    margin-top: 1px;
+  }
+  .alya-page-footnote > button {
+    font-size: 10px;
+  }
+  .alya-chat-thinking {
+    font-size: 9px;
+    gap: 7px;
+  }
+  .alya-voice-error {
+    font-size: 9px;
+    padding: 12px 17px;
+  }
+  .alya-inline-error {
+    padding: 14px 17px;
+  }
+  .alya-inline-error p {
+    font-size: 10px;
+  }
+  .alya-page + .uv-footer {
+    margin-top: 16px;
+  }
+}
+@media (max-width: 800px) {
+  .alya-conversation-shell {
+    display: flex;
+    flex-direction: column;
+  }
+  .alya-avatar-stage {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    height: 260px;
+    flex-shrink: 0;
+  }
+  .alya-chat-panel {
+    flex: 1;
+  }
+}
+@media (max-width: 540px) {
+  .alya-avatar-stage {
+    height: 240px;
+  }
+  .alya-chat-log {
+    max-height: 320px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alya-wave i,
+  .alya-loader,
+  .alya-thinking-dot,
+  .alya-chat-thinking i {
+    animation: none;
+  }
+  .alya-canvas {
+    transition: none;
+  }
+}
+.alya-memory-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 24px;
+  border-bottom: 1px solid #3d3046;
+  background: #1c1722;
+  flex-shrink: 0;
+}
+.alya-memory-bar > button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  color: #dbbfdc;
+  font-size: 10px;
+}
+.alya-memory-bar > button > span {
+  color: var(--mint);
+  font-size: 9px;
+}
+.alya-memory-bar > span {
+  font-size: 8px;
+  color: #9d88a8;
+}
+.alya-saved-chats {
+  padding: 17px 24px;
+  background: #251d2c;
+  border-bottom: 1px solid #624768;
+  flex-shrink: 0;
+}
+.alya-saved-chats > p {
+  font-size: 10px;
+  line-height: 1.7;
+  color: #bda7c8;
+  margin-bottom: 12px;
+}
+.alya-chat-list {
+  max-height: 150px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.alya-chat-list > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 9px;
+  border: 1px solid transparent;
+  color: #c6b6cf;
+  font-size: 11px;
+}
+.alya-chat-list > button > span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alya-chat-list > button > small {
+  font-size: 8px;
+  white-space: nowrap;
+  color: #9f87ab;
+}
+.alya-chat-list > button.selected {
+  border-color: #735476;
+  background: #38243a;
+  color: #f0d0e8;
+}
+.alya-chat-list > button:hover {
+  background: #33243b;
+}
+.alya-delete-chat {
+  font-size: 9px;
+  color: #e6a8b0;
+  padding: 10px 0 0;
+}
+.alya-delete-confirm {
+  margin-top: 12px;
+  border-top: 1px solid #64424f;
+  padding-top: 12px;
+}
+.alya-delete-confirm p {
+  font-size: 10px;
+  color: #eab9c4;
+  margin-bottom: 10px;
+}
+.alya-delete-confirm button {
+  font-size: 10px;
+  padding: 8px 12px;
+  border: 1px solid #845064;
+  color: #f1bdcf;
+  margin-right: 8px;
+}
+.alya-delete-confirm button:last-child {
+  color: #bda9c9;
+  border-color: #5e4568;
+}
+.alya-new-chat:disabled {
+  opacity: 0.45;
+}
+.alya-memory-bar ~ .alya-chat-log {
+  min-height: 100px;
+}
+@media (max-width: 540px) {
+  .alya-memory-bar {
+    padding: 10px 17px;
+  }
+  .alya-memory-bar > span {
+    font-size: 7px;
+  }
+  .alya-saved-chats {
+    padding: 15px 17px;
+  }
+}
+.alya-memory-control {
+  position: relative;
+  flex-shrink: 0;
+}
+.alya-memory-control .alya-saved-chats {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 7;
+  box-shadow: 0 18px 32px #0008;
+}
+.alya-chat-log {
+  min-height: 100px;
+}
+.alya-learning-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 8;
+  padding: 19px 24px;
+  background: #261e2d;
+  border: 1px solid #78567e;
+  box-shadow: 0 18px 32px #0008;
+  max-height: min(470px, 65dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  color: #eadcec;
+}
+.alya-learning-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.alya-learning-panel header > strong {
+  font:
+    500 19px 'Space Grotesk',
+    sans-serif;
+  letter-spacing: -0.03em;
+}
+.alya-learning-panel header > button {
+  padding: 5px;
+  color: #c9b2d3;
+}
+.alya-learning-panel > p {
+  font-size: 10px;
+  line-height: 1.7;
+  color: #bda7c9;
+  margin: 12px 0 16px;
+}
+.alya-learning-panel > label {
+  font-size: 10px;
+  display: block;
+  margin-bottom: 7px;
+}
+.alya-learning-panel > select {
+  width: 100%;
+  font-size: 11px;
+  background: #1c1623;
+  border: 1px solid #70517b;
+  color: #ecdaed;
+  padding: 10px;
+  outline-offset: 3px;
+}
+.alya-learning-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 13px 0 17px;
+  color: #b8a3c4;
+}
+.alya-learning-reason > svg {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.alya-learning-reason > span {
+  font-size: 9px;
+  line-height: 1.7;
+}
+.alya-learning-reason strong {
+  display: block;
+  font-size: 10px;
+  color: var(--mint);
+  font-weight: 500;
+}
+.alya-learning-reset {
+  font-size: 9px;
+  color: #edb7d7;
+  padding: 6px 0;
+  margin-right: 15px;
+}
+.alya-answer-format {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 3px 7px;
+  border: 1px solid #514158;
+  color: #bca3c7;
+  font-size: 8px;
+}
+.alya-learning-panel button:disabled {
+  opacity: 0.45;
+}
+.alya-memory-bar > button.alya-learning-toggle {
+  font-size: 9px;
+  color: var(--mint);
+}
+@media (max-width: 540px) {
+  .alya-learning-panel {
+    padding: 17px;
+  }
+  .alya-memory-bar > button.alya-learning-toggle {
+    font-size: 8px;
+  }
+}

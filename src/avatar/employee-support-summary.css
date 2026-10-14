@@ -1,0 +1,614 @@
+.alya-answer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 14px;
+}
+.alya-answer-tools button,
+.alya-answer-feedback button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid #776084;
+  color: #eddaf4;
+  background: #251d2e;
+  border-radius: 7px;
+  font-size: 11px;
+  min-height: 34px;
+}
+.alya-answer-tools button:hover {
+  border-color: #e08cbf;
+  background: #36273c;
+}
+.alya-answer-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+}
+.alya-answer-feedback > span {
+  font-size: 11px;
+  color: #ccbbd4;
+  margin-right: 3px;
+}
+.alya-answer-feedback button[aria-pressed='true'] {
+  background: #364329;
+  color: #d7f3ae;
+  border-color: #a4c77e;
+}
+.alya-answer-feedback button:disabled,
+.alya-answer-tools button:disabled {
+  opacity: 0.5;
+}
+.alya-voice-options .alya-motion-option {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-size: 12px;
+  color: #eedbf4;
+}
+.alya-motion-option input {
+  width: auto;
+  margin: 0;
+}
+.alya-support-summary {
+  margin-top: 28px;
+  border: 1px solid #514459;
+  background: linear-gradient(125deg, #211b29, #18161e);
+  border-radius: 16px;
+  padding: 26px;
+  color: #efe5f4;
+}
+.alya-support-summary > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 25px;
+}
+.alya-support-summary .uv-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #e6a0c9;
+  font-size: 10px;
+}
+.alya-support-summary h2 {
+  font-size: 27px;
+  letter-spacing: -0.04em;
+  margin: 10px 0;
+}
+.alya-support-summary header p {
+  max-width: 650px;
+  color: #c8b7d1;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.alya-support-summary > header > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #ddc1e8;
+  padding: 10px;
+}
+.alya-support-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 22px 0;
+  font-size: 11px;
+  color: #d4c5dd;
+}
+.alya-support-status > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.alya-support-status label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin: 0;
+}
+.alya-support-status input,
+.alya-report-approval input {
+  width: 17px;
+  height: 17px;
+  accent-color: #c9f28a;
+  flex-shrink: 0;
+  margin: 0;
+}
+.alya-support-description {
+  display: flex;
+  gap: 16px;
+  padding: 21px;
+  background: #33263b;
+  border: 1px solid #785482;
+  border-radius: 12px;
+}
+.alya-support-description > svg {
+  flex-shrink: 0;
+  color: #f0acd5;
+  margin-top: 3px;
+}
+.alya-support-description span {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  color: #e6b4d4;
+}
+.alya-support-description p {
+  font-size: 14px;
+  line-height: 1.8;
+  margin-top: 7px;
+  color: #f1e4f4;
+}
+.alya-support-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 20px 0;
+}
+.alya-support-stats > div {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 7px;
+  padding: 19px;
+  border: 1px solid #564460;
+  border-radius: 10px;
+  background: #221c2b;
+}
+.alya-support-stats dt {
+  font-size: 11px;
+  color: #cab5d4;
+}
+.alya-support-stats dd {
+  font:
+    500 32px 'Space Grotesk',
+    sans-serif;
+  color: #d8f7b6;
+  line-height: 1;
+  margin: 0;
+}
+.alya-support-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 26px;
+  padding: 20px 0;
+}
+.alya-support-detail-grid h3 {
+  font-size: 17px;
+  margin-bottom: 8px;
+}
+.alya-support-detail-grid p {
+  font-size: 11px;
+  color: #c1aecd;
+  line-height: 1.7;
+  margin-bottom: 15px;
+}
+.alya-format-stat {
+  display: grid;
+  grid-template-columns: 130px 1fr 28px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  font-size: 12px;
+}
+.alya-format-stat strong {
+  text-align: right;
+  font-weight: 500;
+  color: #e4f8cb;
+}
+.alya-format-stat meter {
+  width: 100%;
+  height: 9px;
+}
+.alya-format-stat meter::-webkit-meter-bar {
+  background: #45364f;
+  border: 0;
+}
+.alya-format-stat meter::-webkit-meter-optimum-value {
+  background: #c9f28a;
+}
+.alya-support-detail-grid dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #44334e;
+  padding: 10px 0;
+  font-size: 12px;
+}
+.alya-support-detail-grid dd {
+  margin: 0;
+  color: #e4f8cb;
+}
+.alya-support-detail-grid section:last-child > p {
+  margin: 13px 0 0;
+}
+.alya-support-summary footer {
+  border-top: 1px solid #5a4565;
+  padding-top: 19px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+.alya-support-summary footer p {
+  font-size: 11px;
+  color: #d9c6e1;
+  line-height: 1.7;
+  max-width: 610px;
+}
+.alya-support-summary footer small {
+  font-size: 10px;
+  color: #b8a4c4;
+  display: block;
+  margin-top: 7px;
+}
+.alya-support-summary footer > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  border: 1px solid #a9cc84;
+  color: #daf4b7;
+  background: #2d3825;
+  border-radius: 8px;
+  padding: 13px 15px;
+  white-space: nowrap;
+}
+.alya-support-summary button:disabled {
+  opacity: 0.45;
+}
+.alya-support-error {
+  color: #ffcfb7;
+  background: #492a30;
+  padding: 15px;
+  border-radius: 8px;
+  margin-top: 18px;
+  font-size: 13px;
+}
+.alya-support-error button {
+  margin-left: 12px;
+  color: #fff1e9;
+  text-decoration: underline;
+}
+.alya-report-dialog {
+  width: min(700px, calc(100vw - 28px));
+  max-height: 90dvh;
+  overflow: auto;
+  border: 1px solid #9879a5;
+  border-radius: 16px;
+  padding: 27px;
+  background: #211927;
+  color: #f0e4f7;
+  box-shadow: 0 24px 100px #0009;
+}
+.alya-report-dialog::backdrop {
+  background: #100b18bd;
+}
+.alya-report-dialog header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+.alya-report-dialog h2 {
+  font-size: 26px;
+  margin: 10px 0;
+}
+.alya-report-dialog header > button {
+  color: #ddc6e8;
+  padding: 5px;
+}
+.alya-report-dialog > p {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #d6c3e0;
+}
+.alya-report-name {
+  display: block;
+  font-size: 12px;
+  margin-top: 18px;
+}
+.alya-report-name input {
+  display: block;
+  width: 100%;
+  background: #18121f;
+  color: #f6ebf9;
+  border: 1px solid #7c598b;
+  font-size: 14px;
+  padding: 11px;
+  margin-top: 8px;
+}
+.alya-report-dialog pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+  line-height: 1.8;
+  font-family: inherit;
+  font-size: 12px;
+  background: #18121f;
+  border: 1px solid #584065;
+  padding: 18px;
+  border-radius: 9px;
+  margin: 20px 0;
+  color: #f0e4f7;
+}
+.alya-report-approval {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.alya-report-approval input {
+  margin-top: 3px;
+}
+.alya-report-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 22px;
+}
+.alya-report-actions button {
+  border: 1px solid #80608c;
+  padding: 12px 15px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: #ead3f2;
+}
+.alya-report-actions button:last-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #c9f28a;
+  color: #172010;
+  border-color: #c9f28a;
+}
+.alya-report-actions button:disabled {
+  opacity: 0.45;
+}
+.alya-page button:focus-visible,
+.alya-page summary:focus-visible,
+.alya-page input:focus-visible,
+.alya-report-dialog button:focus-visible,
+.alya-report-dialog input:focus-visible,
+.alya-report-dialog pre:focus-visible {
+  outline: 2px solid #d4f7a5;
+  outline-offset: 4px;
+}
+.alya-source-group {
+  margin-top: 15px;
+  border: 1px solid #5c4968;
+  border-radius: 8px;
+  background: #241c2c;
+}
+.alya-source-group summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  padding: 12px;
+  font-size: 11px;
+  color: #e1c8ec;
+  cursor: pointer;
+}
+.alya-source-group summary::-webkit-details-marker {
+  display: none;
+}
+.alya-source-group summary > svg:last-child {
+  margin-left: auto;
+}
+.alya-source-group section {
+  padding: 16px;
+  border-top: 1px solid #584065;
+}
+.alya-source-group h4 {
+  font-size: 13px;
+  color: #f2e5f8;
+}
+.alya-source-group small {
+  font-size: 10px;
+  color: #d1acd8;
+  display: block;
+  margin: 6px 0;
+}
+.alya-source-group section > p {
+  font-size: 12px;
+  white-space: pre-wrap;
+  line-height: 1.8;
+  color: #e0d0e8;
+}
+.alya-answer-body > p.alya-help-note {
+  font-size: 12px;
+  color: #def0c6;
+  background: #2b3523;
+  padding: 12px;
+  border: 1px solid #758b59;
+  border-radius: 8px;
+  margin-top: 14px;
+}
+.alya-help-note button {
+  display: block;
+  font-size: 12px;
+  color: #e6f8cf;
+  text-decoration: underline;
+  padding: 7px 0 0;
+}
+
+@media (max-width: 800px) {
+  .alya-support-summary {
+    padding: 22px;
+  }
+  .alya-support-detail-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .alya-support-summary footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .alya-support-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 540px) {
+  .alya-support-summary {
+    padding: 18px;
+  }
+  .alya-support-summary h2 {
+    font-size: 23px;
+  }
+  .alya-support-summary > header {
+    gap: 10px;
+  }
+  .alya-support-summary > header > button {
+    font-size: 10px;
+    padding: 5px;
+  }
+  .alya-support-description {
+    padding: 15px;
+    gap: 10px;
+  }
+  .alya-support-stats {
+    gap: 8px;
+  }
+  .alya-support-stats > div {
+    padding: 14px;
+  }
+  .alya-support-stats dt {
+    font-size: 10px;
+  }
+  .alya-report-dialog {
+    padding: 20px;
+  }
+}
+.alya-employee-overview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  margin: 20px 0;
+  padding: 20px 0;
+  border-bottom: 1px solid #594264;
+}
+.alya-employee-overview .uv-eyebrow {
+  font-size: 9px;
+  color: #dca7ce;
+}
+.alya-employee-overview ul {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+}
+.alya-employee-overview li {
+  display: flex;
+  gap: 9px;
+  margin-top: 11px;
+  font-size: 13px;
+  line-height: 1.75;
+  color: #e3d5eb;
+}
+.alya-employee-overview li svg {
+  flex-shrink: 0;
+  margin-top: 4px;
+  color: #d5edae;
+}
+.alya-employee-overview p {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #eadcf0;
+  margin-top: 13px;
+}
+.alya-employee-overview small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #bea6ca;
+  margin-top: 11px;
+}
+.alya-support-evidence {
+  margin: 10px 0 20px;
+  border: 1px solid #56435e;
+  border-radius: 9px;
+  padding: 0 16px;
+}
+.alya-support-evidence > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  font-size: 12px;
+  color: #dbbde6;
+  list-style: none;
+  padding: 13px 0;
+}
+.alya-support-evidence > summary::-webkit-details-marker {
+  display: none;
+}
+.alya-support-evidence[open] > summary svg {
+  transform: rotate(180deg);
+}
+.alya-support-evidence .alya-support-detail-grid {
+  padding-top: 10px;
+}
+.alya-chat-panel .alya-answer-body > p,
+.alya-chat-panel .alya-message.user > p {
+  font-size: 14px;
+}
+@media (max-width: 800px) {
+  .alya-employee-overview {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .alya-support-stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (max-width: 540px) {
+  .alya-support-stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .alya-support-stats > div {
+    padding: 12px 9px;
+  }
+  .alya-support-stats dd {
+    font-size: 27px;
+  }
+  .alya-support-stats dt {
+    font-size: 9px;
+  }
+  .alya-chat-panel .alya-answer-body > p,
+  .alya-chat-panel .alya-message.user > p {
+    font-size: 14px;
+  }
+}
+.alya-help-controls {
+  margin-top: 13px;
+}
+.alya-help-controls > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #e3c9ed;
+  font-size: 11px;
+  cursor: pointer;
+  list-style: none;
+  padding: 6px 0;
+}
+.alya-help-controls > summary::-webkit-details-marker {
+  display: none;
+}
+.alya-help-controls[open] > summary > svg {
+  transform: rotate(180deg);
+}
+.alya-help-controls .alya-answer-tools {
+  margin-top: 7px;
+}
