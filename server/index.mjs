@@ -3,11 +3,13 @@ import { resolve } from 'node:path';
 import express from 'express';
 import { createServer as createHttpServer } from 'node:http';
 import { createApp } from './api-routes.mjs';
+import { avatarRoute } from './avatar-route.mjs';
 import { createWindowsVoice } from './optional-windows-voice.mjs';
 import { readDriveKnowledge, driveFailure } from './google-drive-documents.mjs';
 if (existsSync('.env')) process.loadEnvFile('.env');
 let localVoice = null;
-if (!process.env.GOOGLE_CLOUD_PROJECT) {
+// K_SERVICE is set by Cloud Run, which never has a Windows voice.
+if (!process.env.GOOGLE_CLOUD_PROJECT && !process.env.K_SERVICE) {
   try {
     localVoice = await createWindowsVoice();
     if (localVoice) console.log(`Local voice ready: ${localVoice.name}`);
@@ -20,18 +22,10 @@ process.on('exit', () => {
   localVoice?.close();
   app.locals.closeChat();
 });
-// Lossless compression keeps the original 130 MiB avatar intact while reducing
-// its transfer size. Browsers decode gzip before passing the GLB to Three.js.
-app.get('/avatars/alya/alya.glb', (req, res) => {
-  res.set({
-    'Content-Type': 'model/gltf-binary',
-    'Content-Encoding': 'gzip',
-    'Cache-Control': 'public, max-age=86400',
-    Vary: 'Accept-Encoding',
-  });
-  const assetRoot = process.argv.includes('--production') ? 'dist' : 'public';
-  res.sendFile(resolve(assetRoot, 'avatars/alya/alya.glb.gz'));
-});
+app.get(
+  '/avatars/alya/alya.glb',
+  avatarRoute(process.argv.includes('--production') ? 'dist' : 'public'),
+);
 const server = createHttpServer(app);
 let vite;
 if (process.argv.includes('--production')) {
