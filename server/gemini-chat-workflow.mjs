@@ -32,6 +32,7 @@ const State = Annotation.Root({
   passages: Annotation(),
   result: Annotation(),
   learning: Annotation(),
+  timingsMs: Annotation(),
 });
 const textOf = (m) =>
   typeof m.content === 'string'
@@ -117,7 +118,9 @@ export function createConversationService({
       : '';
   const builder = new StateGraph(State)
     .addNode('remember', async (state, config) => {
-      if (state.messages.length - (state.summaryCount || 0) <= 24) return {};
+      if (state.messages.length - (state.summaryCount || 0) <= 24)
+        return { timingsMs: { summary: 0 } };
+      const started = performance.now();
       // Summarise complete user/assistant pairs, leaving a user message first
       // in the remaining Gemini conversation rather than an orphaned answer.
       const end = Math.floor((state.messages.length - 12) / 2) * 2,
@@ -136,9 +139,14 @@ export function createConversationService({
         ],
         config,
       );
-      return { summary: textOf(response), summaryCount: end };
+      return {
+        summary: textOf(response),
+        summaryCount: end,
+        timingsMs: { summary: Math.round(performance.now() - started) },
+      };
     })
     .addNode('understand', async (state, config) => {
+      const started = performance.now();
       const plan = await models.plan.invoke(
         [
           new SystemMessage(
@@ -154,7 +162,12 @@ export function createConversationService({
         plan.query.length > 1600
       )
         throw new Error('Invalid query plan');
-      return { plan, passages: [], result: null };
+      return {
+        plan,
+        passages: [],
+        result: null,
+        timingsMs: { ...state.timingsMs, interpretation: Math.round(performance.now() - started) },
+      };
     })
     .addNode('adapt', async (state) => ({
       learning: adaptLearning(state.learning, {
@@ -163,10 +176,13 @@ export function createConversationService({
       }),
     }))
     .addNode('retrieve', async (state, config) => {
-      if (state.plan.kind !== 'company') return { passages: [] };
+      if (state.plan.kind !== 'company')
+        return { passages: [], timingsMs: { ...state.timingsMs, retrieval: 0 } };
+      const started = performance.now();
       try {
         const docs = await retrieve(state.plan.query, config);
         return {
+          timingsMs: { ...state.timingsMs, retrieval: Math.round(performance.now() - started) },
           passages: docs.map((doc, i) => ({
             id: i + 1,
             title: doc.metadata.title,
@@ -180,6 +196,7 @@ export function createConversationService({
       }
     })
     .addNode('answer', async (state, config) => {
+      const started = performance.now();
       let answer,
         citations = [];
       if (state.plan.kind === 'clarify')
@@ -238,7 +255,12 @@ export function createConversationService({
         hasSources: passages.length > 0,
         kind: state.plan.kind,
       });
-      return { messages: [...state.messages, new AIMessage(answer)], result, learning };
+      return {
+        messages: [...state.messages, new AIMessage(answer)],
+        result,
+        learning,
+        timingsMs: { ...state.timingsMs, answer: Math.round(performance.now() - started) },
+      };
     })
     .addEdge(START, 'remember')
     .addEdge('remember', 'understand')
@@ -295,7 +317,7 @@ export function createConversationService({
         new HumanMessage(question),
       ];
       const result = await graph.invoke(
-        { messages, plan: null, passages: [], result: null, learning: row.learning },
+        { messages, plan: null, passages: [], result: null, learning: row.learning, timingsMs: {} },
         { configurable: { thread_id: id }, signal, recursionLimit: 14 },
       );
       signal?.throwIfAborted();
@@ -303,6 +325,7 @@ export function createConversationService({
         ...result.result,
         conversationId: id,
         latencyMs: Math.round(performance.now() - start),
+        timingsMs: result.timingsMs,
       };
       memory.save(
         owner,
@@ -320,7 +343,15 @@ export function createConversationService({
         ],
         result.learning,
       );
-      return { ...delivered, supportSummary: memory.supportSummary(owner) };
+      const supportSummary = memory.supportSummary(owner);
+      console.info(
+        'Alya reply timing (milliseconds):',
+        JSON.stringify({
+          ...result.timingsMs,
+          total: Math.round(performance.now() - start),
+        }),
+      );
+      return { ...delivered, supportSummary };
     } finally {
       release();
     }

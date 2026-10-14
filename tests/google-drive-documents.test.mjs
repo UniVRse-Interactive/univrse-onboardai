@@ -75,6 +75,101 @@ const ask = (url) =>
     }),
   });
 
+function changingDrive() {
+  const state = {
+    files: [
+      {
+        id: 'doc-1',
+        name: 'Policy',
+        version: '1',
+        modifiedTime: '2026-10-14T00:00:00Z',
+        capabilities: { canDownload: true },
+      },
+    ],
+    text: 'Current policy',
+    listings: 0,
+    exports: 0,
+    listingError: null,
+    exportError: null,
+  };
+  const client = {
+    request: async (options) => {
+      if (options.url.endsWith('/export')) {
+        state.exports++;
+        if (state.exportError) throw state.exportError;
+        return { data: state.text };
+      }
+      state.listings++;
+      assert.match(options.params.fields, /version/);
+      assert.match(options.params.fields, /canDownload/);
+      if (state.listingError) throw state.listingError;
+      return { data: { files: structuredClone(state.files) } };
+    },
+  };
+  return { state, client };
+}
+
+test('unchanged documents skip repeat exports while edits and removals are checked each turn', async () => {
+  const { state, client } = changingDrive();
+  await readDriveKnowledge('test-folder', { client });
+  assert.deepEqual(await readDriveKnowledge('test-folder', { client }), [
+    { title: 'Policy', text: 'Current policy' },
+  ]);
+  assert.equal(state.listings, 2);
+  assert.equal(state.exports, 1);
+  state.files[0].version = '2';
+  state.text = 'Updated policy';
+  assert.equal((await readDriveKnowledge('test-folder', { client }))[0].text, 'Updated policy');
+  assert.equal(state.exports, 2);
+  state.files = [];
+  await assert.rejects(readDriveKnowledge('test-folder', { client }), {
+    code: 'DRIVE_NO_DOCUMENTS',
+  });
+  assert.equal(state.listings, 4);
+});
+
+test('document snapshots remain separate for authenticated clients and folders', async () => {
+  const first = changingDrive(),
+    second = changingDrive();
+  second.state.text = 'Different account policy';
+  await readDriveKnowledge('test-folder', { client: first.client });
+  assert.equal(
+    (await readDriveKnowledge('test-folder', { client: second.client }))[0].text,
+    'Different account policy',
+  );
+  await readDriveKnowledge('another-folder', { client: first.client });
+  assert.equal(first.state.exports, 2);
+  assert.equal(second.state.exports, 1);
+});
+
+test('revoked export access and failed Drive requests cannot return an old policy', async () => {
+  const { state, client } = changingDrive();
+  await readDriveKnowledge('test-folder', { client });
+  state.files[0].capabilities.canDownload = false;
+  await assert.rejects(readDriveKnowledge('test-folder', { client }), {
+    code: 'DRIVE_DOCUMENT_RESTRICTED',
+  });
+  state.files[0].capabilities.canDownload = true;
+  state.files[0].version = '2';
+  state.exportError = new Error('Export denied');
+  await assert.rejects(readDriveKnowledge('test-folder', { client }), /Export denied/);
+  state.exportError = null;
+  state.listingError = new Error('Folder denied');
+  await assert.rejects(readDriveKnowledge('test-folder', { client }), /Folder denied/);
+  state.listingError = null;
+  state.text = 'New accessible policy';
+  assert.equal((await readDriveKnowledge('test-folder', { client }))[0].text, state.text);
+});
+
+test('missing revision or access metadata keeps full exports instead of trusting a snapshot', async () => {
+  const { state, client } = changingDrive();
+  delete state.files[0].version;
+  await readDriveKnowledge('test-folder', { client });
+  state.text = 'Edited without revision metadata';
+  assert.equal((await readDriveKnowledge('test-folder', { client }))[0].text, state.text);
+  assert.equal(state.exports, 2);
+});
+
 test('chat sends Drive reference text to Gemini and returns its answer with source metadata', async () => {
   let requestBody;
   await withServer(

@@ -4,6 +4,10 @@ const auth = new GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/drive.readonly'],
 });
 
+// Each authenticated client keeps its own small, in-memory document snapshot.
+// We still list Drive on every turn to check versions, removals and download access.
+const snapshots = new WeakMap();
+
 export class DriveKnowledgeError extends Error {
   constructor(code, message) {
     super(message);
@@ -71,7 +75,7 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
         `'${folderId}' in parents ` +
         'and trashed = false ' +
         "and mimeType = 'application/vnd.google-apps.document'",
-      fields: 'nextPageToken,files(id,name)',
+      fields: 'nextPageToken,files(id,name,version,modifiedTime,capabilities(canDownload))',
       pageSize: 5,
       orderBy: 'name',
       supportsAllDrives: true,
@@ -88,6 +92,16 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
 
   const files = listing.data.files || [];
 
+  let folders = snapshots.get(client);
+  if (!folders) {
+    folders = new Map();
+    snapshots.set(client, folders);
+  }
+  const previous = folders.get(folderId) || new Map();
+  // Drop the old snapshot before loading. Failed reads never fall back to it.
+  folders.delete(folderId);
+  const nextSnapshot = new Map();
+
   if (files.length === 0) {
     throw new DriveKnowledgeError(
       'DRIVE_NO_DOCUMENTS',
@@ -97,6 +111,24 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
 
   const documents = await Promise.all(
     files.map(async (file) => {
+      if (file.capabilities?.canDownload === false) {
+        throw new DriveKnowledgeError(
+          'DRIVE_DOCUMENT_RESTRICTED',
+          'A company document cannot be exported with the current Drive permissions. Ask the administrator to review its access.',
+        );
+      }
+      // If version/access metadata is unavailable, use the original full export.
+      const revision =
+        typeof file.version === 'string' &&
+        typeof file.modifiedTime === 'string' &&
+        file.capabilities?.canDownload === true
+          ? JSON.stringify([file.version, file.modifiedTime, file.name])
+          : null;
+      const saved = previous.get(file.id);
+      if (revision && saved?.revision === revision) {
+        nextSnapshot.set(file.id, saved);
+        return { title: file.name, text: saved.text };
+      }
       const exported = await client.request({
         url: 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(file.id) + '/export',
         timeout: 15000,
@@ -106,10 +138,9 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
         responseType: 'text',
       });
 
-      return {
-        title: file.name,
-        text: String(exported.data).trim(),
-      };
+      const text = String(exported.data).trim();
+      if (revision) nextSnapshot.set(file.id, { revision, text });
+      return { title: file.name, text };
     }),
   );
 
@@ -131,6 +162,9 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
     );
   }
 
+  // Bounded even if a development process checks several different folders.
+  if (folders.size >= 4) folders.delete(folders.keys().next().value);
+  folders.set(folderId, nextSnapshot);
   return readable;
 }
 

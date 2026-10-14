@@ -44,27 +44,34 @@ export class CompanyRetriever extends BaseRetriever {
   constructor(chunks) {
     super();
     this.chunks = chunks;
+    this.documentFrequency = new Map();
+    this.index = chunks.map((doc) => {
+      const body = words(doc.pageContent);
+      const heading = new Set(words(doc.metadata.heading || ''));
+      const frequency = new Map();
+      for (const term of body) frequency.set(term, (frequency.get(term) || 0) + 1);
+      for (const term of new Set([...body, ...heading]))
+        this.documentFrequency.set(term, (this.documentFrequency.get(term) || 0) + 1);
+      return { doc, heading, frequency, length: body.length };
+    });
   }
   async _getRelevantDocuments(query) {
     const terms = [...new Set(words(query))];
     const expanded = new Set(terms);
     for (const topic of topics)
       if (topic.some((t) => terms.includes(t))) topic.forEach((t) => expanded.add(t));
-    const ranked = this.chunks
-      .map((doc, index) => {
-        const body = words(doc.pageContent),
-          heading = new Set(words(doc.metadata.heading || ''));
+    const ranked = this.index
+      .map(({ doc, heading, frequency, length }, index) => {
         let score = 0,
           exact = 0;
         for (const term of expanded) {
-          const tf = body.filter((w) => w === term).length;
+          const tf = frequency.get(term) || 0;
           if (tf || heading.has(term)) {
-            const df = this.chunks.filter((c) => c.metadata.terms.has(term)).length;
+            const df = this.documentFrequency.get(term) || 0;
             const idf = Math.log(1 + (this.chunks.length - df + 0.5) / (df + 0.5));
             score +=
               idf *
-              (tf / (tf + 1.2 * (0.25 + (0.75 * body.length) / 230)) +
-                (heading.has(term) ? 2 : 0)) *
+              (tf / (tf + 1.2 * (0.25 + (0.75 * length) / 230)) + (heading.has(term) ? 2 : 0)) *
               (terms.includes(term) ? 1 : 0.45);
             if (terms.includes(term)) exact++;
           }
@@ -91,8 +98,8 @@ export function createKnowledgeRetriever(loadDocuments, folderId) {
   let cachedHash = '',
     cachedRetriever = null;
   return async function retrieve(query, config) {
-    // Read the approved folder again each turn: removed/edited guidance is not
-    // served indefinitely from a stale index. Only splitting is cached.
+    // The loader checks Drive every turn and reuses exports only when the
+    // document revision and current download access are confirmed unchanged.
     const documents = await loadDocuments(folderId);
     const hash = createHash('sha256').update(JSON.stringify(documents)).digest('hex');
     if (hash !== cachedHash) {

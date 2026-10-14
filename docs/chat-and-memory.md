@@ -42,7 +42,7 @@ The existing free lexical preview is still available by selecting `AI_MODE=docum
 
 ## Retrieval and information boundaries
 
-Only Google Docs directly inside the configured Drive folder are read. The current limits are five documents and 120,000 characters in total. Each company question refreshes those documents, while their local passage index is reused when unchanged. No browser-supplied Drive file IDs or chat history are accepted as a company knowledge source.
+Only Google Docs directly inside the configured Drive folder are read. The current limits are five documents and 120,000 characters in total. Each company question checks the folder listing, document revisions and current export capability. Unchanged, accessible documents reuse an in-memory text snapshot; changed documents are exported again. Missing revision/access metadata causes a full export. Removed documents disappear from the snapshot, and failed or restricted reads do not return an old policy. Snapshots are separate per authenticated Drive client and folder and are not written to disk. The local passage index is reused when unchanged. No browser-supplied Drive file IDs or chat history are accepted as a company knowledge source.
 
 Retrieval uses local term ranking, topic synonyms and Gemini's contextual query rewrite. It does **not** use vector embeddings; there are no embedding API charges. Retrieval can still miss a passage. The model is instructed to ask for detail or suggest HR when evidence is missing, and company answers without valid source references are withheld. Reference validation checks passage IDs; it does not prove that every generated sentence follows from the text. Review answers against current company policy before rollout.
 
@@ -64,6 +64,18 @@ The dependency audit currently reports seven advisory entries in the existing Ko
 | `tests/gemini-chat-workflow.test.mjs`   | Context, restart persistence, isolation, retry, source and error tests           |
 
 Implementation follows the current official [ChatGoogle integration](https://docs.langchain.com/oss/javascript/integrations/chat/google), [LangGraph memory guide](https://docs.langchain.com/oss/javascript/langgraph/add-memory) and [SQLite checkpointer](https://github.com/langchain-ai/langgraphjs/tree/main/libs/checkpoint-sqlite). It uses the recommended `@langchain/google` package rather than the older Google GenAI integration.
+
+## Response speed
+
+The normal company-answer path makes two sequential Gemini requests: interpret the question, then write a source-supported answer. Long chats occasionally add a summary request. Voice is requested separately after the written answer and does not delay it.
+
+Repeated questions now avoid exporting every unchanged Drive document. The local retriever also precomputes word counts and document frequencies instead of recalculating them inside every search. These changes preserve the ranking formula and source checks.
+
+In Gemini chat and document-search modes, the server prepares company documents in the background after startup. A failed warmup leaves the website available and normal questions retry the document load. Set `KNOWLEDGE_WARMUP=false` to disable this optional preparation. No Gemini request is made during document warmup.
+
+The server prints `Alya reply timing (milliseconds)` after a successful new answer. `summary`, `interpretation`, `retrieval`, `answer` and `total` identify where time is spent, without printing the question, documents or credentials. The response also contains `timingsMs` for development inspection. Provider latency still varies; these changes do not guarantee instant replies.
+
+A small live check with company sources took about 8.5 seconds for a cold first question and 2.8 seconds for a follow-up with the document snapshot available. Retrieval took about 5.8 seconds and 0.6 seconds respectively. These were two different questions in one session, not a controlled before/after benchmark. Startup preparation was added afterward and has not been separately benchmarked. All 56 regression tests passed, including revision, removal, access-denial and cache-isolation checks.
 
 ## Verification
 

@@ -4,6 +4,7 @@ import express from 'express';
 import { createServer as createHttpServer } from 'node:http';
 import { createApp } from './api-routes.mjs';
 import { createWindowsVoice } from './optional-windows-voice.mjs';
+import { readDriveKnowledge, driveFailure } from './google-drive-documents.mjs';
 if (existsSync('.env')) process.loadEnvFile('.env');
 let localVoice = null;
 if (!process.env.GOOGLE_CLOUD_PROJECT) {
@@ -43,9 +44,20 @@ if (process.argv.includes('--production')) {
   app.use(vite.middlewares);
 }
 const port = Number(process.env.PORT) || 3000;
-server.listen(port, process.env.HOST || '127.0.0.1', () =>
-  console.log(`OnboardAi ready at http://localhost:${port}`),
-);
+server.listen(port, process.env.HOST || '127.0.0.1', () => {
+  console.log(`OnboardAi ready at http://localhost:${port}`);
+  // Prepare company text while the page/avatar loads. Every question still
+  // checks current Drive revisions and access; startup failure never blocks the website.
+  if (
+    ['gemini-chat', 'document-search'].includes(process.env.AI_MODE) &&
+    process.env.GOOGLE_DRIVE_FOLDER_ID &&
+    process.env.KNOWLEDGE_WARMUP !== 'false'
+  ) {
+    readDriveKnowledge(process.env.GOOGLE_DRIVE_FOLDER_ID)
+      .then(() => console.info('Company document cache is ready.'))
+      .catch((error) => console.warn('Company document warmup:', driveFailure(error).code));
+  }
+});
 let stopping = false;
 async function shutdown() {
   if (stopping) return;
