@@ -31,6 +31,9 @@ jobs:
     # Workload Identity Federation only trusts refs/heads/main; skip other refs early.
     if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/ci.yml
+    with:
+      # Build all three images in CI, whatever the commit changed.
+      run-all: true
     permissions:
       contents: read
 

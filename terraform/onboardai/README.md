@@ -113,6 +113,17 @@ with the commit SHA, deploys tts, then api, then web, and smoke-tests
 `/health`, `/api/health`, `/web-health`, `/api/health` through the web proxy,
 and `/`.
 
+**CI on pull requests and pushes.** `Verify` (format check, tests, build and
+the secret scan) always runs. The three `Docker build (web|api|tts)` checks
+always report, but they build only when the change touches an image input:
+`Dockerfile`, `.dockerignore`, `package.json`, `package-lock.json`,
+`index.html`, `vite.config.*`, `server/`, `src/`, `public/` or `scripts/`.
+Otherwise they pass with a notice that the build was skipped. Pull requests
+compare against the merge base with the base branch; pushes compare with the
+previous tip. When the comparison is impossible (a new branch, a force push, a
+missing commit), the images are built. The deploy always builds all three, in
+CI and for the push.
+
 ### 6. Check
 
 ```sh
