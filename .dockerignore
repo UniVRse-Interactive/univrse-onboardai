@@ -17,3 +17,15 @@ application_default_credentials.json
 *.key
 .npmrc
 private
+worktrees
+docs
+*.md
+terraform
+.terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
+gha-creds-*.json
+.github
+.claude

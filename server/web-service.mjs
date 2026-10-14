@@ -1,0 +1,17 @@
+import { createWebApp } from './web-app.mjs';
+import { parseApiServiceUrl } from './api-proxy.mjs';
+import { loadEnvFile, parseTrustProxy, startService } from './service-runtime.mjs';
+
+loadEnvFile();
+try {
+  parseApiServiceUrl(process.env.API_SERVICE_URL);
+} catch (error) {
+  console.error(`Web service cannot start: ${error.message}`);
+  process.exit(1);
+}
+// One trusted hop: Cloud Run's front end puts the browser's IP last in X-Forwarded-For.
+const app = createWebApp({
+  apiUrl: process.env.API_SERVICE_URL,
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY, 1),
+});
+startService(app, { name: 'OnboardAi web' });
