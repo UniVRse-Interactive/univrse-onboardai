@@ -70,6 +70,9 @@ jobs:
           if [[ -z "$GOOGLE_DRIVE_FOLDER_ID" && "$AI_MODE" =~ ^(gemini-chat|document-search)$ ]]; then
             echo "::warning::GOOGLE_DRIVE_FOLDER_ID is not set; the API answers from the sample tasks, not company documents."
           fi
+          if [[ ! "$AI_MODE" =~ ^(gemini|gemini-chat)$ ]]; then
+            echo "::notice::AI_MODE=$AI_MODE: the API gets no Gemini key and answers without calling Gemini (sample content or document search)."
+          fi
           exit "$failed"
 
   images:
@@ -201,7 +204,16 @@ jobs:
           if [[ -n "$GOOGLE_DRIVE_FOLDER_ID" ]]; then
             api_env+=",GOOGLE_DRIVE_FOLDER_ID=$GOOGLE_DRIVE_FOLDER_ID"
           fi
-          deploy api "$api_env" --set-secrets="GEMINI_API_KEY=$GEMINI_SECRET:latest"
+          # Only the modes that call Gemini with an API key read GEMINI_API_KEY
+          # (server/api-routes.mjs, server/gemini-chat-workflow.mjs). The other
+          # modes get no secret at all, and --clear-secrets drops any reference an
+          # earlier revision carried, so a secret without versions cannot block them.
+          if [[ "$AI_MODE" =~ ^(gemini|gemini-chat)$ ]]; then
+            secret_flags=("--set-secrets=GEMINI_API_KEY=$GEMINI_SECRET:latest")
+          else
+            secret_flags=(--clear-secrets)
+          fi
+          deploy api "$api_env" "${secret_flags[@]}"
           api_url=$DEPLOYED_URL
 
           deploy web "NODE_ENV=production,API_SERVICE_URL=$api_url"

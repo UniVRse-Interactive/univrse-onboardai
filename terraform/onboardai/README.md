@@ -56,7 +56,11 @@ terraform apply
 State is local (`terraform.tfstate` here, gitignored). Keep it safe, and
 move it to a GCS backend before anyone else applies this module.
 
-### 2. Add the Gemini API key
+### 2. Add the Gemini API key (only for AI modes that use it)
+
+Needed only when `AI_MODE` is `gemini` or `gemini-chat`. With `demo` or
+`document-search` the deploy mounts no secret, the secret may stay empty, and
+you can skip this step.
 
 ```sh
 terraform output -raw gemini_api_key_add_command
@@ -65,7 +69,8 @@ terraform output -raw gemini_api_key_add_command
 Run the printed `gcloud secrets versions add ... --data-file=-` command, paste
 the key, press Enter, then Ctrl-D. The key never enters the shell history,
 Terraform state or this repository. The API service receives it as the
-environment variable `GEMINI_API_KEY`, from version `latest`. To rotate the key,
+environment variable `GEMINI_API_KEY`, from version `latest` (in those two
+modes only; the deploy fails at the API if the secret has no version). To rotate the key,
 add a new version and redeploy.
 
 ### 3. Share the Google Drive folder

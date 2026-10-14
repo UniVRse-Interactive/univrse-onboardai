@@ -251,6 +251,11 @@ run "cloud_run_matches_service_contract" {
   }
 
   assert {
+    condition     = length(google_artifact_registry_repository.onboardai.docker_config) == 0
+    error_message = "Do not declare docker_config: tags are mutable by default and an explicit immutable_tags = false causes a perpetual plan diff."
+  }
+
+  assert {
     condition     = alltrue([for api in ["run.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "secretmanager.googleapis.com"] : contains(keys(google_project_service.required), api) && google_project_service.required[api].disable_on_destroy == false])
     error_message = "Required APIs must be managed and never disabled on destroy."
   }

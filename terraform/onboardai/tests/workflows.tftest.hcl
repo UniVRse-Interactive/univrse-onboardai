@@ -31,6 +31,17 @@ run "deploy_flags_match_terraform" {
     error_message = "deploy.yml must mount the secret Terraform creates."
   }
 
+  # The secret is mounted only for AI modes that use the Gemini key; every other
+  # mode clears secrets, so an empty secret cannot block the first deploy.
+  assert {
+    condition = (
+      !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "deploy api \"$api_env\" --set-secrets=") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "if [[ \"$AI_MODE\" =~ ^(gemini|gemini-chat)$ ]]; then\n            secret_flags=(\"--set-secrets=GEMINI_API_KEY=$GEMINI_SECRET:latest\")\n          else\n            secret_flags=(--clear-secrets)\n          fi\n          deploy api \"$api_env\" \"$${secret_flags[@]}\"") &&
+      length(regexall("--set-secrets", file("${path.module}/../../.github/workflows/deploy.yml"))) == 1
+    )
+    error_message = "deploy.yml must pass --set-secrets for the api only when AI_MODE is gemini or gemini-chat, and --clear-secrets otherwise."
+  }
+
   assert {
     condition     = strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--service-account=\"$name-run@$GCP_PROJECT_ID.iam.gserviceaccount.com\"")
     error_message = "deploy.yml must deploy each service as onboardai-<service>-run, the accounts Terraform creates."
