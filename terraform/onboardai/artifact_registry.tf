@@ -6,11 +6,10 @@ resource "google_artifact_registry_repository" "onboardai" {
   description   = "OnboardAi Cloud Run images (web, api, tts), tagged with the git commit SHA."
   labels        = merge(local.labels, { component = "images" })
 
-  # Tags stay mutable so a re-run of the deploy workflow for the same commit can
-  # push the same SHA tag again.
-  docker_config {
-    immutable_tags = false
-  }
+  # Tags stay mutable (the API default) so a re-run of the deploy workflow for the
+  # same commit can push the same SHA tag again. There is deliberately no
+  # docker_config block: the API omits dockerConfig when immutableTags is false, so
+  # setting immutable_tags = false explicitly causes a perpetual plan diff.
 
   # Caps storage: the newest var.images_to_keep versions of each image are kept
   # (rollback targets); every other version is deleted once it is a day old. KEEP
