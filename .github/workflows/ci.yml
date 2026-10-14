@@ -1,0 +1,179 @@
+# Checks every pull request to main and every commit on main. deploy.yml calls
+# this workflow (workflow_call, run-all: true) and deploys only when all of its
+# jobs pass. Verify always runs. The Docker builds run only when a file that goes
+# into the images changed (job `changes`); otherwise each of the three Docker
+# checks still reports, with its build steps skipped.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      run-all:
+        description: Build every image even when no image input changed. deploy.yml sets it.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run. Every other run (push to
+# main, or a call from deploy.yml) gets its own group, so a deploy's CI run is
+# never cancelled or queued behind another run.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Check shareable files
+        run: npm run check:share
+
+  changes:
+    name: Detect image changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.detect.outputs.images }}
+    steps:
+      # Full commit history without file contents: enough for merge-base and
+      # name-only diffs. Not needed when run-all decides on its own.
+      - name: Check out
+        if: ${{ !inputs.run-all }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Detect changes to image inputs
+        id: detect
+        env:
+          RUN_ALL: ${{ inputs.run-all }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Image inputs: every path that can change what the Dockerfile builds.
+          # Keep in step with the Dockerfile and .dockerignore. Workflows,
+          # terraform/, docs/, *.md and .gitignore never reach an image.
+          image_inputs=(
+            Dockerfile
+            .dockerignore
+            package.json
+            package-lock.json
+            index.html
+            'vite.config.*'
+            server
+            src
+            public
+            scripts
+          )
+
+          # decide true|false REASON: writes the output and stops.
+          decide() {
+            echo "images=$1" >> "$GITHUB_OUTPUT"
+            echo "images=$1 ($2)"
+            exit 0
+          }
+
+          # Anything unexpected builds the images: a skip must be proven.
+          if [[ "$RUN_ALL" == true ]]; then
+            decide true "run-all requested"
+          fi
+          case "$EVENT_NAME" in
+            pull_request) from=$PR_BASE_SHA to=$PR_HEAD_SHA range="$PR_BASE_SHA...$PR_HEAD_SHA" ;;
+            push) from=$PUSH_BEFORE_SHA to=$PUSH_AFTER_SHA range="$PUSH_BEFORE_SHA..$PUSH_AFTER_SHA" ;;
+            *) decide true "event $EVENT_NAME has no diff range" ;;
+          esac
+          sha='^[0-9a-f]{40}$'
+          if [[ ! "$from" =~ $sha || ! "$to" =~ $sha || "$from" == 0000000000000000000000000000000000000000 ]]; then
+            decide true "no usable base commit (new branch or missing SHA)"
+          fi
+          if ! git cat-file -e "$from^{commit}" 2> /dev/null || ! git cat-file -e "$to^{commit}" 2> /dev/null; then
+            decide true "commit $from or $to is not in the fetched history"
+          fi
+          if [[ "$EVENT_NAME" == push ]] && ! git merge-base --is-ancestor "$from" "$to"; then
+            decide true "push is not a fast-forward (force push)"
+          fi
+          # pull_request: base...head diffs from the merge base (three dots).
+          if ! changed=$(git diff --name-only --no-renames "$range" -- "${image_inputs[@]}"); then
+            decide true "git diff $range failed"
+          fi
+          if [[ -n "$changed" ]]; then
+            echo "Image inputs changed in $range:"
+            echo "$changed"
+            decide true "image inputs changed"
+          fi
+          decide false "no image input changed in $range"
+
+  docker:
+    name: Docker build (${{ matrix.service }})
+    needs: changes
+    # Always true unless the run was cancelled, so the matrix expands and the
+    # checks "Docker build (web|api|tts)" always report. The steps decide.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [web, api, tts]
+    steps:
+      - name: Skip, no image input changed
+        if: needs.changes.outputs.images == 'false'
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: echo "::notice title=Docker build ($SERVICE) skipped::No file that goes into the images changed, so the image was not built."
+
+      # Builds unless `changes` positively said false (a failed or missing
+      # result builds).
+      - name: Check out
+        if: needs.changes.outputs.images != 'false'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The service contract's build command. Nothing is pushed.
+      - name: Build ${{ matrix.service }} image
+        if: needs.changes.outputs.images != 'false'
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: docker build --platform linux/amd64 --target "$SERVICE" -t "onboardai-$SERVICE:ci" .
