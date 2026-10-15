@@ -117,33 +117,39 @@ test('the servers refuse to start when accounts are on without the Firestore emu
   }
 });
 
-test('npm run hr:create refuses arguments, weak or mismatched passwords, and never prints them', async () => {
-  const env = { DATABASE_URL: 'postgresql://onboardai:synthetic-db-secret@127.0.0.1:1/onboardai' };
-  const script = 'scripts/create-hr-account.mjs';
-  const withArgument = await run(script, { env, args: ['HR-0001', 'typed-password-1'] });
-  assert.equal(withArgument.code, 1);
-  assert.match(withArgument.stderr, /takes no arguments/);
-  const cases = [
-    ['HR-0001\nshort\nshort\n', /at least 8/],
-    ['HR-00001\nhr-00001\nhr-00001\n', /same as the ID/],
-    ['HR-0001\nsynthetic-pass-1\nsynthetic-pass-2\n', /do not match/],
-    ['x\nsynthetic-pass-1\n', /3 to 32 letters/],
-  ];
-  for (const [input, message] of cases) {
-    const result = await run(script, { env, input });
-    assert.equal(result.code, 1, input);
-    assert.match(result.stderr, message);
-  }
-  // Valid piped input reaches the database; here it is unreachable, which is
-  // reported without the connection URL or the password.
-  const unreachable = await run(script, { env, input: 'HR-0001\nsynthetic-pass-1\n' });
-  assert.equal(unreachable.code, 1);
-  assert.match(unreachable.stderr, /could not be created/);
-  const printed = unreachable.stdout + unreachable.stderr;
-  assert.ok(!printed.includes('synthetic-pass-1') && !printed.includes(secret));
-  const noUrl = await run(script, { input: 'HR-0001\nsynthetic-pass-1\n' });
-  assert.match(noUrl.stderr, /Set DATABASE_URL/);
-});
+for (const [command, script, failure] of [
+  ['hr:create', 'scripts/create-hr-account.mjs', /could not be created/],
+  ['hr:reset-password', 'scripts/reset-hr-password.mjs', /could not be reset/],
+]) {
+  test(`npm run ${command} refuses arguments, weak or mismatched passwords, and never prints them`, async () => {
+    const env = {
+      DATABASE_URL: 'postgresql://onboardai:synthetic-db-secret@127.0.0.1:1/onboardai',
+    };
+    const withArgument = await run(script, { env, args: ['HR-0001', 'typed-password-1'] });
+    assert.equal(withArgument.code, 1);
+    assert.match(withArgument.stderr, new RegExp(`npm run ${command} takes no arguments`));
+    const cases = [
+      ['HR-0001\nshort\nshort\n', /at least 8/],
+      ['HR-00001\nhr-00001\nhr-00001\n', /same as the ID/],
+      ['HR-0001\nsynthetic-pass-1\nsynthetic-pass-2\n', /do not match/],
+      ['x\nsynthetic-pass-1\n', /3 to 32 letters/],
+    ];
+    for (const [input, message] of cases) {
+      const result = await run(script, { env, input });
+      assert.equal(result.code, 1, input);
+      assert.match(result.stderr, message);
+    }
+    // Valid piped input reaches the database; here it is unreachable, which is
+    // reported without the connection URL or the password.
+    const unreachable = await run(script, { env, input: 'HR-0001\nsynthetic-pass-1\n' });
+    assert.equal(unreachable.code, 1);
+    assert.match(unreachable.stderr, failure);
+    const printed = unreachable.stdout + unreachable.stderr;
+    assert.ok(!printed.includes('synthetic-pass-1') && !printed.includes(secret));
+    const noUrl = await run(script, { input: 'HR-0001\nsynthetic-pass-1\n' });
+    assert.match(noUrl.stderr, /Set DATABASE_URL/);
+  });
+}
 
 test('npm run db:migrate explains an unreachable database without printing DATABASE_URL', async () => {
   const result = await run('scripts/migrate-database.mjs', {

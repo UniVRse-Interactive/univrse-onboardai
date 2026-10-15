@@ -17,7 +17,8 @@
     "format:check": "prettier --check .",
     "db:up": "docker compose up -d --wait",
     "db:migrate": "node scripts/migrate-database.mjs",
-    "hr:create": "node scripts/create-hr-account.mjs"
+    "hr:create": "node scripts/create-hr-account.mjs",
+    "hr:reset-password": "node scripts/reset-hr-password.mjs"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.3.1",

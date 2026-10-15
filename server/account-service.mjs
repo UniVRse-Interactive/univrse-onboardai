@@ -90,7 +90,9 @@ export function createAccountService({
   }
 
   // The session for a cookie value, or null when it is malformed, unknown,
-  // expired, or its account is disabled or locked. Expired rows are removed.
+  // expired, or its account is disabled. Expired rows are removed. A lock
+  // blocks new sign-ins only: existing sessions keep working, so wrong guesses
+  // by someone else cannot sign the account holder out.
   async function session(token) {
     if (typeof token !== 'string' || !tokenPattern.test(token)) return null;
     const hash = tokenHash(token);
@@ -101,7 +103,7 @@ export function createAccountService({
       await store.deleteSession(hash);
       return null;
     }
-    if (row.status !== 'active' || lockedAt(row, at)) return null;
+    if (row.status !== 'active') return null;
     return { account: selfView(row, row.session_expires_at), tokenHash: hash };
   }
 
@@ -147,8 +149,10 @@ export function createAccountService({
   }
 
   // The signed-in account changes its own password. A wrong current password
-  // counts towards the lockout. On success every session of the account ends
-  // and a new one is returned (rotation).
+  // counts towards the lockout; reaching it keeps this session. While locked,
+  // no password is checked here (that would allow unlimited guesses with a
+  // session). On success every session of the account ends and a new one is
+  // returned (rotation).
   async function changePassword(current, body) {
     const { currentPassword, newPassword } = body || {};
     if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || !currentPassword)
@@ -156,6 +160,7 @@ export function createAccountService({
     const row = await store.findById(current.account.id);
     if (!row || row.status !== 'active') throw accountErrors.sessionExpired();
     const at = now();
+    if (lockedAt(row, at)) throw accountErrors.accountLocked();
     if (!(await hashing.verify(currentPassword, row.password_hash))) {
       await store.recordFailure(row.id, at, {
         limit: maxFailures,
@@ -168,7 +173,12 @@ export function createAccountService({
       throw accountErrors.passwordRejected('Choose a password different from your current one.');
     const fresh = newSession(at);
     const updated = await store.changePassword(row.id, await hashing.hash(newPassword), at, fresh);
-    if (!updated) throw accountErrors.sessionExpired();
+    if (!updated) {
+      // Disabled or locked since the check above.
+      const latest = await store.findById(row.id);
+      if (latest?.status === 'active' && lockedAt(latest, at)) throw accountErrors.accountLocked();
+      throw accountErrors.sessionExpired();
+    }
     return { token: fresh.token, account: selfView(updated, fresh.expiresAt), sessionMs };
   }
 

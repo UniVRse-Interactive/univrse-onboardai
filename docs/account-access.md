@@ -27,10 +27,10 @@ creates employee accounts.
 
 ## Roles
 
-| Role       | Created by                                           | Can                                                                                                                                                                     |
-| ---------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hr`       | `npm run hr:create` on the server (no forced change) | Everything an employee can, plus list, read, create and edit employees, reset their passwords and disable or enable them. HR accounts are not editable through the API. |
-| `employee` | HR, with a temporary password                        | Change their own password, read their own profile, and keep saved chats that follow them across browsers.                                                               |
+| Role       | Created by                                           | Can                                                                                                                                                                                                               |
+| ---------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hr`       | `npm run hr:create` on the server (no forced change) | Everything an employee can, plus list, read, create and edit employees, reset their passwords and disable or enable them. HR accounts are not editable through the API; `npm run hr:reset-password` recovers one. |
+| `employee` | HR, with a temporary password                        | Change their own password, read their own profile, and keep saved chats that follow them across browsers.                                                                                                         |
 
 An account created or reset by HR must choose a new password before anything else works.
 
@@ -54,7 +54,8 @@ workspaces keep their own SQLite file, as before.
 - **sessions**: `token_hash` (SHA-256 of the cookie token), `account_id`, `created_at`, `expires_at`.
 - **account_events**: `actor_id`, `target_id`, `action`, `created_at`. Actions:
   `hr_account_created`, `employee_created`, `profile_updated`, `password_reset`,
-  `account_disabled`, `account_enabled`, `password_changed`, `signed_in`, `account_locked`.
+  `account_disabled`, `account_enabled`, `password_changed`, `signed_in`, `account_locked`,
+  `hr_password_reset` (by `npm run hr:reset-password`, no actor).
   No secrets or profile values.
 
 Migrations are plain SQL files run by `npm run db:migrate`, in name order, each once, each in
@@ -86,8 +87,12 @@ about profiles name the operation and Firestore status only, never values.
   unknown) and the same database statements.
 - **Lockout**: five consecutive wrong passwords lock the account for 15 minutes; a
   successful sign-in resets the count, and after a lock ends the count starts again. A
-  wrong current password on the change-password form counts too. While locked, the
-  account's sessions are not usable either. An HR password reset clears a lock.
+  wrong current password on the change-password form counts too. A lock blocks new
+  sign-ins only: sessions that already exist keep working, so wrong guesses by someone
+  else cannot sign the account holder out, and reaching the lock from the change-password
+  form keeps that session. While locked, the change-password form checks no password and
+  answers `429 ACCOUNT_LOCKED`, so a session cannot be used to keep guessing. An HR
+  password reset (API) or `npm run hr:reset-password` clears a lock.
 - **Sessions**: a 32-byte random token in the `onboardai_account` cookie (HttpOnly,
   SameSite=Strict, Path `/api`, Secure on HTTPS or with `NODE_ENV=production`). PostgreSQL
   stores only its SHA-256. A session ends 12 hours after sign-in. Signing in replaces the
@@ -133,6 +138,13 @@ http://127.0.0.1:4000).
 
 5. `npm run dev`. The start-up log prints `Accounts: on (…)` and where saved chats go.
 
+To recover an HR account (forgotten password or a lock), run `npm run hr:reset-password`.
+It takes input the same way as `hr:create`: the HR ID, then the new password twice, never
+as arguments. It works on HR accounts only (other IDs get `No HR account with that ID.`;
+employees are reset by HR through the API). It applies the same password rules, sets the
+password with no forced change, clears failed attempts and any lock, ends every session of
+that account and records an `hr_password_reset` event with no actor.
+
 Without `DATABASE_URL` the app runs exactly as before and every account route answers
 `503 ACCOUNTS_NOT_CONFIGURED`. Database shell: `docker compose exec postgres psql -U onboardai -d onboardai`.
 
@@ -156,12 +168,12 @@ Answers every route can give:
 
 Routes that need a session check, in this order:
 
-| Status | Code                       | When                                                                                                                       |
-| ------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| 401    | `AUTH_REQUIRED`            | No `onboardai_account` cookie                                                                                              |
-| 401    | `SESSION_EXPIRED`          | The cookie's session has ended (expiry, sign-out, rotation, reset, disable, lock, forged). The response clears the cookie. |
-| 403    | `PASSWORD_CHANGE_REQUIRED` | The account must choose a new password first                                                                               |
-| 403    | `HR_ROLE_REQUIRED`         | An HR route and the account is not HR                                                                                      |
+| Status | Code                       | When                                                                                                                                                                          |
+| ------ | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 401    | `AUTH_REQUIRED`            | No `onboardai_account` cookie                                                                                                                                                 |
+| 401    | `SESSION_EXPIRED`          | The cookie's session has ended (expiry, sign-out, rotation, password change elsewhere, reset, disable, forged). A lock does not end sessions. The response clears the cookie. |
+| 403    | `PASSWORD_CHANGE_REQUIRED` | The account must choose a new password first                                                                                                                                  |
+| 403    | `HR_ROLE_REQUIRED`         | An HR route and the account is not HR                                                                                                                                         |
 
 Shapes:
 
@@ -177,19 +189,19 @@ ProfileInput    { job, contact, emergencyContact, homeAddress }  (updatedAt/upda
 ProfileSummary  { fullName, preferredName, jobTitle, department, startDate }
 ```
 
-| Method and path                       | Session                         | Request body                                             | Success                                                                                                  | Errors (besides the tables above)                                                                                          |
-| ------------------------------------- | ------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `POST /api/auth/sign-in`              | none                            | `{ username, password }`                                 | 200 `{ account: SessionAccount }` and a new cookie                                                       | 400 `SIGN_IN_INVALID` (missing or non-text fields); 401 `SIGN_IN_FAILED` (any failed sign-in)                              |
-| `GET /api/auth/session`               | optional; forced change allowed | none                                                     | 200 `{ account: SessionAccount }`, or `{ account: null }` without a cookie                               | 401 `SESSION_EXPIRED`                                                                                                      |
-| `POST /api/auth/sign-out`             | optional                        | none                                                     | 204, session deleted, cookie cleared                                                                     | none                                                                                                                       |
-| `POST /api/auth/password`             | any; forced change allowed      | `{ currentPassword, newPassword }`                       | 200 `{ account: SessionAccount }` and a new cookie                                                       | 400 `PASSWORD_CHANGE_INVALID`, `CURRENT_PASSWORD_INCORRECT`, `PASSWORD_REJECTED` (the message says which rule)             |
-| `GET /api/me/profile`                 | any                             | none                                                     | 200 `{ profile: Profile \| null }` (null for HR accounts without a profile)                              |                                                                                                                            |
-| `GET /api/hr/employees`               | HR                              | none                                                     | 200 `{ employees: [{ account: EmployeeAccount, profile: ProfileSummary \| null }] }`, by ID, at most 500 |                                                                                                                            |
-| `POST /api/hr/employees`              | HR                              | `{ username, temporaryPassword, profile: ProfileInput }` | 201 `{ employee: { account: EmployeeAccount, profile: Profile } }`                                       | 400 `EMPLOYEE_INVALID`, `USERNAME_INVALID`, `PASSWORD_REJECTED`, `PROFILE_INVALID`; 409 `USERNAME_TAKEN` (any letter case) |
-| `GET /api/hr/employees/:id`           | HR                              | none                                                     | 200 `{ employee: { account, profile: Profile \| null } }`                                                | 404 `EMPLOYEE_NOT_FOUND` (unknown, not a UUID, or an HR account)                                                           |
-| `PUT /api/hr/employees/:id/profile`   | HR                              | `{ profile: ProfileInput }` (full replacement)           | 200 `{ employee: { account, profile } }`                                                                 | 400 `PROFILE_INVALID`; 404 `EMPLOYEE_NOT_FOUND`                                                                            |
-| `POST /api/hr/employees/:id/password` | HR                              | `{ temporaryPassword }`                                  | 200 `{ account: EmployeeAccount }`: forced change set, lock cleared, sessions ended                      | 400 `PASSWORD_REJECTED`; 404 `EMPLOYEE_NOT_FOUND`                                                                          |
-| `PUT /api/hr/employees/:id/status`    | HR                              | `{ status: "active" \| "disabled" }`                     | 200 `{ account: EmployeeAccount }`; disabling ends the sessions                                          | 400 `STATUS_INVALID`; 404 `EMPLOYEE_NOT_FOUND`                                                                             |
+| Method and path                       | Session                         | Request body                                             | Success                                                                                                  | Errors (besides the tables above)                                                                                                                                                                                 |
+| ------------------------------------- | ------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/auth/sign-in`              | none                            | `{ username, password }`                                 | 200 `{ account: SessionAccount }` and a new cookie                                                       | 400 `SIGN_IN_INVALID` (missing or non-text fields); 401 `SIGN_IN_FAILED` (any failed sign-in)                                                                                                                     |
+| `GET /api/auth/session`               | optional; forced change allowed | none                                                     | 200 `{ account: SessionAccount }`, or `{ account: null }` without a cookie                               | 401 `SESSION_EXPIRED`                                                                                                                                                                                             |
+| `POST /api/auth/sign-out`             | optional                        | none                                                     | 204, session deleted, cookie cleared                                                                     | none                                                                                                                                                                                                              |
+| `POST /api/auth/password`             | any; forced change allowed      | `{ currentPassword, newPassword }`                       | 200 `{ account: SessionAccount }` and a new cookie                                                       | 400 `PASSWORD_CHANGE_INVALID`, `CURRENT_PASSWORD_INCORRECT` (counts toward the lock), `PASSWORD_REJECTED` (the message says which rule); 429 `ACCOUNT_LOCKED` (locked: no password is checked; the session stays) |
+| `GET /api/me/profile`                 | any                             | none                                                     | 200 `{ profile: Profile \| null }` (null for HR accounts without a profile)                              |                                                                                                                                                                                                                   |
+| `GET /api/hr/employees`               | HR                              | none                                                     | 200 `{ employees: [{ account: EmployeeAccount, profile: ProfileSummary \| null }] }`, by ID, at most 500 |                                                                                                                                                                                                                   |
+| `POST /api/hr/employees`              | HR                              | `{ username, temporaryPassword, profile: ProfileInput }` | 201 `{ employee: { account: EmployeeAccount, profile: Profile } }`                                       | 400 `EMPLOYEE_INVALID`, `USERNAME_INVALID`, `PASSWORD_REJECTED`, `PROFILE_INVALID`; 409 `USERNAME_TAKEN` (any letter case)                                                                                        |
+| `GET /api/hr/employees/:id`           | HR                              | none                                                     | 200 `{ employee: { account, profile: Profile \| null } }`                                                | 404 `EMPLOYEE_NOT_FOUND` (unknown, not a UUID, or an HR account)                                                                                                                                                  |
+| `PUT /api/hr/employees/:id/profile`   | HR                              | `{ profile: ProfileInput }` (full replacement)           | 200 `{ employee: { account, profile } }`                                                                 | 400 `PROFILE_INVALID`; 404 `EMPLOYEE_NOT_FOUND`                                                                                                                                                                   |
+| `POST /api/hr/employees/:id/password` | HR                              | `{ temporaryPassword }`                                  | 200 `{ account: EmployeeAccount }`: forced change set, lock cleared, sessions ended                      | 400 `PASSWORD_REJECTED`; 404 `EMPLOYEE_NOT_FOUND`                                                                                                                                                                 |
+| `PUT /api/hr/employees/:id/status`    | HR                              | `{ status: "active" \| "disabled" }`                     | 200 `{ account: EmployeeAccount }`; disabling ends the sessions                                          | 400 `STATUS_INVALID`; 404 `EMPLOYEE_NOT_FOUND`                                                                                                                                                                    |
 
 `PROFILE_INVALID` example:
 
@@ -241,6 +253,8 @@ the profile write fails or times out, nothing is kept and the same ID can be use
   the change-password form, call `POST /api/auth/password`, then fetch `/api/config` again.
 - **Expired session**: any route answering `401 SESSION_EXPIRED` (chat routes included). The
   server has already cleared the cookie; show the sign-in form again.
+- **Locked while signed in**: `POST /api/auth/password` answers `429 ACCOUNT_LOCKED`. Show
+  the message; the session still works, so keep the user signed in.
 - The cookie is HttpOnly: the browser never reads it. Same-origin `fetch` sends it.
 - Route by `account.role` after sign-in; the Employee/HR selector does not decide the role.
 
@@ -268,7 +282,9 @@ storage, expiry and deployment boundary.
 - `server/password-hashing.mjs`: scrypt hashing and password rules.
 - `server/employee-profiles.mjs`: profile validation and Firestore storage.
 - `server/database-migrations.mjs`, `server/migrations/*.sql`: the migration runner and SQL.
-- `scripts/migrate-database.mjs`, `scripts/create-hr-account.mjs`: `db:migrate` and `hr:create`.
+- `scripts/migrate-database.mjs`: `db:migrate`.
+- `scripts/create-hr-account.mjs`, `scripts/reset-hr-password.mjs`, `scripts/hr-account-tool.mjs`:
+  `hr:create`, `hr:reset-password` and their shared input and rules.
 - `src/access/LoginPage.jsx`: workspace selection, sign-in and employee sign-up forms.
 - `src/access/HrWorkspace.jsx`: automatic individual employee reports.
 - `src/access/CompanyDocumentLibrary.jsx`: upload and connected document library.

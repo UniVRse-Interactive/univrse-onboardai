@@ -53,6 +53,14 @@ export const accountErrors = {
   passwordRejected: (message) => new AccountError(400, 'PASSWORD_REJECTED', message),
   passwordChangeInvalid: () =>
     new AccountError(400, 'PASSWORD_CHANGE_INVALID', 'Enter your current and new password.'),
+  // The signed-in account is locked after repeated wrong passwords: its session
+  // still works, but no password can be checked or changed until the lock ends.
+  accountLocked: () =>
+    new AccountError(
+      429,
+      'ACCOUNT_LOCKED',
+      'Too many incorrect passwords. Wait up to 15 minutes, then try again.',
+    ),
   currentPasswordIncorrect: () =>
     new AccountError(400, 'CURRENT_PASSWORD_INCORRECT', 'The current password is incorrect.'),
   employeeInvalid: () =>

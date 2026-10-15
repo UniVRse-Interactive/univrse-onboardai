@@ -120,6 +120,7 @@ The persisted/API field named `card` remains compatible with existing chats and 
 - `check-shareable-files.mjs`: inspect the Git file list without printing secrets or publishing files.
 - `migrate-database.mjs`: apply the account database migrations (`npm run db:migrate`).
 - `create-hr-account.mjs`: create an HR account (`npm run hr:create`).
+- `reset-hr-password.mjs`: recover an HR account (`npm run hr:reset-password`).
 
 Use the `npm` commands in the README rather than remembering these file paths.
 
@@ -133,19 +134,21 @@ The existing removed pages and old standalone avatar demos stay removed. The unu
 
 HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds accounts, sessions and the audit trail; Firestore holds employee profiles and account-owned chats. See [Account access](account-access.md) for the setup, rules and API contract.
 
-| File                             | Purpose                                                                                  |
-| -------------------------------- | ---------------------------------------------------------------------------------------- |
-| `server/account-settings.mjs`    | When accounts are on, and the start-up guard (Firestore emulator off Cloud Run)          |
-| `server/account-service.mjs`     | Sign-in, sessions, lockout, password changes and HR actions                              |
-| `server/account-store.mjs`       | PostgreSQL pool, queries and transactions; code-only error logs                          |
-| `server/account-routes.mjs`      | `/api/auth`, `/api/me` and `/api/hr` routes and the `onboardai_account` cookie           |
-| `server/account-errors.mjs`      | Account error codes and messages                                                         |
-| `server/password-hashing.mjs`    | scrypt password hashes and password rules                                                |
-| `server/employee-profiles.mjs`   | Profile validation and `employeeProfiles/{accountId}` in Firestore                       |
-| `server/database-migrations.mjs` | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                |
-| `server/migrations/`             | Plain SQL migrations                                                                     |
-| `scripts/migrate-database.mjs`   | `npm run db:migrate`                                                                     |
-| `scripts/create-hr-account.mjs`  | `npm run hr:create`: the first HR account, password never shown or passed as an argument |
+| File                             | Purpose                                                                                         |
+| -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `server/account-settings.mjs`    | When accounts are on, and the start-up guard (Firestore emulator off Cloud Run)                 |
+| `server/account-service.mjs`     | Sign-in, sessions, lockout, password changes and HR actions                                     |
+| `server/account-store.mjs`       | PostgreSQL pool, queries and transactions; code-only error logs                                 |
+| `server/account-routes.mjs`      | `/api/auth`, `/api/me` and `/api/hr` routes and the `onboardai_account` cookie                  |
+| `server/account-errors.mjs`      | Account error codes and messages                                                                |
+| `server/password-hashing.mjs`    | scrypt password hashes and password rules                                                       |
+| `server/employee-profiles.mjs`   | Profile validation and `employeeProfiles/{accountId}` in Firestore                              |
+| `server/database-migrations.mjs` | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                       |
+| `server/migrations/`             | Plain SQL migrations                                                                            |
+| `scripts/migrate-database.mjs`   | `npm run db:migrate`                                                                            |
+| `scripts/create-hr-account.mjs`  | `npm run hr:create`: the first HR account, password never shown or passed as an argument        |
+| `scripts/reset-hr-password.mjs`  | `npm run hr:reset-password`: recover an HR account (new password, lock cleared, sessions ended) |
+| `scripts/hr-account-tool.mjs`    | Input (terminal without echo, or piped lines) and rules shared by both HR scripts               |
 
 ## Uploaded company guidance
 

@@ -41,7 +41,7 @@ Accounts are optional. They need Docker for PostgreSQL and the Firestore emulato
    npm run dev
    ```
 
-HR then creates employee accounts with temporary passwords; employees choose their own password at first sign-in. With these settings the server refuses to start without the emulator, so local test personal data never reaches a cloud database. Without `DATABASE_URL` the app runs as before, with guest access only. See [Account access](docs/account-access.md) for roles, rules and the API.
+HR then creates employee accounts with temporary passwords; employees choose their own password at first sign-in. `npm run hr:reset-password` recovers an HR account (asks for the HR ID and the new password twice). With these settings the server refuses to start without the emulator, so local test personal data never reaches a cloud database. Without `DATABASE_URL` the app runs as before, with guest access only. See [Account access](docs/account-access.md) for roles, rules and the API.
 
 To serve a production build locally:
 
@@ -82,20 +82,21 @@ The original avatar is kept as lossless gzip. Its transfer is about 52.4 MiB; it
 
 ## Useful commands
 
-| Command                     | Purpose                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------ |
-| `npm.cmd run dev`           | Start the local development server                                                         |
-| `npm.cmd test`              | Check chat, memory, visual answers, audio and assets                                       |
-| `npm.cmd run build`         | Build the browser website                                                                  |
-| `npm.cmd run format`        | Apply consistent, readable formatting                                                      |
-| `npm.cmd run format:check`  | Check formatting without changing files                                                    |
-| `npm.cmd run check:share`   | Check the current Git file list for private files, recognised secrets and large assets     |
-| `npm.cmd run check:search`  | Run one Vertex AI Search query and list the matching files; Google usage billing applies   |
-| `npm.cmd run check:gemini`  | Make one small Gemini request to check model access; Google usage limits and billing apply |
-| `npm.cmd run voice:prepare` | Download the voice model and generate a local sample                                       |
-| `npm.cmd run db:up`         | Start local PostgreSQL and the Firestore emulator (Docker) and wait until they are healthy |
-| `npm.cmd run db:migrate`    | Create or update the account tables; safe to repeat                                        |
-| `npm.cmd run hr:create`     | Create an HR account; the password is prompted for, never passed as an argument            |
+| Command                         | Purpose                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------ |
+| `npm.cmd run dev`               | Start the local development server                                                         |
+| `npm.cmd test`                  | Check chat, memory, visual answers, audio and assets                                       |
+| `npm.cmd run build`             | Build the browser website                                                                  |
+| `npm.cmd run format`            | Apply consistent, readable formatting                                                      |
+| `npm.cmd run format:check`      | Check formatting without changing files                                                    |
+| `npm.cmd run check:share`       | Check the current Git file list for private files, recognised secrets and large assets     |
+| `npm.cmd run check:search`      | Run one Vertex AI Search query and list the matching files; Google usage billing applies   |
+| `npm.cmd run check:gemini`      | Make one small Gemini request to check model access; Google usage limits and billing apply |
+| `npm.cmd run voice:prepare`     | Download the voice model and generate a local sample                                       |
+| `npm.cmd run db:up`             | Start local PostgreSQL and the Firestore emulator (Docker) and wait until they are healthy |
+| `npm.cmd run db:migrate`        | Create or update the account tables; safe to repeat                                        |
+| `npm.cmd run hr:create`         | Create an HR account; the password is prompted for, never passed as an argument            |
+| `npm.cmd run hr:reset-password` | Recover an HR account: new password, lock cleared, its sessions ended                      |
 
 ## Local settings and data
 

@@ -160,14 +160,15 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
       await run('sign out', 'DELETE FROM sessions WHERE token_hash = $1', [tokenHash]);
     },
 
-    // New password chosen by the account itself: clears the forced change,
-    // ends every session of the account and opens a fresh one (rotation).
+    // New password chosen by the account itself (active and unlocked): clears
+    // the forced change, ends every session of the account and opens a fresh
+    // one (rotation). Returns null if the account is disabled or locked.
     async changePassword(id, passwordHash, at, session) {
       return transaction('change password', async (query) => {
         const updated = await query(
           `UPDATE accounts SET password_hash = $3, must_change_password = false,
              failed_attempts = 0, locked_until = NULL, updated_at = $2
-           WHERE id = $1 AND status = 'active' RETURNING ${columns}`,
+           WHERE id = $1 AND ${usable} RETURNING ${columns}`,
           [id, at, passwordHash],
         );
         if (!updated.rows.length) return null;
@@ -219,6 +220,24 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
         await query('DELETE FROM sessions WHERE account_id = $1', [id]);
         await event(query, actorId, id, 'password_reset', at);
         return updated.rows[0];
+      });
+    },
+    // Recovery for an HR account (npm run hr:reset-password, no actor): a new
+    // password with no forced change, the lock cleared and every session
+    // ended. Returns null when no HR account has that ID (any letter case).
+    async resetHrPassword(username, passwordHash, at) {
+      return transaction('reset HR password', async (query) => {
+        const updated = await query(
+          `UPDATE accounts SET password_hash = $3, must_change_password = false,
+             failed_attempts = 0, locked_until = NULL, updated_at = $2
+           WHERE lower(username) = lower($1) AND role = 'hr' RETURNING ${columns}`,
+          [username, at, passwordHash],
+        );
+        const account = updated.rows[0];
+        if (!account) return null;
+        await query('DELETE FROM sessions WHERE account_id = $1', [account.id]);
+        await event(query, null, account.id, 'hr_password_reset', at);
+        return account;
       });
     },
     async setStatus(actorId, id, status, at) {

@@ -154,6 +154,69 @@ test('five consecutive wrong passwords lock the account for 15 minutes with the 
   });
 });
 
+test('a lock blocks new sign-ins only: sessions that already exist keep working', async () => {
+  await withApp(async (app) => {
+    await app.createHr('HR-0002', 'synthetic-hr-pass-2');
+    const holder = app.browser();
+    assert.equal((await holder.signIn('HR-0002', 'synthetic-hr-pass-2')).status, 200);
+    const guesser = app.browser();
+    for (let i = 0; i < 5; i++) await guesser.signIn('HR-0002', `wrong-pass-${i}`);
+    const [row] = await app.rows("SELECT locked_until FROM accounts WHERE username = 'HR-0002'");
+    assert.ok(row.locked_until > app.clock.now());
+    // Someone else's wrong guesses do not sign the account holder out.
+    const session = await holder.get('/api/auth/session');
+    assert.equal(session.status, 200);
+    assert.equal(session.body.account.username, 'HR-0002');
+    assert.equal((await holder.get('/api/hr/employees')).status, 200);
+    assert.equal(holder.cookies.has('onboardai_account'), true);
+    assert.equal((await app.rows('SELECT count(*)::int AS n FROM sessions'))[0].n, 1);
+    // New sign-ins stay blocked, even with the right password.
+    const blocked = await app.browser().signIn('HR-0002', 'synthetic-hr-pass-2');
+    assert.deepEqual([blocked.status, blocked.body], [401, failedSignIn]);
+    // Sign-out still ends the session.
+    assert.equal((await holder.post('/api/auth/sign-out')).status, 204);
+    assert.equal((await app.rows('SELECT count(*)::int AS n FROM sessions'))[0].n, 0);
+  });
+});
+
+test('wrong current passwords lock the account but keep the session; no password is checked while locked', async () => {
+  await withApp(async (app) => {
+    const hr = await app.hrBrowser();
+    const { employee, browser } = await app.readyEmployee(hr);
+    const change = (currentPassword, newPassword = 'employee-next-pass-1') =>
+      browser.post('/api/auth/password', { currentPassword, newPassword });
+    for (let i = 0; i < 5; i++) {
+      const wrong = await change(`not-my-password-${i}`);
+      assert.deepEqual([wrong.status, wrong.body.code], [400, 'CURRENT_PASSWORD_INCORRECT']);
+    }
+    const seen = (await hr.get(`/api/hr/employees/${employee.account.id}`)).body.employee.account;
+    assert.equal(seen.locked, true);
+    assert.equal(seen.lockedUntil, '2026-10-15T01:15:00.000Z');
+    // The session that reached the lock still works, chats included.
+    assert.equal((await browser.get('/api/auth/session')).status, 200);
+    assert.equal((await browser.get('/api/me/profile')).status, 200);
+    assert.equal((await browser.get('/api/config')).body.conversationMemory, true);
+    assert.equal((await browser.post('/api/conversations')).status, 201);
+    // While locked, the form neither checks nor accepts a password, so a held
+    // session cannot be used to keep guessing.
+    const verifies = app.hashing.counts.verify;
+    for (const attempt of ['employee-own-pass-1', 'another-guess-1']) {
+      const locked = await change(attempt);
+      assert.deepEqual([locked.status, locked.body.code], [429, 'ACCOUNT_LOCKED']);
+    }
+    assert.equal(app.hashing.counts.verify, verifies);
+    assert.equal((await app.browser().signIn('EMP-0001', 'employee-own-pass-1')).status, 401);
+    // After the lock ends the password can be changed, which clears the count.
+    app.clock.advance(15 * MINUTE);
+    const changed = await change('employee-own-pass-1');
+    assert.equal(changed.status, 200);
+    const [after] = await app.rows(
+      "SELECT failed_attempts, locked_until FROM accounts WHERE username = 'EMP-0001'",
+    );
+    assert.deepEqual(after, { failed_attempts: 0, locked_until: null });
+  });
+});
+
 test('sessions rotate on sign-in and password change, end after 12 hours, and sign-out deletes them', async () => {
   await withApp(async (app) => {
     const hr = await app.hrBrowser();
