@@ -32,7 +32,12 @@ export function startService(app, { name, onClose }) {
     }, 4000);
     deadline.unref();
     await new Promise((resolve) => server.close(resolve));
-    onClose?.();
+    try {
+      // Closes the saved-chat store (SQLite file or Firestore client).
+      await onClose?.();
+    } catch {
+      // Shutting down regardless.
+    }
     clearTimeout(deadline);
     process.exit(0);
   }

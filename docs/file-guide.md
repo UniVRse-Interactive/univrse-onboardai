@@ -43,7 +43,12 @@ The project stays in JavaScript and React. `.jsx` files contain React screens; `
 | `server/vertex-ai-search.mjs`           | Vertex AI Search chunk search, passages, file names and errors  |
 | `server/company-document-retriever.mjs` | Chooses Vertex AI Search or the sample guide for passages       |
 | `server/document-search.mjs`            | Search-only preview that quotes passages without Gemini         |
-| `server/saved-conversations.mjs`        | SQLite history, ownership checks, expiry and deletion           |
+| `server/chat-store.mjs`                 | Chooses Firestore or SQLite for saved chats                     |
+| `server/firestore-chat-memory.mjs`      | Firestore saved chats, support data, turn leases and expiry     |
+| `server/firestore-checkpointer.mjs`     | LangGraph checkpoints in Firestore                              |
+| `server/firestore-client.mjs`           | Firestore client, time limit and safe storage errors            |
+| `server/chat-errors.mjs`                | Chat and storage error messages shared by both stores           |
+| `server/saved-conversations.mjs`        | SQLite history, ownership checks, expiry and deletion (local)   |
 | `server/answer-style-preferences.mjs`   | Explanation preference and explicit support requests            |
 | `server/sample-onboarding-content.mjs`  | Sample/demo answers, separate from real company documents       |
 | `src/avatar/AnswerStyleSettings.jsx`    | The five explanation choices and their visible reason           |

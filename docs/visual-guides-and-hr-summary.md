@@ -45,7 +45,7 @@ The employee shares the downloaded report through the approved private HR channe
 
 - `server/answer-guide-metadata.mjs`: retained source-supported answer metadata and guide-count compatibility for saved chats.
 - `server/employee-support-tracking.mjs`: bounded interaction events, aggregate counts and summary templates.
-- `server/saved-conversations.mjs`: support-event migration, ownership, retention and transactional writes alongside existing chats.
+- `server/saved-conversations.mjs` (SQLite) and `server/firestore-chat-memory.mjs` (Firestore): support observations, ownership, retention and transactional writes alongside existing chats.
 - `src/avatar/VisualAnswerPanel.jsx`: separate visual workspace, loading state and answer selection.
 - `src/avatar/IllustratedAnswer.jsx`: picture selection, short reading, original wording, All details and keyboard controls.
 - `src/avatar/AnswerIllustrations.jsx`: original SVG subject illustrations; no stock graphics or invented application screenshots.

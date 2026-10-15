@@ -6,6 +6,7 @@ import { createApp } from './api-routes.mjs';
 import { avatarRoute } from './avatar-route.mjs';
 import { createWindowsVoice } from './optional-windows-voice.mjs';
 import { describeKnowledgeSource } from './company-document-retriever.mjs';
+import { describeChatStorage } from './chat-store.mjs';
 if (existsSync('.env')) process.loadEnvFile('.env');
 let localVoice = null;
 // K_SERVICE is set by Cloud Run, which never has a Windows voice.
@@ -42,6 +43,8 @@ server.listen(port, process.env.HOST || '127.0.0.1', () => {
   console.log(`OnboardAi ready at http://localhost:${port}`);
   if (['gemini-chat', 'document-search'].includes(process.env.AI_MODE))
     console.info(`Company knowledge: ${describeKnowledgeSource(process.env)}.`);
+  if (process.env.AI_MODE === 'gemini-chat')
+    console.info(`Saved chats: ${describeChatStorage(process.env)}.`);
 });
 let stopping = false;
 async function shutdown() {

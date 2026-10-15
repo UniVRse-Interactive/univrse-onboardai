@@ -70,13 +70,13 @@ The existing `.env`, saved chats and voice cache remain local. Git and Docker ex
 
 Company chat searches the approved company documents with Vertex AI Search. Enable it with `AI_MODE=gemini-chat` and the server-only settings in `.env`. Gemini and the search use Application Default Credentials: set `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`), set `VERTEX_SEARCH_ENGINE_ID` (and optionally `VERTEX_SEARCH_LOCATION`, default `global`) and run `gcloud auth application-default login`. Without `VERTEX_SEARCH_ENGINE_ID`, chat answers from the built-in sample onboarding guide. Never put credentials in browser code or variables beginning with `VITE_`.
 
-Successful chats are saved in SQLite and belong to an opaque browser-session cookie. The selected chat and voice preferences survive normal refreshes. The editable profile is not employee sign-in. Support summaries describe recorded requests and feedback; they do not diagnose disability or score ability. Employees review their summary before downloading it for HR.
+Successful chats are saved locally in SQLite, or in Firestore when `FIRESTORE_DATABASE_ID` is set (the cloud setting), and belong to an opaque browser-session cookie. The selected chat and voice preferences survive normal refreshes. The editable profile is not employee sign-in. Support summaries describe recorded requests and feedback; they do not diagnose disability or score ability. Employees review their summary before downloading it for HR.
 
 ## GitHub and hosting later
 
 The files are prepared locally. No repository has been uploaded and no website has been deployed. GitHub setup and sharing can be done in the next step when requested.
 
-A running version needs a Node server with enough memory for Kokoro and persistent private storage for SQLite. A static GitHub Pages site alone cannot run these backend features. The existing Dockerfile provides a starting point; its container has not been verified here.
+A running version needs a Node server with enough memory for Kokoro, and Firestore (or persistent private storage for SQLite) for saved chats. A static GitHub Pages site alone cannot run these backend features. The existing Dockerfile provides a starting point; its container has not been verified here.
 
 The company assistant currently has no employee sign-in. Its private company documents need access protection before an unrestricted online rollout. The current dependency audit also reports seven entries in the Kokoro/Transformers voice dependency tree without an automatic fix; review them during hosting preparation.
 
