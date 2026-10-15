@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Icon from '../portal/Icon';
 import OnboardAiBrand from '../brand/OnboardAiBrand';
 import './account-access.css';
@@ -7,7 +7,20 @@ export function AccessBrand() {
   return <OnboardAiBrand />;
 }
 
-function PasswordField({ id, label, confirm = false, value, onChange }) {
+export function PasswordField({
+  id,
+  label,
+  confirm = false,
+  value,
+  onChange,
+  autoComplete,
+  describedBy,
+  invalid = false,
+  placeholder,
+  minLength,
+  maxLength,
+  name,
+}) {
   const [visible, setVisible] = useState(false);
   return (
     <div className="access-field">
@@ -15,12 +28,18 @@ function PasswordField({ id, label, confirm = false, value, onChange }) {
       <div className="access-password">
         <input
           id={id}
-          name={confirm ? 'confirmPassword' : 'password'}
+          name={name || (confirm ? 'confirmPassword' : 'password')}
           type={visible ? 'text' : 'password'}
-          autoComplete={confirm || id.includes('signup') ? 'new-password' : 'current-password'}
-          placeholder={confirm ? 'Enter your password again' : 'Enter your password'}
-          minLength={id.includes('signup') ? 8 : undefined}
-          maxLength={128}
+          autoComplete={
+            autoComplete || (confirm || id.includes('signup') ? 'new-password' : 'current-password')
+          }
+          placeholder={
+            placeholder || (confirm ? 'Enter your password again' : 'Enter your password')
+          }
+          minLength={minLength ?? (id.includes('signup') ? 8 : undefined)}
+          maxLength={maxLength ?? 128}
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
           required
           value={value}
           onChange={onChange}
@@ -38,21 +57,50 @@ function PasswordField({ id, label, confirm = false, value, onChange }) {
   );
 }
 
-function AccountForm({ role, signup, onMode, onGuest }) {
+function AccountForm({ role, signup, onMode, onGuest, accounts, onSignIn, sessionNotice }) {
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState(accounts ? sessionNotice || '' : '');
+  const [isError, setIsError] = useState(false);
+  const [busy, setBusy] = useState(false);
   const noticeRef = useRef(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    if (accounts && sessionNotice) requestAnimationFrame(() => noticeRef.current?.focus());
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   const heading = signup
     ? 'Make yourself at home.'
     : role === 'hr'
       ? 'Support a better start.'
       : 'Welcome back.';
-  function announce(message) {
+  function announce(message, error = false) {
     setNotice(message);
+    setIsError(error);
     requestAnimationFrame(() => noticeRef.current?.focus());
   }
+  async function signIn(event) {
+    event.preventDefault();
+    if (busy) return;
+    const submitted = password;
+    // The password never stays in the form after a submit, whatever the result.
+    setPassword('');
+    setBusy(true);
+    setNotice('');
+    try {
+      await onSignIn(username.trim(), submitted);
+    } catch (error) {
+      if (alive.current) announce(error.message, true);
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }
   function submit(event) {
+    if (accounts) return signIn(event);
     event.preventDefault();
     if (signup && password !== confirmation) {
       announce('The passwords do not match. Please enter the same password in both fields.');
@@ -105,6 +153,10 @@ function AccountForm({ role, signup, onMode, onGuest }) {
             autoComplete="username"
             autoCapitalize="off"
             spellCheck={false}
+            value={accounts ? username : undefined}
+            onChange={accounts ? (e) => setUsername(e.target.value) : undefined}
+            aria-describedby={isError && notice ? 'access-notice' : undefined}
+            aria-invalid={isError && notice ? true : undefined}
             placeholder={role === 'hr' ? 'Enter your HR ID' : 'Enter your employee ID'}
             maxLength={64}
             pattern=".*\S.*"
@@ -121,6 +173,9 @@ function AccountForm({ role, signup, onMode, onGuest }) {
           label="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          describedBy={isError && notice ? 'access-notice' : undefined}
+          invalid={isError && !!notice}
+          maxLength={accounts ? 200 : 128}
         />
         {signup ? (
           <>
@@ -139,27 +194,43 @@ function AccountForm({ role, signup, onMode, onGuest }) {
             type="button"
             onClick={() =>
               announce(
-                'Password reset is not connected yet. Contact HR for help with your company account.',
+                accounts
+                  ? 'Ask HR to reset your password. HR will give you a temporary password.'
+                  : 'Password reset is not connected yet. Contact HR for help with your company account.',
               )
             }
           >
             Forgot password?
           </button>
         )}
-        <button className="access-submit" type="submit">
+        <button className="access-submit" type="submit" disabled={busy}>
           <span>
             {signup
               ? 'Create employee account'
-              : 'Sign in as ' + (role === 'hr' ? 'HR' : 'employee')}
+              : busy
+                ? 'Signing in…'
+                : 'Sign in as ' + (role === 'hr' ? 'HR' : 'employee')}
           </span>
           <Icon name="arrow" size={21} />
         </button>
       </form>
-      <div className="access-notice" role="status" tabIndex={-1} ref={noticeRef} hidden={!notice}>
+      <div
+        className={'access-notice' + (isError ? ' is-error' : '')}
+        id="access-notice"
+        role={isError ? 'alert' : 'status'}
+        tabIndex={-1}
+        ref={noticeRef}
+        hidden={!notice}
+      >
         <Icon name="info" size={18} />
         <p>{notice}</p>
       </div>
-      {role === 'employee' ? (
+      {accounts && role === 'employee' ? (
+        <p className="access-hr-note" id="access-ask-hr">
+          <strong>Ask HR for your account.</strong> HR creates your Employee ID and a temporary
+          password for you.
+        </p>
+      ) : role === 'employee' ? (
         <p className="access-switch-mode">
           {signup ? 'Already have an account?' : 'New to the team?'}{' '}
           <button onClick={() => onMode(signup ? 'login' : 'signup')}>
@@ -178,14 +249,24 @@ function AccountForm({ role, signup, onMode, onGuest }) {
         <span>Continue without an account</span>
         <Icon name="arrow" size={18} />
       </button>
-      <p className="access-preview-note">
-        <span className="access-preview-dot" /> Interface preview · Accounts are not connected yet.
-      </p>
+      {!accounts && (
+        <p className="access-preview-note">
+          <span className="access-preview-dot" /> Interface preview · Accounts are not connected
+          yet.
+        </p>
+      )}
     </>
   );
 }
 
-export default function LoginPage({ signup = false, navigate, onGuest }) {
+export default function LoginPage({
+  signup = false,
+  navigate,
+  onGuest,
+  accounts = false,
+  onSignIn,
+  sessionNotice = '',
+}) {
   const [role, setRole] = useState('employee');
   function changeRole(next) {
     setRole(next);
@@ -273,7 +354,10 @@ export default function LoginPage({ signup = false, navigate, onGuest }) {
           <AccountForm
             key={role + (signup ? '-signup' : '-login')}
             role={role}
-            signup={signup && role === 'employee'}
+            signup={!accounts && signup && role === 'employee'}
+            accounts={accounts}
+            onSignIn={onSignIn}
+            sessionNotice={sessionNotice}
             onMode={(mode) => navigate(mode === 'signup' ? '/signup' : '/login')}
             onGuest={onGuest}
           />

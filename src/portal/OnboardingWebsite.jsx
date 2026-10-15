@@ -6,6 +6,10 @@ import { navigation, stages, stageIntros, tasks, supportTeams } from './website-
 import LoginPage from '../access/LoginPage';
 import HrWorkspace from '../access/HrWorkspace';
 import GuestEmployeeEntry from '../access/GuestEmployeeEntry';
+import ChangePasswordPage from '../access/ChangePasswordPage';
+import MyProfilePage from '../access/MyProfilePage';
+import useAccountSession from '../access/use-account-session';
+import { landingPath, routeDecision } from '../access/account-routing.mjs';
 import './website.css';
 
 const AlyaChatPage = React.lazy(() => import('../avatar/AlyaChatPage'));
@@ -686,7 +690,7 @@ function Support({ state, onNote, onDelete, notify, initialTeam }) {
   );
 }
 
-function AssistantPage({ navigate, guestId }) {
+function AssistantPage({ navigate, guestId, accountId = '' }) {
   return (
     <React.Suspense
       fallback={
@@ -696,7 +700,11 @@ function AssistantPage({ navigate, guestId }) {
         </div>
       }
     >
-      <AlyaChatPage key={guestId || 'company'} navigate={navigate} guestId={guestId} />
+      <AlyaChatPage
+        key={(guestId || 'company') + (accountId || '')}
+        navigate={navigate}
+        guestId={guestId}
+      />
     </React.Suspense>
   );
 }
@@ -833,10 +841,22 @@ export default function OnboardingWebsite() {
     [guestPreview, setGuestPreview] = useState('');
   const mainRef = useRef(null),
     toastTimer = useRef(null);
+  const session = useAccountSession({ onNavigate: (to) => navigate(to) });
+  const account = session.account;
+  const navItems =
+    account?.role === 'employee'
+      ? [...navigation, { path: '/profile', label: 'My profile', short: 'Profile', icon: 'user' }]
+      : navigation;
+  const decision = routeDecision({
+    accounts: session.accounts,
+    loading: session.loading,
+    account,
+    path,
+  });
   const guestId = path.match(/^\/(?:guest\/employee|employee)\/([a-f0-9-]{36})$/i)?.[1];
   const assistantPath = path === '/mira' || !!guestId;
-  const chatPath = guestId || path === '/mira' ? path : '/employee';
-  const active = navigation.find((item) => item.path === (assistantPath ? '/mira' : path));
+  const chatPath = guestId || path === '/mira' ? path : account ? '/mira' : '/employee';
+  const active = navItems.find((item) => item.path === (assistantPath ? '/mira' : path));
   useEffect(() => {
     const pop = () => {
       let next = window.location.pathname;
@@ -869,7 +889,14 @@ export default function OnboardingWebsite() {
             ? 'HR workspace'
             : null;
     document.title = (accessTitle || active?.label || 'Page not found') + ' · OnboardAi';
-  }, [path]);
+  }, [path, account?.role]);
+  useEffect(() => {
+    // Sign-in state decides some landing pages; replace so Back does not loop.
+    if (decision.type !== 'redirect' || decision.to === path) return;
+    window.history.replaceState({}, '', decision.to);
+    setPath(decision.to);
+    setGuestPreview('');
+  }, [decision.type, decision.to, path]);
   useEffect(() => {
     const keys = (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
@@ -921,10 +948,30 @@ export default function OnboardingWebsite() {
   }
   const onTask = (task) => setDialog({ type: 'task', task }),
     name = state.profile.name || 'Your profile';
+  if (decision.type === 'loading' || decision.type === 'redirect')
+    return (
+      <main className="uv-empty" aria-busy="true">
+        <p role="status">Loading…</p>
+      </main>
+    );
+  if (decision.type === 'change-password')
+    return (
+      <ChangePasswordPage
+        account={account}
+        onSignOut={session.signOut}
+        onChangePassword={async (current, next) => {
+          const updated = await session.changePassword(current, next);
+          navigate(landingPath(updated));
+        }}
+      />
+    );
   if (['/', '/login', '/signup'].includes(path))
     return (
       <LoginPage
         signup={path === '/signup'}
+        accounts={session.accounts === true}
+        onSignIn={session.signIn}
+        sessionNotice={session.notice}
         navigate={navigate}
         onGuest={(role) => {
           setGuestPreview(role);
@@ -932,7 +979,8 @@ export default function OnboardingWebsite() {
         }}
       />
     );
-  if (['/hr', '/hr-preview'].includes(path)) return <HrWorkspace navigate={navigate} />;
+  if (['/hr', '/hr-preview'].includes(path))
+    return <HrWorkspace navigate={navigate} account={account} onSignOut={session.signOut} />;
   if (['/employee', '/guest/employee'].includes(path))
     return <GuestEmployeeEntry navigate={navigate} />;
   return (
@@ -954,11 +1002,22 @@ export default function OnboardingWebsite() {
           <div className="uv-header-actions">
             <span className="uv-preview-label">
               <span className="uv-small-dot mint" />
-              {guestId || guestPreview === 'employee' ? 'EMPLOYEE' : 'WORKSPACE'}
+              {guestId || guestPreview === 'employee' || account ? 'EMPLOYEE' : 'WORKSPACE'}
             </span>
-            <Link to="/login" navigate={navigate} className="uv-access-link">
-              Back to sign in <Icon name="arrow" size={14} />
-            </Link>
+            {account ? (
+              <>
+                <span className="uv-account-id">
+                  Signed in as <strong>{account.username}</strong>
+                </span>
+                <button type="button" className="uv-access-link" onClick={session.signOut}>
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <Link to="/login" navigate={navigate} className="uv-access-link">
+                Back to sign in <Icon name="arrow" size={14} />
+              </Link>
+            )}
             <button
               className="uv-icon-button"
               aria-label="Search your workspace"
@@ -994,7 +1053,7 @@ export default function OnboardingWebsite() {
           className={'uv-navigation ' + (mobile ? 'is-open' : '')}
           aria-label="Main navigation"
         >
-          {navigation.map((item, index) => (
+          {navItems.map((item, index) => (
             <Link
               to={item.path === '/mira' ? chatPath : item.path}
               navigate={navigate}
@@ -1032,8 +1091,10 @@ export default function OnboardingWebsite() {
             }}
             notify={notify}
           />
+        ) : path === '/profile' && account ? (
+          <MyProfilePage account={account} />
         ) : assistantPath ? (
-          <AssistantPage navigate={navigate} guestId={guestId} />
+          <AssistantPage navigate={navigate} guestId={guestId} accountId={account?.id} />
         ) : (
           <div className="uv-empty">
             <Label>404 / UNEXPLORED SPACE</Label>

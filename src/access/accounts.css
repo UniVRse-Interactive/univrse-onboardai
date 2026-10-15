@@ -1,0 +1,451 @@
+/* Account sign-in follow-ups, HR employee accounts and My profile.
+   Colours reuse the access and HR workspace palette. */
+.access-notice.is-error {
+  background: #f4e6e3;
+  border-left-color: #9b2c2c;
+  color: #5e1b1b;
+}
+.account-standalone {
+  min-height: 100dvh;
+  background: #dce6ed;
+  color: #1f3047;
+  color-scheme: light;
+  --access-ink: #1f3047;
+  --access-muted: #52677b;
+  --access-accent: #256a91;
+}
+.account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 22px 5vw;
+  background: #1f3047;
+  color: #e8eff4;
+}
+.account-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.account-signed-in {
+  font-size: 12px;
+}
+.account-bar-button,
+.account-session button {
+  font-size: 12px;
+  color: inherit;
+  padding: 9px 14px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+}
+.account-session {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.account-bar :focus-visible,
+.account-session :focus-visible {
+  outline: 2px solid #abd7de;
+  outline-offset: 2px;
+}
+.account-card {
+  width: min(100% - 40px, 460px);
+  margin: 48px auto;
+}
+.account-card h1 {
+  font-size: 34px;
+  line-height: 1.15;
+  margin: 10px 0 12px;
+  letter-spacing: -0.03em;
+}
+.account-card h1:focus-visible,
+.account-panel h3:focus-visible,
+.hr-accounts h2:focus-visible,
+.account-profile h1:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 4px;
+}
+.account-card > p {
+  color: #52677b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.account-card .access-eyebrow {
+  color: #256a91;
+}
+.account-field {
+  gap: 6px;
+}
+.account-required {
+  font-weight: 400;
+  color: #52677b;
+  font-size: 12px;
+}
+.account-field-hint {
+  font-size: 11px;
+  color: #52677b;
+  line-height: 1.4;
+}
+.account-field-error {
+  font-size: 12px;
+  color: #8f2323;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.account-field input[aria-invalid='true'] {
+  border-color: #9b2c2c;
+  border-width: 2px;
+}
+.account-field input[type='date'] {
+  min-height: 51px;
+}
+.account-error-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #f4e6e3;
+  border-left: 3px solid #9b2c2c;
+  color: #5e1b1b;
+  font-size: 13px;
+  line-height: 1.6;
+  border-radius: 0 5px 5px 0;
+}
+.account-error-summary[hidden] {
+  display: none;
+}
+.account-error-summary p {
+  flex: 1;
+}
+.account-error-summary:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 3px;
+}
+.account-note {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #3e5368;
+}
+.account-notice {
+  padding: 12px 14px;
+  background: #e3f3f4;
+  border-left: 3px solid #256a91;
+  font-size: 13px;
+  margin: 14px 0;
+  color: #17475c;
+}
+.account-notice[hidden] {
+  display: none;
+}
+.account-empty {
+  color: #52677b;
+  font-style: italic;
+}
+.account-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* HR employee accounts */
+.hr-accounts {
+  margin-top: 38px;
+  scroll-margin-top: 24px;
+}
+.hr-accounts-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px 24px;
+  flex-wrap: wrap;
+}
+.hr-accounts-heading h2 {
+  margin: 6px 0;
+}
+.hr-accounts-heading p {
+  font-size: 13px;
+  color: #3e5368;
+}
+.hr-accounts-heading .access-eyebrow {
+  color: #52677b;
+  font-size: 10px;
+}
+.account-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.account-primary,
+.account-secondary,
+.account-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid #256a91;
+}
+.account-primary {
+  background: #256a91;
+  color: #e8eff4;
+}
+.account-primary:hover:not(:disabled) {
+  background: #1e587a;
+}
+.account-secondary {
+  color: #1f3047;
+  border-color: #6c8995;
+  font-weight: 500;
+}
+.account-secondary:hover:not(:disabled) {
+  background: #eaf2f7;
+}
+.account-danger {
+  background: #8f2323;
+  border-color: #8f2323;
+  color: #fff;
+}
+.account-danger:hover:not(:disabled) {
+  background: #741b1b;
+}
+.hr-accounts button:focus-visible,
+.account-profile a:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 2px;
+}
+.account-link-button {
+  color: #256a91;
+  text-decoration: underline;
+  font-size: 13px;
+  padding: 8px 4px;
+}
+.account-panel {
+  margin: 20px 0;
+  padding: 22px;
+  background: #eef4f8;
+  border: 1px solid #a9bfce;
+  border-radius: 8px;
+}
+.account-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.account-panel h3 {
+  font-size: 19px;
+  letter-spacing: -0.02em;
+}
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.account-group {
+  border: 1px solid #c8d8e2;
+  border-radius: 6px;
+  padding: 14px 16px 18px;
+  min-width: 0;
+}
+.account-group legend {
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #256a91;
+}
+.account-group-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 14px 18px;
+}
+.account-group-fields > .account-field {
+  min-width: 0;
+}
+.account-table-wrap {
+  margin-top: 18px;
+  overflow-x: auto;
+}
+.account-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: #e8eff4;
+}
+.account-table th,
+.account-table td {
+  padding: 12px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #c8d8e2;
+  overflow-wrap: anywhere;
+}
+.account-table thead th {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #3e5368;
+  background: #dbe7ee;
+}
+.account-table tbody th {
+  font-weight: 700;
+}
+.account-table td small {
+  display: block;
+  color: #52677b;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.account-badges {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.account-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 99px;
+  background: #d3ead9;
+  color: #1c4a2a;
+  white-space: nowrap;
+}
+.account-badge.is-warning {
+  background: #f6e3d3;
+  color: #6f330c;
+}
+.account-badge:not(.is-warning):not(:first-child) {
+  background: #dbe7ee;
+  color: #1f3047;
+}
+.account-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.account-row-actions button {
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #256a91;
+  border: 1px solid #a9bfce;
+  border-radius: 5px;
+  background: #eef4f8;
+}
+.account-row-actions button:hover {
+  background: #fff;
+}
+
+/* My profile */
+.account-profile {
+  max-width: 920px;
+  margin: 0 auto;
+}
+.account-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 18px;
+  margin: 24px 0;
+}
+.account-profile-grid section {
+  padding: 18px 20px;
+  border: 1px solid var(--line, #526b89);
+  border-radius: 8px;
+}
+.account-profile-grid h2 {
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.account-profile-grid dl > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 0;
+}
+.account-profile-grid dt {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.account-profile-grid dd {
+  overflow-wrap: anywhere;
+}
+.uv-account-id {
+  font-size: 12px;
+}
+.uv-header-actions .uv-access-link {
+  cursor: pointer;
+}
+
+@media (max-width: 860px) {
+  .account-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .account-table,
+  .account-table tbody,
+  .account-table tr,
+  .account-table th,
+  .account-table td {
+    display: block;
+    width: 100%;
+  }
+  .account-table tr {
+    padding: 8px 4px;
+    border-bottom: 3px solid #c8d8e2;
+  }
+  .account-table th,
+  .account-table td {
+    border-bottom: 0;
+    padding: 6px 12px;
+  }
+  .account-table td::before,
+  .account-table tbody th::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #52677b;
+  }
+  .hr-accounts-heading,
+  .account-actions {
+    width: 100%;
+  }
+  .account-actions > button {
+    flex: 1 1 140px;
+  }
+  .account-panel {
+    padding: 16px 14px;
+  }
+  .account-card {
+    margin: 28px auto;
+  }
+  .account-card h1 {
+    font-size: 30px;
+  }
+  .account-field input {
+    font-size: 16px;
+  }
+}

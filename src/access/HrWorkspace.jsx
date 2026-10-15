@@ -6,9 +6,11 @@ import { reportDate, reportText } from '../avatar/hr-support-report.mjs';
 import { onboardingSnapshot, checkInStatus } from './hr-report-insights.mjs';
 import { workspaceRequest } from './guest-workspace-api';
 import CompanyDocumentLibrary from './CompanyDocumentLibrary';
+import HrEmployees from './HrEmployees';
 import './account-access.css';
 import './hr-onboarding-summary.css';
 import './hr-workspace.css';
+import './accounts.css';
 
 function EmployeeSummary({ employee }) {
   const s = employee.summary;
@@ -158,7 +160,8 @@ function EmployeeSummary({ employee }) {
   );
 }
 
-export default function HrWorkspace({ navigate }) {
+export default function HrWorkspace({ navigate, account = null, onSignOut }) {
+  const hrAccount = account?.role === 'hr' ? account : null;
   const [workspace, setWorkspace] = useState(null),
     [employeeId, setEmployeeId] = useState(''),
     [error, setError] = useState(''),
@@ -245,12 +248,24 @@ export default function HrWorkspace({ navigate }) {
           <span className="hr-preview-badge">HR workspace</span>
         </div>
         <nav className="hr-section-nav" aria-label="HR workspace sections">
+          {hrAccount && <a href="#employee-accounts">Employee accounts</a>}
           <a href="#employee-summaries">Employee summaries</a>
           <a href="#company-documents">Company documents</a>
         </nav>
-        <button type="button" onClick={() => navigate('/login')}>
-          Back to sign in <Icon name="arrow" size={16} />
-        </button>
+        {hrAccount ? (
+          <div className="account-session">
+            <span className="account-signed-in">
+              Signed in as <strong>{hrAccount.username}</strong>
+            </span>
+            <button type="button" onClick={onSignOut}>
+              Sign out
+            </button>
+          </div>
+        ) : (
+          <button type="button" onClick={() => navigate('/login')}>
+            Back to sign in <Icon name="arrow" size={16} />
+          </button>
+        )}
       </header>
       <main className="hr-experience-main">
         <div className="hr-experience-heading">
@@ -266,6 +281,7 @@ export default function HrWorkspace({ navigate }) {
             <button onClick={() => refresh()}>Try again</button>
           </div>
         )}
+        {hrAccount && <HrEmployees />}
         <p role="status" className="hr-removal-notice">
           {notice}
         </p>

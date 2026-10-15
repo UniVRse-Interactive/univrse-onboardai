@@ -4,6 +4,7 @@ import Icon from '../portal/Icon';
 import { createServerSpeech } from './answer-audio-player';
 import AnswerStyleSettings, { learningFormats } from './AnswerStyleSettings';
 import VisualAnswerPanel from './VisualAnswerPanel';
+import { reportAccountResponse } from '../access/account-api.mjs';
 import './answer-support-controls.css';
 import './alya-chat.css';
 import './alya-workspace.css';
@@ -404,10 +405,13 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
     });
     if (response.status === 204) return null;
     const data = await response.json();
-    if (!response.ok)
+    if (!response.ok) {
+      // A signed-in chat can learn the session ended or a password change is due.
+      reportAccountResponse(response.status, data);
       throw new Error(
         data.error || 'The server could not complete that request. Please try again.',
       );
+    }
     return data;
   }
   function applyChat(chat) {
@@ -544,8 +548,10 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
         }),
       });
       const result = await response.json();
-      if (!response.ok)
+      if (!response.ok) {
+        reportAccountResponse(response.status, result);
         throw new Error(result.error || 'The assistant could not answer. Please try again.');
+      }
       const answer = presentAnswer(result);
       if (sequence.current !== token) return;
       setMessages((previous) => [

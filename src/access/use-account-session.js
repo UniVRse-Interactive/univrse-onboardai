@@ -1,0 +1,90 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { accountApi, signInNotice, subscribeAccountErrors } from './account-api.mjs';
+import { afterAccountAction } from './account-routing.mjs';
+
+// Account state for the whole site. `accounts` is null until /api/config answers.
+// With accounts off (or unreachable) nothing else is ever requested.
+export default function useAccountSession({ onNavigate }) {
+  const [state, setState] = useState({ accounts: null, loading: true, account: null, notice: '' });
+  const navigateRef = useRef(onNavigate);
+  navigateRef.current = onNavigate;
+  const accountRef = useRef(null);
+  accountRef.current = state.account;
+
+  useEffect(() => {
+    let live = true;
+    const unsubscribe = subscribeAccountErrors((action) => {
+      const result = afterAccountAction(action, accountRef.current);
+      if (action === 'sign-in' && !accountRef.current) return;
+      setState((s) => ({
+        ...s,
+        account: result.account,
+        notice: result.notice ? signInNotice : s.notice,
+      }));
+      if (result.to) navigateRef.current(result.to);
+    });
+    (async () => {
+      let accounts = false;
+      try {
+        accounts = (await accountApi.config()).accounts === true;
+      } catch {}
+      if (!accounts) {
+        if (live) setState({ accounts: false, loading: false, account: null, notice: '' });
+        return;
+      }
+      try {
+        const { account } = await accountApi.session({ report: false });
+        if (live) setState({ accounts: true, loading: false, account, notice: '' });
+      } catch (error) {
+        if (live)
+          setState({
+            accounts: true,
+            loading: false,
+            account: null,
+            notice: error.code === 'SESSION_EXPIRED' ? signInNotice : '',
+          });
+      }
+    })();
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, []);
+
+  // Chat reads /api/config itself; fetching it here keeps `accounts` current.
+  const refreshConfig = useCallback(async () => {
+    try {
+      const config = await accountApi.config();
+      setState((s) => ({ ...s, accounts: config.accounts === true }));
+    } catch {}
+  }, []);
+
+  const signIn = useCallback(
+    async (username, password) => {
+      setState((s) => ({ ...s, notice: '' }));
+      const { account } = await accountApi.signIn(username, password);
+      setState((s) => ({ ...s, account, notice: '' }));
+      refreshConfig();
+      return account;
+    },
+    [refreshConfig],
+  );
+  const changePassword = useCallback(
+    async (currentPassword, newPassword) => {
+      const { account } = await accountApi.changePassword(currentPassword, newPassword);
+      setState((s) => ({ ...s, account }));
+      refreshConfig();
+      return account;
+    },
+    [refreshConfig],
+  );
+  const signOut = useCallback(async () => {
+    try {
+      await accountApi.signOut();
+    } catch {}
+    setState((s) => ({ ...s, account: null, notice: '' }));
+    navigateRef.current('/login');
+  }, []);
+
+  return { ...state, signIn, changePassword, signOut };
+}
