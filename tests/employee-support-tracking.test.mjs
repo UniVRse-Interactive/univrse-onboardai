@@ -15,9 +15,9 @@ function service() {
     memory: createChatMemory(':memory:'),
     retrieve: async () => [
       {
-        pageContent:
-          'Synthetic company guidance: submit a morning update. Include completed tasks in your work report.',
-        metadata: { title: 'Test guide', heading: 'Work routine' },
+        title: 'Test guide',
+        heading: 'Work routine',
+        text: 'Synthetic company guidance: submit a morning update. Include completed tasks in your work report.',
       },
     ],
     models: {

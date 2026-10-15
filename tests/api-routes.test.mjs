@@ -166,6 +166,44 @@ test('no server or script file reads GEMINI_API_KEY', async () => {
         offenders.push(`${dir}/${f}`);
   assert.deepEqual(offenders, []);
 });
+test('no server or script file reads Google Drive or GOOGLE_DRIVE_FOLDER_ID', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const offenders = [];
+  for (const dir of ['server', 'scripts'])
+    for (const f of readdirSync(new URL(`../${dir}/`, import.meta.url)))
+      if (
+        /\.(mjs|js|ps1|cs)$/.test(f) &&
+        /GOOGLE_DRIVE_FOLDER_ID|googleapis\.com\/drive|auth\/drive/.test(
+          readFileSync(new URL(`../${dir}/${f}`, import.meta.url), 'utf8'),
+        )
+      )
+        offenders.push(`${dir}/${f}`);
+  assert.deepEqual(offenders, []);
+});
+test('company search settings are reported in /api/config only for the modes that search', async () => {
+  const env = {
+    GOOGLE_CLOUD_PROJECT: 'test-project',
+    VERTEX_SEARCH_ENGINE_ID: 'test-engine',
+    GOOGLE_DRIVE_FOLDER_ID: 'retired-folder',
+  };
+  for (const [mode, expected] of [
+    ['gemini-chat', 'vertex-ai-search'],
+    ['document-search', 'vertex-ai-search'],
+    ['gemini', 'sample-tasks'],
+    ['demo', 'sample-tasks'],
+  ]) {
+    const s = await server({ ...env, AI_MODE: mode }, async (url) =>
+      assert.fail('no request expected: ' + url),
+    );
+    try {
+      const config = await (await fetch(s.url + '/api/config')).json();
+      assert.equal(config.knowledgeMode, expected, mode);
+      assert.ok(!JSON.stringify(config).includes('test-engine'));
+    } finally {
+      await s.close();
+    }
+  }
+});
 test('TTS proxy rejects external audio and oversized SSML before any cloud request', async () => {
   const s = await server({ GOOGLE_CLOUD_PROJECT: 'test-project', GOOGLE_CLOUD_TTS: 'enabled' });
   try {

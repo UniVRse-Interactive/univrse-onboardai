@@ -14,9 +14,9 @@ import { createConversationService } from '../server/gemini-chat-workflow.mjs';
 import { createApp } from '../server/api-routes.mjs';
 
 const source = {
-  pageContent:
-    'Example training guidance: prepare a short work update using completed tasks and next steps.',
-  metadata: { title: 'Synthetic test handbook', heading: 'Work updates' },
+  title: 'Synthetic test handbook',
+  heading: 'Work updates',
+  text: 'Example training guidance: prepare a short work update using completed tasks and next steps.',
 };
 function engine({ answer, plan, retrieve = async () => [source] } = {}) {
   return createConversationService({

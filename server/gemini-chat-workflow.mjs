@@ -1,9 +1,9 @@
 import { Annotation, StateGraph, START, END } from '@langchain/langgraph';
 import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages';
 import { ChatGoogle } from '@langchain/google/node';
-import { createKnowledgeRetriever } from './company-document-retriever.mjs';
+import { createCompanyRetriever } from './company-document-retriever.mjs';
 import { createChatMemory, ChatError } from './saved-conversations.mjs';
-import { driveFailure } from './google-drive-documents.mjs';
+import { CompanySearchError, searchFailure } from './vertex-ai-search.mjs';
 import { adaptLearning, learningInstruction, updateLearning } from './answer-style-preferences.mjs';
 import { vertexConfig } from './vertex-ai.mjs';
 import { createAnswerGuide } from './answer-guide-metadata.mjs';
@@ -73,8 +73,8 @@ export function createGeminiModels(env) {
 export function conversationFailure(error) {
   if (error instanceof ChatError)
     return { status: error.status, code: error.code, error: error.message };
-  if (error?.name === 'DriveKnowledgeError' || error?.chatStage === 'drive')
-    return { status: 503, ...driveFailure(error) };
+  if (error instanceof CompanySearchError || error?.chatStage === 'retrieval')
+    return searchFailure(error);
   // Provider error bodies may contain request data. Only status is inspected.
   const status = Number(
     error?.status || error?.statusCode || error?.response?.status || error?.cause?.status,
@@ -115,14 +115,12 @@ export function conversationFailure(error) {
 
 export function createConversationService({
   env,
-  loadDocuments,
   models: providedModels,
   memory = createChatMemory(env.CHAT_DATABASE_PATH),
-  retrieve: providedRetrieve,
+  // retrieve(query, config) -> [{ title, heading, text }] in rank order.
+  retrieve = createCompanyRetriever({ env }),
 } = {}) {
   let models = providedModels;
-  const retrieve =
-    providedRetrieve || createKnowledgeRetriever(loadDocuments, env.GOOGLE_DRIVE_FOLDER_ID);
   const recent = (state) => state.messages.slice(state.summaryCount || 0).map((m) => m);
   const summaryNote = (state) =>
     state.summary
@@ -192,18 +190,20 @@ export function createConversationService({
         return { passages: [], timingsMs: { ...state.timingsMs, retrieval: 0 } };
       const started = performance.now();
       try {
-        const docs = await retrieve(state.plan.query, config);
+        // Gemini's standalone rewrite of the question is the search query.
+        const found = await retrieve(state.plan.query, config);
         return {
           timingsMs: { ...state.timingsMs, retrieval: Math.round(performance.now() - started) },
-          passages: docs.map((doc, i) => ({
+          // IDs follow the search rank, so citations can be checked against them.
+          passages: found.map((passage, i) => ({
             id: i + 1,
-            title: doc.metadata.title,
-            heading: doc.metadata.heading,
-            text: doc.pageContent,
+            title: passage.title,
+            heading: passage.heading || '',
+            text: passage.text,
           })),
         };
       } catch (error) {
-        error.chatStage = 'drive';
+        if (error && typeof error === 'object') error.chatStage = 'retrieval';
         throw error;
       }
     })

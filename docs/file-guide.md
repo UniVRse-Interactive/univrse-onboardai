@@ -40,12 +40,12 @@ The project stays in JavaScript and React. `.jsx` files contain React screens; `
 | --------------------------------------- | --------------------------------------------------------------- |
 | `server/api-routes.mjs`                 | Chat, saved-chat, settings, support-summary and voice endpoints |
 | `server/gemini-chat-workflow.mjs`       | LangGraph conversation steps and Gemini prompts/answers         |
-| `server/company-document-retriever.mjs` | LangChain retrieval from company passages                       |
-| `server/google-drive-documents.mjs`     | Read-only loading of approved Google Docs and Drive errors      |
-| `server/document-search.mjs`            | Local passage splitting, topic matching and ranking             |
+| `server/vertex-ai-search.mjs`           | Vertex AI Search chunk search, passages, file names and errors  |
+| `server/company-document-retriever.mjs` | Chooses Vertex AI Search or the sample guide for passages       |
+| `server/document-search.mjs`            | Search-only preview that quotes passages without Gemini         |
 | `server/saved-conversations.mjs`        | SQLite history, ownership checks, expiry and deletion           |
 | `server/answer-style-preferences.mjs`   | Explanation preference and explicit support requests            |
-| `server/sample-onboarding-content.mjs`  | Sample/demo answers, separate from real Drive knowledge         |
+| `server/sample-onboarding-content.mjs`  | Sample/demo answers, separate from real company documents       |
 | `src/avatar/AnswerStyleSettings.jsx`    | The five explanation choices and their visible reason           |
 
 For Gemini chat, the main path is:
@@ -53,13 +53,13 @@ For Gemini chat, the main path is:
 ```text
 Question + saved context
     -> interpret the question
-    -> retrieve approved company passages
+    -> search approved company documents (Vertex AI Search)
     -> write an answer with references
     -> save the conversation
     -> display text, visual explanation and voice
 ```
 
-LangChain connects the model and retrieval. LangGraph runs and checkpoints the conversation steps. Neither library diagnoses employees or replaces the language model.
+LangChain connects the model. Vertex AI Search returns the company passages. LangGraph runs and checkpoints the conversation steps. Neither library diagnoses employees or replaces the language model.
 
 ## Avatar and voice
 
@@ -98,9 +98,8 @@ The persisted/API field named `card` remains compatible with existing chats and 
 ## Useful script names
 
 - `start-development-server.mjs`: start Node with file watching and Vite live updates.
-- `check-google-drive-connection.mjs`: check the configured Drive folder.
 - `check-gemini-connection.mjs`: check Gemini with one small live request.
-- `check-document-search.mjs`: check the local retrieval result.
+- `check-vertex-ai-search.mjs`: check Vertex AI Search with one live search (`npm run check:search`).
 - `check-shareable-files.mjs`: inspect the Git file list without printing secrets or publishing files.
 
 Use the `npm` commands in the README rather than remembering these file paths.

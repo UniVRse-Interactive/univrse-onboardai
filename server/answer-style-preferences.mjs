@@ -1,5 +1,5 @@
 // Teaching formats and handbook subjects, not medical or ability profiles.
-// Actual policy content is always retrieved from the existing Drive documents.
+// Actual policy content is always retrieved from the company document search.
 const subjectHints = [
   { id: 'welcome', terms: ['vision', 'mission', 'values', 'welcome'] },
   { id: 'first-day', terms: ['hours', 'dress', 'wear', 'tshirt', 'shirt', 'attire', 'workspace'] },

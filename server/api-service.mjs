@@ -1,5 +1,5 @@
 import { createApp } from './api-routes.mjs';
-import { readDriveKnowledge, driveFailure } from './google-drive-documents.mjs';
+import { describeKnowledgeSource } from './company-document-retriever.mjs';
 import { loadEnvFile, parseTrustProxy, startService } from './service-runtime.mjs';
 
 loadEnvFile();
@@ -8,12 +8,5 @@ loadEnvFile();
 // that appended the browser's IP (see docs/cloud-run-services.md).
 const app = createApp({ trustProxy: parseTrustProxy(process.env.TRUST_PROXY, 2) });
 startService(app, { name: 'OnboardAi API', onClose: () => app.locals.closeChat() });
-if (
-  ['gemini-chat', 'document-search'].includes(process.env.AI_MODE) &&
-  process.env.GOOGLE_DRIVE_FOLDER_ID &&
-  process.env.KNOWLEDGE_WARMUP !== 'false'
-) {
-  readDriveKnowledge(process.env.GOOGLE_DRIVE_FOLDER_ID)
-    .then(() => console.info('Company document cache is ready.'))
-    .catch((error) => console.warn('Company document warmup:', driveFailure(error).code));
-}
+if (['gemini-chat', 'document-search'].includes(process.env.AI_MODE))
+  console.info(`Company knowledge: ${describeKnowledgeSource(process.env)}.`);
