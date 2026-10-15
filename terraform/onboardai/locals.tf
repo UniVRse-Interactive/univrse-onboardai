@@ -12,6 +12,7 @@ locals {
     "iamcredentials.googleapis.com", # GitHub Actions impersonates the deployer
     "sts.googleapis.com",            # exchanges the GitHub OIDC token
     "secretmanager.googleapis.com",
+    "aiplatform.googleapis.com", # the API calls Gemini on Vertex AI
     # The API service reads company documents through the Drive API with its own
     # service account; the API must be on in the account's project.
     "drive.googleapis.com",

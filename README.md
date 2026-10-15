@@ -69,7 +69,7 @@ The original avatar is kept as lossless gzip. Its transfer is about 52.4 MiB; it
 
 The existing `.env`, saved chats and voice cache remain local. Git and Docker exclude `.env`, credentials, chat databases, private files, generated builds, dependencies and test artifacts. `check:share` is a helpful pattern check, not a guarantee that every confidential value has been identified.
 
-Company chat reads Google Docs directly inside the configured Drive folder. Enable it with `AI_MODE=gemini-chat` and the server-only settings in `.env`. Never put API keys in browser code or variables beginning with `VITE_`.
+Company chat reads Google Docs directly inside the configured Drive folder. Enable it with `AI_MODE=gemini-chat` and the server-only settings in `.env`. Gemini uses Vertex AI with Application Default Credentials: set `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`) and run `gcloud auth application-default login`. Never put credentials in browser code or variables beginning with `VITE_`.
 
 Successful chats are saved in SQLite and belong to an opaque browser-session cookie. The selected chat and voice preferences survive normal refreshes. The editable profile is not employee sign-in. Support summaries describe recorded requests and feedback; they do not diagnose disability or score ability. Employees review their summary before downloading it for HR.
 

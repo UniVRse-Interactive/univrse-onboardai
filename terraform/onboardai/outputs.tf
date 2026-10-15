@@ -33,11 +33,6 @@ output "service_urls" {
   value       = { for key, service in google_cloud_run_v2_service.service : service.name => service.uri }
 }
 
-output "gemini_api_key_add_command" {
-  description = "Run this yourself; paste the Gemini API key, press Enter, then Ctrl-D. The value stays out of argv, shell history and Terraform state."
-  value       = "gcloud secrets versions add ${google_secret_manager_secret.gemini_api_key.secret_id} --project=${var.project_id} --data-file=-"
-}
-
 output "github_variable_commands" {
   description = "Run these yourself (needs gh with admin rights on the repository) to set the repository variables the workflows read."
   value = join("\n", concat(

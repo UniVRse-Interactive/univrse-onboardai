@@ -24,6 +24,9 @@ defaults:
 env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   GCP_REGION: ${{ vars.GCP_REGION }}
+  # Vertex AI location the API uses for Gemini (GOOGLE_CLOUD_LOCATION). The
+  # model is served on "global"; regional endpoints such as asia-southeast1 do not have it.
+  VERTEX_LOCATION: global
 
 jobs:
   ci:
@@ -70,8 +73,10 @@ jobs:
           if [[ -z "$GOOGLE_DRIVE_FOLDER_ID" && "$AI_MODE" =~ ^(gemini-chat|document-search)$ ]]; then
             echo "::warning::GOOGLE_DRIVE_FOLDER_ID is not set; the API answers from the sample tasks, not company documents."
           fi
-          if [[ ! "$AI_MODE" =~ ^(gemini|gemini-chat)$ ]]; then
-            echo "::notice::AI_MODE=$AI_MODE: the API gets no Gemini key and answers without calling Gemini (sample content or document search)."
+          if [[ "$AI_MODE" =~ ^(gemini|gemini-chat)$ ]]; then
+            echo "::notice::AI_MODE=$AI_MODE: the API calls Gemini on Vertex AI ($VERTEX_LOCATION) as onboardai-api-run."
+          else
+            echo "::notice::AI_MODE=$AI_MODE: no Gemini calls (sample content or document search)."
           fi
           exit "$failed"
 
@@ -127,10 +132,9 @@ jobs:
       AI_MODE: ${{ vars.AI_MODE }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
       GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
-      GEMINI_SECRET: onboardai-gemini-api-key
       # Must equal output cloud_run_deploy_flags of terraform/onboardai; its
       # terraform test fails otherwise, so a deploy never undoes an apply or the
-      # other way round. Image, env vars, secrets and traffic belong to this
+      # other way round. Image, env vars and traffic belong to this
       # workflow; Terraform ignores them.
       WEB_RUN_FLAGS: --cpu=1 --memory=512Mi --concurrency=80 --min-instances=0 --max-instances=3 --timeout=300 --port=8080 --execution-environment=gen2 --ingress=all --cpu-throttling --no-cpu-boost --startup-probe=httpGet.path=/web-health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=12
       API_RUN_FLAGS: --cpu=1 --memory=1Gi --concurrency=80 --min-instances=0 --max-instances=1 --timeout=300 --port=8080 --execution-environment=gen2 --ingress=all --cpu-throttling --cpu-boost --startup-probe=httpGet.path=/api/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=12
@@ -200,20 +204,15 @@ jobs:
           deploy tts "NODE_ENV=production"
           tts_url=$DEPLOYED_URL
 
-          api_env="NODE_ENV=production,AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,TTS_SERVICE_URL=$tts_url"
+          # Gemini runs on Vertex AI with the service's own identity (ADC as
+          # onboardai-api-run, roles/aiplatform.user): there is no API key.
+          api_env="NODE_ENV=production,AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,TTS_SERVICE_URL=$tts_url"
           if [[ -n "$GOOGLE_DRIVE_FOLDER_ID" ]]; then
             api_env+=",GOOGLE_DRIVE_FOLDER_ID=$GOOGLE_DRIVE_FOLDER_ID"
           fi
-          # Only the modes that call Gemini with an API key read GEMINI_API_KEY
-          # (server/api-routes.mjs, server/gemini-chat-workflow.mjs). The other
-          # modes get no secret at all, and --clear-secrets drops any reference an
-          # earlier revision carried, so a secret without versions cannot block them.
-          if [[ "$AI_MODE" =~ ^(gemini|gemini-chat)$ ]]; then
-            secret_flags=("--set-secrets=GEMINI_API_KEY=$GEMINI_SECRET:latest")
-          else
-            secret_flags=(--clear-secrets)
-          fi
-          deploy api "$api_env" "${secret_flags[@]}"
+          # No secrets at all. --clear-secrets drops any reference an earlier
+          # revision carried (the retired GEMINI_API_KEY mount).
+          deploy api "$api_env" --clear-secrets
           api_url=$DEPLOYED_URL
 
           deploy web "NODE_ENV=production,API_SERVICE_URL=$api_url"

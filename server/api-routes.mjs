@@ -11,6 +11,7 @@ import { parseVoiceRequest, voiceRequestError, voiceFailure } from './voice-requ
 import { randomBytes } from 'node:crypto';
 import { sessionHash } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
+import { vertexConfig, vertexGenerateContentUrl, createAccessTokenProvider } from './vertex-ai.mjs';
 
 export function createApp({
   env = process.env,
@@ -22,6 +23,7 @@ export function createApp({
     : createSharedVoice(),
   trustProxy = false,
   conversationService = null,
+  getAccessToken = null,
 } = {}) {
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
@@ -40,6 +42,10 @@ export function createApp({
     res.set('X-Content-Type-Options', 'nosniff');
     next();
   });
+
+  // Legacy billed Cloud Text-to-Speech is opt-in; GOOGLE_CLOUD_PROJECT alone only means Vertex AI.
+  const cloudTts = env.GOOGLE_CLOUD_TTS === 'enabled' && Boolean(env.GOOGLE_CLOUD_PROJECT);
+  const vertexToken = getAccessToken || createAccessTokenProvider();
 
   const googleVoiceAuth = new GoogleAuth({
     scopes: ['https://www.googleapis.com/auth/cloud-platform'],
@@ -76,14 +82,14 @@ export function createApp({
     next();
   });
 
-  // Public configuration. API keys stay on the server.
+  // Public configuration. Credentials stay on the server.
   app.get('/api/config', (req, res) => {
     res.json({
       aiMode: memoryChat
         ? 'gemini-memory'
         : documentSearch
           ? 'document-search'
-          : env.GEMINI_API_KEY
+          : vertexConfig(env)
             ? 'gemini'
             : 'demo',
       conversationMemory: memoryChat,
@@ -91,11 +97,7 @@ export function createApp({
       adaptiveLearning: memoryChat,
       supportSummary: memoryChat,
 
-      speechMode: env.GOOGLE_CLOUD_PROJECT
-        ? 'google'
-        : localVoice
-          ? 'windows-local'
-          : 'browser-demo',
+      speechMode: cloudTts ? 'google' : localVoice ? 'windows-local' : 'browser-demo',
 
       voiceName: localVoice?.name || null,
       sharedVoiceName,
@@ -318,7 +320,7 @@ export function createApp({
 
     // Used by both the text chat and the avatar.
     async function deliver(result) {
-      if (localVoice && !env.GOOGLE_CLOUD_PROJECT && req.body.speechEnabled === true) {
+      if (localVoice && !cloudTts && req.body.speechEnabled === true) {
         const rate = Math.max(0.8, Math.min(1.1, Number(req.body.speechRate) || 0.95));
 
         try {
@@ -347,8 +349,9 @@ export function createApp({
       }
     }
 
-    // Without a Gemini key, return a labelled sample answer.
-    if (!env.GEMINI_API_KEY) {
+    // Without Vertex AI configured, return a labelled sample answer.
+    const vertex = vertexConfig(env);
+    if (!vertex) {
       return deliver(demoAnswer(question, task, style));
     }
 
@@ -371,48 +374,43 @@ export function createApp({
     }
 
     try {
-      const model = env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+      const token = await vertexToken();
 
-      const response = await fetchImpl(
-        'https://generativelanguage.googleapis.com/v1beta/models/' +
-          encodeURIComponent(model) +
-          ':generateContent',
-        {
-          method: 'POST',
+      const response = await fetchImpl(vertexGenerateContentUrl(vertex), {
+        method: 'POST',
 
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': env.GEMINI_API_KEY,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+
+        signal: AbortSignal.timeout(25000),
+
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: instruction }],
           },
 
-          signal: AbortSignal.timeout(25000),
-
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [{ text: instruction }],
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: question.trim() }],
             },
+          ],
 
-            contents: [
-              {
-                role: 'user',
-                parts: [{ text: question.trim() }],
-              },
-            ],
-
-            generationConfig: {
-              temperature: 0.2,
-              maxOutputTokens: 1600,
-            },
-          }),
-        },
-      );
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 1600,
+          },
+        }),
+      });
 
       if (!response.ok) {
         if (response.status === 402) {
           return res.status(402).json({
             code: 'GEMINI_CREDIT_REQUIRED',
             error:
-              "Gemini cannot answer because the project's prepaid credit is depleted. The project owner must add credits in Google AI Studio Billing, then try again.",
+              "Gemini cannot answer because the project's prepaid credit is depleted. The project owner must restore billing for the Google Cloud project, then try again.",
           });
         }
         throw new Error('Google AI request failed.');
@@ -441,7 +439,7 @@ export function createApp({
       res.status(502).json({
         error:
           'Google AI could not answer right now. ' +
-          'Check your API key, model access and quota, ' +
+          'Check Vertex AI access, model availability and quota, ' +
           'then try again.',
       });
     }
@@ -481,7 +479,7 @@ export function createApp({
 
   // GOOGLE TEXT-TO-SPEECH
   app.post('/api/tts', async (req, res) => {
-    if (!env.GOOGLE_CLOUD_PROJECT) {
+    if (!cloudTts) {
       return res.status(503).json({
         error: 'Google voice is not configured. ' + 'Use the local preview voice.',
       });

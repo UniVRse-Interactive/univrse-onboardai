@@ -26,20 +26,35 @@ run "deploy_flags_match_terraform" {
     error_message = "deploy.yml must define exactly the three *_RUN_FLAGS lines."
   }
 
-  assert {
-    condition     = strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GEMINI_SECRET: ${google_secret_manager_secret.gemini_api_key.secret_id}\n")
-    error_message = "deploy.yml must mount the secret Terraform creates."
-  }
-
-  # The secret is mounted only for AI modes that use the Gemini key; every other
-  # mode clears secrets, so an empty secret cannot block the first deploy.
+  # Gemini runs on Vertex AI as onboardai-api-run: no secret is ever mounted,
+  # and the api always clears any reference an earlier revision carried.
   assert {
     condition = (
-      !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "deploy api \"$api_env\" --set-secrets=") &&
-      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "if [[ \"$AI_MODE\" =~ ^(gemini|gemini-chat)$ ]]; then\n            secret_flags=(\"--set-secrets=GEMINI_API_KEY=$GEMINI_SECRET:latest\")\n          else\n            secret_flags=(--clear-secrets)\n          fi\n          deploy api \"$api_env\" \"$${secret_flags[@]}\"") &&
-      length(regexall("--set-secrets", file("${path.module}/../../.github/workflows/deploy.yml"))) == 1
+      !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--set-secrets") &&
+      !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GEMINI_SECRET") &&
+      !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GEMINI_API_KEY=") &&
+      !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "secret_flags") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "          deploy api \"$api_env\" --clear-secrets\n")
     )
-    error_message = "deploy.yml must pass --set-secrets for the api only when AI_MODE is gemini or gemini-chat, and --clear-secrets otherwise."
+    error_message = "deploy.yml must never use --set-secrets, and must always deploy the api with --clear-secrets."
+  }
+
+  assert {
+    condition = (
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "\n  VERTEX_LOCATION: global\n")
+    )
+    error_message = "The api env must carry GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID and GOOGLE_CLOUD_LOCATION (VERTEX_LOCATION, global)."
+  }
+
+  assert {
+    condition = (
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "TTS_SERVICE_URL=$tts_url\"") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GOOGLE_DRIVE_FOLDER_ID=$GOOGLE_DRIVE_FOLDER_ID")
+    )
+    error_message = "The api env must keep AI_MODE, GEMINI_MODEL, TTS_SERVICE_URL and the optional GOOGLE_DRIVE_FOLDER_ID."
   }
 
   assert {
