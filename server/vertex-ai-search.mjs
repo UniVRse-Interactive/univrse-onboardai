@@ -251,11 +251,22 @@ export function createVertexSearch({
   log = (message) => console.warn(message),
 }) {
   return async function search(query, { signal } = {}) {
+    // A ref'd timer, not AbortSignal.timeout(): that timer is unref'd, so a pending
+    // search would not keep the process alive and could be dropped mid-flight.
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), timeoutMs);
+    try {
+      return await run(query, signal, deadline.signal);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  async function run(query, signal, timeout) {
     if (!config?.engine || searchConfigProblem(config))
       throw new CompanySearchError('SEARCH_NOT_CONFIGURED');
     const question = text(query);
     if (!question) return [];
-    const timeout = AbortSignal.timeout(timeoutMs);
     const bounded = signal ? AbortSignal.any([signal, timeout]) : timeout;
     const fail = (code, details = {}) => {
       log(
@@ -302,5 +313,5 @@ export function createVertexSearch({
       throw stopped() ?? fail('SEARCH_UNAVAILABLE');
     }
     return passagesFromSearch(data);
-  };
+  }
 }
