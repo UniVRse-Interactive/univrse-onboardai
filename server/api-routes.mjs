@@ -150,63 +150,65 @@ export function createApp({
     const failure = conversationFailure(error);
     res.status(failure.status).json({ code: failure.code, error: failure.error });
   }
-  app.get('/api/conversations', chatOwner, (req, res) => {
+  // The store is async (Firestore or SQLite); every failure is a ChatError.
+  app.get('/api/conversations', chatOwner, async (req, res) => {
     try {
-      res.json({ conversations: chatService().memory.list(req.chatOwner) });
+      res.json({ conversations: await chatService().memory.list(req.chatOwner) });
     } catch (error) {
       chatFailure(res, error);
     }
   });
-  app.post('/api/conversations', chatOwner, (req, res) => {
+  app.post('/api/conversations', chatOwner, async (req, res) => {
     try {
-      res.status(201).json(chatService().memory.create(req.chatOwner));
+      res.status(201).json(await chatService().memory.create(req.chatOwner));
     } catch (error) {
       chatFailure(res, error);
     }
   });
-  app.get('/api/conversations/:id', chatOwner, (req, res) => {
+  app.get('/api/conversations/:id', chatOwner, async (req, res) => {
     try {
-      res.json(chatService().memory.read(req.chatOwner, req.params.id));
+      res.json(await chatService().memory.read(req.chatOwner, req.params.id));
     } catch (error) {
       chatFailure(res, error);
     }
   });
-  app.delete('/api/conversations/:id', chatOwner, (req, res) => {
+  app.delete('/api/conversations/:id', chatOwner, async (req, res) => {
     try {
-      chatService().memory.erase(req.chatOwner, req.params.id);
+      await chatService().memory.erase(req.chatOwner, req.params.id);
       res.status(204).end();
     } catch (error) {
       chatFailure(res, error);
     }
   });
-  app.post('/api/conversations/:id/learning', chatOwner, (req, res) => {
+  app.post('/api/conversations/:id/learning', chatOwner, async (req, res) => {
     try {
+      const learning = await chatService().settings(req.chatOwner, req.params.id, req.body);
       res.json({
-        learning: chatService().settings(req.chatOwner, req.params.id, req.body),
-        supportSummary: chatService().memory.supportSummary(req.chatOwner),
+        learning,
+        supportSummary: await chatService().memory.supportSummary(req.chatOwner),
       });
     } catch (error) {
       chatFailure(res, error);
     }
   });
-  app.get('/api/employee-support-summary', chatOwner, (req, res) => {
+  app.get('/api/employee-support-summary', chatOwner, async (req, res) => {
     try {
-      res.json(chatService().memory.supportSummary(req.chatOwner));
+      res.json(await chatService().memory.supportSummary(req.chatOwner));
     } catch (error) {
       chatFailure(res, error);
     }
   });
-  app.post('/api/support-summary/settings', chatOwner, (req, res) => {
+  app.post('/api/support-summary/settings', chatOwner, async (req, res) => {
     try {
-      res.json(chatService().memory.supportSettings(req.chatOwner, req.body));
+      res.json(await chatService().memory.supportSettings(req.chatOwner, req.body));
     } catch (error) {
       chatFailure(res, error);
     }
   });
-  app.post('/api/conversations/:id/feedback', chatOwner, (req, res) => {
+  app.post('/api/conversations/:id/feedback', chatOwner, async (req, res) => {
     try {
       res.json({
-        supportSummary: chatService().memory.feedback(
+        supportSummary: await chatService().memory.feedback(
           req.chatOwner,
           req.params.id,
           req.body.messageId,
@@ -218,10 +220,10 @@ export function createApp({
       chatFailure(res, error);
     }
   });
-  app.post('/api/conversations/:id/voice-event', chatOwner, (req, res) => {
+  app.post('/api/conversations/:id/voice-event', chatOwner, async (req, res) => {
     try {
       res.json({
-        supportSummary: chatService().memory.voiceEvent(
+        supportSummary: await chatService().memory.voiceEvent(
           req.chatOwner,
           req.params.id,
           req.body.messageId,
@@ -231,10 +233,10 @@ export function createApp({
       chatFailure(res, error);
     }
   });
-  app.post('/api/conversations/:id/human-help', chatOwner, (req, res) => {
+  app.post('/api/conversations/:id/human-help', chatOwner, async (req, res) => {
     try {
       res.json({
-        supportSummary: chatService().memory.humanHelp(
+        supportSummary: await chatService().memory.humanHelp(
           req.chatOwner,
           req.params.id,
           req.body.messageId,

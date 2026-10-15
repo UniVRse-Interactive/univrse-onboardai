@@ -1,5 +1,6 @@
 import { createApp } from './api-routes.mjs';
 import { describeKnowledgeSource } from './company-document-retriever.mjs';
+import { describeChatStorage } from './chat-store.mjs';
 import { loadEnvFile, parseTrustProxy, startService } from './service-runtime.mjs';
 
 loadEnvFile();
@@ -10,3 +11,5 @@ const app = createApp({ trustProxy: parseTrustProxy(process.env.TRUST_PROXY, 2) 
 startService(app, { name: 'OnboardAi API', onClose: () => app.locals.closeChat() });
 if (['gemini-chat', 'document-search'].includes(process.env.AI_MODE))
   console.info(`Company knowledge: ${describeKnowledgeSource(process.env)}.`);
+if (process.env.AI_MODE === 'gemini-chat')
+  console.info(`Saved chats: ${describeChatStorage(process.env)}.`);
