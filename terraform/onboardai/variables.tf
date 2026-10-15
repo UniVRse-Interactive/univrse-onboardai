@@ -1,10 +1,21 @@
 variable "project_id" {
-  description = "GCP project ID that hosts the OnboardAi Cloud Run services."
+  description = "GCP project ID of the OnBoard AI project, which hosts the whole OnboardAi stack."
   type        = string
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
     error_message = "project_id must be a GCP project ID (6-30 characters: lowercase letters, digits, hyphens)."
+  }
+}
+
+variable "environment" {
+  description = "Stack this plan manages. production: workspace default, state onboardai/default.tfstate, the names it was applied with. staging: workspace staging, state onboardai/staging.tfstate, every resource ID suffixed -staging. A plan fails when this and the selected workspace disagree (environment.tf)."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = contains(["production", "staging"], var.environment)
+    error_message = "environment must be production or staging."
   }
 }
 
@@ -79,15 +90,28 @@ variable "gemini_model" {
   }
 }
 
-variable "google_drive_folder_id" {
-  description = "GOOGLE_DRIVE_FOLDER_ID of the API service. Empty leaves its gh command out (the API then answers from the sample tasks)."
-  type        = string
-  default     = ""
+# ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+
+variable "alert_emails" {
+  description = "Addresses that receive the OnboardAi alerts (monitoring.tf). One Cloud Monitoring email channel each."
+  type        = list(string)
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9_-]*$", var.google_drive_folder_id))
-    error_message = "google_drive_folder_id may only contain letters, digits, underscores and hyphens."
+    condition     = length(var.alert_emails) > 0 && alltrue([for e in var.alert_emails : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", e))])
+    error_message = "alert_emails needs at least one address, and every entry must be an email address."
   }
+}
+
+# ---------------------------------------------------------------------------
+# Tear down
+# ---------------------------------------------------------------------------
+
+variable "deletion_protection" {
+  description = "Keeps Terraform (and, for Firestore, anyone) from deleting the Cloud Run services, the Vertex AI Search data store and engine, and the Firestore database. Leave it true. To tear a stack down, apply once with false, then destroy (README, Tear down)."
+  type        = bool
+  default     = true
 }
 
 # ---------------------------------------------------------------------------

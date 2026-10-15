@@ -55,6 +55,8 @@ test('support uses direct requests, not diagnoses, spelling, identities or alleg
     'whut tym wrk',
     'I am not confused.',
     'What does a brief meeting mean?',
+    "I don't need smaller steps.",
+    'I do not want smaller steps.',
   ]) {
     assert.equal(adaptLearning({}, { question }).format, 'standard', question);
   }

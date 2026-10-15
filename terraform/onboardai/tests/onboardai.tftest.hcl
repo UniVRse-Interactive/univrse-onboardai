@@ -1,12 +1,32 @@
 # Offline checks of the OnboardAi stack: `terraform test` in terraform/onboardai.
-# The google provider is mocked, so nothing is read from or created in GCP.
-# `command = apply` against the mock fills computed values (emails, resource
-# names) with stand-ins, so references between resources can be compared.
+# The google and google-beta providers are mocked, so nothing is read from or
+# created in GCP. `command = apply` against the mock fills computed values
+# (emails, resource names) with stand-ins, so references between resources can
+# be compared.
+#
+# This file checks the production environment (var.environment's default);
+# tests/staging.tftest.hcl checks staging.
 
 mock_provider "google" {}
+mock_provider "google-beta" {}
 
 variables {
-  project_id = "onboardai-test-123"
+  project_id   = "onboardai-test-123"
+  alert_emails = ["alerts-a@example.com", "alerts-b@example.com"]
+}
+
+# terraform test runs in whichever workspace is selected, so the workspace guard
+# is replaced here; tests/state_guard.tftest.hcl tests it directly, and the run
+# state_guard_is_wired_to_the_workspace below checks its inputs.
+override_module {
+  target = module.state_guard
+}
+
+override_data {
+  target = data.google_project.this
+  values = {
+    number = "123456789012"
+  }
 }
 
 # Distinct, well-formed stand-ins (the provider validates service account IDs),
@@ -124,7 +144,7 @@ run "deployer_holds_only_resource_level_roles" {
 
   assert {
     condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("resource\\s+\"google_(folder|organization)_iam_", file("${path.module}/${f}")))])
-    error_message = "No folder- or organization-level IAM. The one project-level binding (api-run, Vertex AI) is pinned in api_uses_vertex_ai_without_a_secret; every other grant must be on a single resource."
+    error_message = "No folder- or organization-level IAM. The project-level roles of api-run are pinned in api_runtime_holds_exactly_three_project_roles; every other grant must be on a single resource."
   }
 
   assert {
@@ -164,34 +184,44 @@ run "deployer_holds_only_resource_level_roles" {
   }
 }
 
-run "api_uses_vertex_ai_without_a_secret" {
+run "api_runtime_holds_exactly_three_project_roles" {
   command = apply
 
   assert {
-    condition     = google_project_iam_member.api_uses_vertex_ai.role == "roles/aiplatform.user" && google_project_iam_member.api_uses_vertex_ai.member == "serviceAccount:${google_service_account.runtime["api"].email}" && google_project_iam_member.api_uses_vertex_ai.project == "onboardai-test-123"
-    error_message = "onboardai-api-run must hold roles/aiplatform.user on the project."
-  }
-
-  # Exactly one project-level IAM resource of any flavour, and it is the one above.
-  assert {
-    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_(member|binding|policy|audit_config)\"", file("${path.module}/${f}")))]) == 1
-    error_message = "Exactly one project-level IAM resource may exist (api-run: roles/aiplatform.user)."
+    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/discoveryengine.viewer", "roles/datastore.user"]) && length(google_project_iam_member.api_runtime) == 3
+    error_message = "onboardai-api-run holds exactly roles/aiplatform.user, roles/discoveryengine.viewer and roles/datastore.user on the project."
   }
 
   assert {
-    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 1
-    error_message = "No other project-level IAM resource type (member, binding, policy, custom role) may exist."
+    condition = alltrue([
+      for role, m in google_project_iam_member.api_runtime :
+      m.role == role && m.member == "serviceAccount:${google_service_account.runtime["api"].email}" && m.project == "onboardai-test-123"
+    ])
+    error_message = "Every project-level binding is for onboardai-api-run, on this project."
+  }
+
+  # Exactly one project-level IAM resource block of any flavour (the for_each above).
+  assert {
+    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 1 && sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"api_runtime\"", file("${path.module}/${f}")))]) == 1
+    error_message = "The only project-level IAM resource is google_project_iam_member.api_runtime (no binding, policy, audit config or custom role)."
   }
 
   assert {
-    condition     = google_project_iam_member.api_uses_vertex_ai.member != "serviceAccount:${google_service_account.deployer.email}" && google_project_iam_member.api_uses_vertex_ai.member != "serviceAccount:${google_service_account.runtime["web"].email}" && google_project_iam_member.api_uses_vertex_ai.member != "serviceAccount:${google_service_account.runtime["tts"].email}"
+    condition = alltrue([
+      for m in google_project_iam_member.api_runtime :
+      !contains([
+        "serviceAccount:${google_service_account.deployer.email}",
+        "serviceAccount:${google_service_account.runtime["web"].email}",
+        "serviceAccount:${google_service_account.runtime["tts"].email}",
+      ], m.member)
+    ])
     error_message = "The deployer, web-run and tts-run hold no project-level role."
   }
 
   # The Gemini key is gone: no secret, secret IAM or secret version is managed.
   assert {
     condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("google_secret_manager_", file("${path.module}/${f}")))])
-    error_message = "This module manages no Secret Manager resource; the API authenticates to Vertex AI with its service account."
+    error_message = "This module manages no Secret Manager resource; the API authenticates to Google APIs with its service account."
   }
 
   assert {
@@ -278,8 +308,227 @@ run "cloud_run_matches_service_contract" {
   }
 
   assert {
-    condition     = alltrue([for api in ["run.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "secretmanager.googleapis.com", "aiplatform.googleapis.com"] : contains(keys(google_project_service.required), api) && google_project_service.required[api].disable_on_destroy == false])
-    error_message = "Required APIs must be managed and never disabled on destroy."
+    condition     = toset(keys(google_project_service.required)) == toset(["run.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "secretmanager.googleapis.com", "aiplatform.googleapis.com", "discoveryengine.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "monitoring.googleapis.com"]) && alltrue([for s in google_project_service.required : s.disable_on_destroy == false])
+    error_message = "Exactly the required APIs are managed (no Drive API), and none is disabled on destroy."
+  }
+
+  assert {
+    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("(?i)google_drive|drive\\.googleapis", file("${path.module}/${f}")))])
+    error_message = "Google Drive is retired: no Drive API and no folder variable."
+  }
+}
+
+run "firestore_keeps_its_data" {
+  command = apply
+
+  assert {
+    condition     = google_firestore_database.default.name == "(default)" && google_firestore_database.default.type == "FIRESTORE_NATIVE" && google_firestore_database.default.location_id == "asia-southeast1"
+    error_message = "Contract v2: the (default) database, Native mode, asia-southeast1."
+  }
+
+  assert {
+    condition     = google_firestore_database.default.delete_protection_state == "DELETE_PROTECTION_ENABLED"
+    error_message = "Firestore delete protection must be on."
+  }
+
+  assert {
+    condition     = google_firestore_database.default.deletion_policy == "ABANDON"
+    error_message = "terraform destroy must never delete the database (deletion_policy ABANDON)."
+  }
+
+  assert {
+    condition     = output.firestore_database_id == "(default)"
+    error_message = "FIRESTORE_DATABASE_ID is (default)."
+  }
+}
+
+run "documents_bucket_is_private_and_readable_only_by_discovery_engine" {
+  command = apply
+
+  assert {
+    condition     = google_storage_bucket.docs.name == "onboardai-test-123-onboardai-docs" && google_storage_bucket.docs.location == "ASIA-SOUTHEAST1" && output.docs_bucket_name == google_storage_bucket.docs.name
+    error_message = "Contract v2: bucket <project>-onboardai-docs in asia-southeast1."
+  }
+
+  assert {
+    condition     = google_storage_bucket.docs.uniform_bucket_level_access == true && google_storage_bucket.docs.public_access_prevention == "enforced"
+    error_message = "The documents bucket needs uniform access and enforced public access prevention."
+  }
+
+  assert {
+    condition     = google_storage_bucket.docs.versioning[0].enabled == true && google_storage_bucket.docs.force_destroy == false
+    error_message = "The documents bucket keeps versions and is never force-destroyed."
+  }
+
+  # One bucket grant in the whole module: the Discovery Engine service agent,
+  # object read, on this bucket. The API holds no bucket role.
+  assert {
+    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_storage_bucket_iam_", file("${path.module}/${f}")))]) == 1
+    error_message = "Exactly one bucket IAM resource may exist (Discovery Engine reads the documents)."
+  }
+
+  assert {
+    condition = (
+      google_storage_bucket_iam_member.discovery_engine_reads_docs.bucket == google_storage_bucket.docs.name &&
+      google_storage_bucket_iam_member.discovery_engine_reads_docs.role == "roles/storage.objectViewer" &&
+      google_storage_bucket_iam_member.discovery_engine_reads_docs.member == "serviceAccount:service-123456789012@gcp-sa-discoveryengine.iam.gserviceaccount.com"
+    )
+    error_message = "The Discovery Engine service agent gets roles/storage.objectViewer on the documents bucket only."
+  }
+
+  assert {
+    condition     = length(google_project_service_identity.discovery_engine) == 1 && google_project_service_identity.discovery_engine[0].service == "discoveryengine.googleapis.com"
+    error_message = "The service agent must be generated before the bucket grant (production's state owns it)."
+  }
+}
+
+run "vertex_ai_search_matches_contract" {
+  command = apply
+
+  assert {
+    condition = (
+      google_discovery_engine_data_store.docs.data_store_id == "onboardai-docs" &&
+      google_discovery_engine_data_store.docs.location == "global" &&
+      google_discovery_engine_data_store.docs.industry_vertical == "GENERIC" &&
+      google_discovery_engine_data_store.docs.content_config == "CONTENT_REQUIRED" &&
+      google_discovery_engine_data_store.docs.solution_types == tolist(["SOLUTION_TYPE_SEARCH"]) &&
+      output.vertex_search_data_store_id == "onboardai-docs"
+    )
+    error_message = "Contract v2: data store onboardai-docs, global, GENERIC, content required, search."
+  }
+
+  # Cannot be changed after creation.
+  assert {
+    condition = (
+      length(google_discovery_engine_data_store.docs.document_processing_config[0].default_parsing_config[0].layout_parsing_config) == 1 &&
+      google_discovery_engine_data_store.docs.document_processing_config[0].chunking_config[0].layout_based_chunking_config[0].chunk_size == 500 &&
+      google_discovery_engine_data_store.docs.document_processing_config[0].chunking_config[0].layout_based_chunking_config[0].include_ancestor_headings == true &&
+      length(google_discovery_engine_data_store.docs.document_processing_config[0].parsing_config_overrides) == 0
+    )
+    error_message = "Contract v2: layout parser for every file type, layout-based chunks of 500 tokens with ancestor headings."
+  }
+
+  assert {
+    condition     = google_discovery_engine_data_store.docs.deletion_policy == "PREVENT" && google_discovery_engine_search_engine.docs.deletion_policy == "PREVENT"
+    error_message = "Terraform must refuse to delete the data store and the engine."
+  }
+
+  assert {
+    condition = (
+      google_discovery_engine_search_engine.docs.engine_id == "onboardai-search" &&
+      google_discovery_engine_search_engine.docs.collection_id == "default_collection" &&
+      google_discovery_engine_search_engine.docs.location == "global" &&
+      google_discovery_engine_search_engine.docs.data_store_ids == tolist(["onboardai-docs"]) &&
+      google_discovery_engine_search_engine.docs.search_engine_config[0].search_tier == "SEARCH_TIER_ENTERPRISE"
+    )
+    error_message = "Contract v2: Enterprise engine onboardai-search on onboardai-docs."
+  }
+
+  assert {
+    condition     = output.vertex_search_serving_config == "projects/123456789012/locations/global/collections/default_collection/engines/onboardai-search/servingConfigs/default_search"
+    error_message = "The serving config must be the one in contract v2."
+  }
+
+  assert {
+    condition = (
+      strcontains(output.import_documents_command, "\"https://discoveryengine.googleapis.com/v1/projects/123456789012/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents:import\"") &&
+      strcontains(output.import_documents_command, "-H \"Authorization: Bearer $(gcloud auth print-access-token)\"") &&
+      strcontains(output.import_documents_command, "-H \"X-Goog-User-Project: onboardai-test-123\"") &&
+      startswith(output.import_documents_command, "curl -sS -X POST")
+    )
+    error_message = "The import command must POST documents:import on onboardai-docs with a gcloud token and X-Goog-User-Project."
+  }
+
+  assert {
+    condition = jsondecode(regex("-d '([^']+)'$", output.import_documents_command)[0]) == {
+      gcsSource = {
+        inputUris  = ["gs://onboardai-test-123-onboardai-docs/*"]
+        dataSchema = "content"
+      }
+      reconciliationMode = "INCREMENTAL"
+    }
+    error_message = "The import body must be gcsSource.inputUris [gs://<bucket>/*], dataSchema content, reconciliationMode INCREMENTAL."
+  }
+}
+
+run "alerts_are_quiet_and_reach_every_address" {
+  command = apply
+
+  assert {
+    condition = (
+      toset(keys(google_monitoring_notification_channel.email)) == toset(["alerts-a@example.com", "alerts-b@example.com"]) &&
+      alltrue([for email, c in google_monitoring_notification_channel.email : c.type == "email" && c.labels.email_address == email])
+    )
+    error_message = "One email notification channel per alert address."
+  }
+
+  assert {
+    condition = alltrue([
+      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency] :
+      toset(p.notification_channels) == toset([for c in google_monitoring_notification_channel.email : c.name]) && length(p.conditions) == 1
+    ])
+    error_message = "Both policies have one condition and notify every channel."
+  }
+
+  # Quiet: no absence conditions, missing data (scale to zero) never fires.
+  assert {
+    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("condition_absent|EVALUATION_MISSING_DATA_ACTIVE", file("${path.module}/${f}")))])
+    error_message = "No alert may fire on missing data (a service scaled to zero sends none)."
+  }
+
+  assert {
+    condition = alltrue([
+      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency] :
+      p.conditions[0].condition_threshold[0].evaluation_missing_data == "EVALUATION_MISSING_DATA_INACTIVE"
+    ])
+    error_message = "Missing data must count as no violation."
+  }
+
+  # The Monitoring API rejects evaluation_missing_data on a zero duration.
+  assert {
+    condition = alltrue([
+      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency] :
+      alltrue([
+        for c in p.conditions :
+        alltrue([
+          for t in c.condition_threshold :
+          t.evaluation_missing_data == null || t.evaluation_missing_data == "" || !contains(["0s", "0"], t.duration)
+        ])
+      ])
+    ])
+    error_message = "A condition that sets evaluation_missing_data needs a non-zero duration (the API returns 400 for 0s)."
+  }
+
+  assert {
+    condition = (
+      strcontains(google_monitoring_alert_policy.server_errors.conditions[0].condition_threshold[0].filter, "metric.type = \"run.googleapis.com/request_count\"") &&
+      strcontains(google_monitoring_alert_policy.server_errors.conditions[0].condition_threshold[0].filter, "metric.label.response_code_class = \"5xx\"") &&
+      strcontains(google_monitoring_alert_policy.server_errors.conditions[0].condition_threshold[0].filter, "resource.label.service_name = one_of(\"onboardai-api\", \"onboardai-tts\")") &&
+      !strcontains(google_monitoring_alert_policy.server_errors.conditions[0].condition_threshold[0].filter, "onboardai-web")
+    )
+    error_message = "The 5xx alert watches request_count with response_code_class 5xx on onboardai-api and onboardai-tts."
+  }
+
+  assert {
+    condition = (
+      google_monitoring_alert_policy.server_errors.conditions[0].condition_threshold[0].duration == "300s" &&
+      google_monitoring_alert_policy.server_errors.conditions[0].condition_threshold[0].comparison == "COMPARISON_GT" &&
+      google_monitoring_alert_policy.server_errors.conditions[0].condition_threshold[0].threshold_value == 0 &&
+      google_monitoring_alert_policy.server_errors.conditions[0].condition_threshold[0].aggregations[0].group_by_fields == tolist(["resource.label.service_name"])
+    )
+    error_message = "The 5xx alert fires on 5xx sustained for 5 minutes, per service."
+  }
+
+  assert {
+    condition = (
+      strcontains(google_monitoring_alert_policy.api_latency.conditions[0].condition_threshold[0].filter, "metric.type = \"run.googleapis.com/request_latencies\"") &&
+      strcontains(google_monitoring_alert_policy.api_latency.conditions[0].condition_threshold[0].filter, "resource.label.service_name = \"onboardai-api\"") &&
+      google_monitoring_alert_policy.api_latency.conditions[0].condition_threshold[0].aggregations[0].alignment_period == "300s" &&
+      google_monitoring_alert_policy.api_latency.conditions[0].condition_threshold[0].aggregations[0].cross_series_reducer == "REDUCE_PERCENTILE_95" &&
+      google_monitoring_alert_policy.api_latency.conditions[0].condition_threshold[0].comparison == "COMPARISON_GT" &&
+      google_monitoring_alert_policy.api_latency.conditions[0].condition_threshold[0].threshold_value == 20000
+    )
+    error_message = "The latency alert fires when onboardai-api's p95 over 5 minutes is above 20 s (20000 ms)."
   }
 }
 
@@ -287,11 +536,11 @@ run "outputs_carry_the_setup_commands" {
   command = apply
 
   assert {
-    condition = alltrue([
-      for name in ["GCP_PROJECT_ID", "GCP_REGION", "GCP_WIF_PROVIDER", "GCP_DEPLOYER_SA", "AI_MODE", "GEMINI_MODEL"] :
-      strcontains(output.github_variable_commands, "gh variable set ${name} --repo UniVRse-Interactive/univrse-onboardai --body '")
-    ])
-    error_message = "Every repository variable deploy.yml reads needs a gh command."
+    condition = toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) --repo UniVRse-Interactive/univrse-onboardai --body '[^']*'$", output.github_variable_commands) : m[0]]) == toset([
+      "GCP_PROJECT_ID", "GCP_REGION", "GCP_WIF_PROVIDER", "GCP_DEPLOYER_SA", "AI_MODE", "GEMINI_MODEL",
+      "VERTEX_SEARCH_LOCATION", "VERTEX_SEARCH_ENGINE_ID", "FIRESTORE_DATABASE_ID",
+    ]) && length(split("\n", output.github_variable_commands)) == 9
+    error_message = "One gh command for each of the nine repository variables, and nothing else."
   }
 
   assert {
@@ -300,21 +549,15 @@ run "outputs_carry_the_setup_commands" {
   }
 
   assert {
-    condition     = strcontains(output.github_variable_commands, "# GOOGLE_DRIVE_FOLDER_ID")
-    error_message = "Without a folder ID the output must say how to set it."
-  }
-}
-
-run "drive_folder_command_when_set" {
-  command = plan
-
-  variables {
-    google_drive_folder_id = "1AbC_dEf-123"
-  }
-
-  assert {
-    condition     = strcontains(output.github_variable_commands, "gh variable set GOOGLE_DRIVE_FOLDER_ID --repo UniVRse-Interactive/univrse-onboardai --body '1AbC_dEf-123'")
-    error_message = "A set folder ID must produce its gh command."
+    condition = (
+      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_LOCATION --repo UniVRse-Interactive/univrse-onboardai --body 'global'") &&
+      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_ENGINE_ID --repo UniVRse-Interactive/univrse-onboardai --body 'onboardai-search'") &&
+      strcontains(output.github_variable_commands, "gh variable set FIRESTORE_DATABASE_ID --repo UniVRse-Interactive/univrse-onboardai --body '(default)'") &&
+      strcontains(output.github_variable_commands, "gh variable set AI_MODE --repo UniVRse-Interactive/univrse-onboardai --body 'gemini-chat'") &&
+      strcontains(output.github_variable_commands, "gh variable set GEMINI_MODEL --repo UniVRse-Interactive/univrse-onboardai --body 'gemini-3.5-flash-lite'") &&
+      strcontains(output.github_variable_commands, "gh variable set GCP_REGION --repo UniVRse-Interactive/univrse-onboardai --body 'asia-southeast1'")
+    )
+    error_message = "Contract v2 values: global, onboardai-search, (default), gemini-chat, gemini-3.5-flash-lite, asia-southeast1."
   }
 }
 
@@ -336,4 +579,132 @@ run "rejects_unknown_ai_mode" {
   }
 
   expect_failures = [var.ai_mode]
+}
+
+run "rejects_malformed_alert_email" {
+  command = plan
+
+  variables {
+    alert_emails = ["alerts-a@example.com", "not-an-address"]
+  }
+
+  expect_failures = [var.alert_emails]
+}
+
+run "rejects_empty_alert_emails" {
+  command = plan
+
+  variables {
+    alert_emails = []
+  }
+
+  expect_failures = [var.alert_emails]
+}
+
+# ---------------------------------------------------------------------------
+# Production keeps exactly what it was applied with (issue #20)
+# ---------------------------------------------------------------------------
+
+run "production_keeps_its_names_labels_and_grants" {
+  command = apply
+
+  assert {
+    condition = alltrue([
+      for labels in concat(
+        [for s in google_cloud_run_v2_service.service : s.labels],
+        [google_artifact_registry_repository.onboardai.labels, google_storage_bucket.docs.labels],
+      ) : !contains(keys(labels), "environment")
+    ]) && google_monitoring_alert_policy.server_errors.user_labels == tomap({ app = "onboardai", managed-by = "terraform" })
+    error_message = "Production resources carry no environment label: adding one would update every production resource."
+  }
+
+  assert {
+    condition = (
+      google_service_account.deployer.account_id == "onboardai-deployer" &&
+      { for k, a in google_service_account.runtime : k => a.account_id } == { web = "onboardai-web-run", api = "onboardai-api-run", tts = "onboardai-tts-run" } &&
+      google_artifact_registry_repository.onboardai.repository_id == "onboardai" &&
+      google_iam_workload_identity_pool.github.workload_identity_pool_id == "onboardai-github" &&
+      google_iam_workload_identity_pool_provider.github.workload_identity_pool_provider_id == "github-actions"
+    )
+    error_message = "Production IDs never carry a suffix."
+  }
+
+  assert {
+    condition = (
+      google_iam_workload_identity_pool.github.display_name == "OnboardAi GitHub Actions" &&
+      google_iam_workload_identity_pool_provider.github.display_name == "GitHub Actions" &&
+      google_service_account.deployer.display_name == "OnboardAi: GitHub Actions deployer" &&
+      google_service_account.deployer.description == "Impersonated by the deploy workflow on main through Workload Identity Federation. Pushes images and deploys the three OnboardAi services. Has no key." &&
+      google_cloud_run_v2_service.service["web"].description == "OnboardAi web: serves the built frontend and avatar, proxies /api/* to onboardai-api." &&
+      google_monitoring_alert_policy.api_latency.display_name == "OnboardAi: onboardai-api p95 latency above 20 s"
+    )
+    error_message = "Production display names and descriptions are the ones it was applied with."
+  }
+
+  assert {
+    condition     = alltrue([for m in google_project_iam_member.api_runtime : length(m.condition) == 0])
+    error_message = "Production's api roles carry no IAM condition (adding one would replace the binding)."
+  }
+
+  assert {
+    condition     = length(google_discovery_engine_search_engine_iam_member.api_searches_engine) == 0
+    error_message = "Production searches through its project-level role; the engine-level grant is staging's."
+  }
+
+  assert {
+    condition     = output.github_environment_commands == null
+    error_message = "Production keeps its repository variables; the GitHub environment setup output is staging's only (null keeps production's outputs unchanged)."
+  }
+
+  assert {
+    condition = (
+      google_cloud_run_v2_service.service["api"].deletion_protection == true &&
+      google_discovery_engine_search_engine.docs.deletion_policy == "PREVENT"
+    )
+    error_message = "deletion_protection defaults to true."
+  }
+}
+
+run "state_guard_is_wired_to_the_workspace" {
+  command = plan
+
+  assert {
+    condition     = can(regex("module \"state_guard\" \\{\\s*source\\s*=\\s*\"\\./modules/state_guard\"\\s*environment\\s*=\\s*var\\.environment\\s*workspace\\s*=\\s*terraform\\.workspace\\s*\\}", file("${path.module}/environment.tf")))
+    error_message = "module.state_guard must receive environment = var.environment and workspace = terraform.workspace."
+  }
+
+  assert {
+    condition     = sum([for f in fileset("${path.module}/modules/state_guard", "*.tf") : length(regexall("(?m)^\\s*(resource|data)\\s+\"", file("${path.module}/modules/state_guard/${f}")))]) == 0
+    error_message = "The guard manages and reads nothing, so it adds nothing to either state."
+  }
+}
+
+run "deletion_protection_can_be_lifted_for_tear_down" {
+  command = plan
+
+  variables {
+    deletion_protection = false
+  }
+
+  assert {
+    condition = (
+      alltrue([for s in google_cloud_run_v2_service.service : s.deletion_protection == false]) &&
+      google_discovery_engine_data_store.docs.deletion_policy == "DELETE" &&
+      google_discovery_engine_search_engine.docs.deletion_policy == "DELETE" &&
+      google_firestore_database.default.delete_protection_state == "DELETE_PROTECTION_DISABLED" &&
+      google_firestore_database.default.deletion_policy == "DELETE" &&
+      google_storage_bucket.docs.force_destroy == false
+    )
+    error_message = "deletion_protection = false lifts every delete guard except the bucket's (documents are emptied by hand)."
+  }
+}
+
+run "rejects_unknown_environment" {
+  command = plan
+
+  variables {
+    environment = "prod"
+  }
+
+  expect_failures = [var.environment]
 }

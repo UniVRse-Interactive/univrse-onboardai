@@ -19,6 +19,7 @@ export const busyMessages = {
   erase: 'Wait for this answer to finish before deleting its chat.',
   learning: 'Wait for the answer to finish before changing learning settings.',
   feedback: 'Wait for the answer before updating feedback.',
+  eraseOwner: 'Wait for this employee’s answer to finish before removing their record.',
 };
 export const chatBusy = (message) => new ChatError(409, 'CHAT_BUSY', message);
 export const chatLimit = () =>

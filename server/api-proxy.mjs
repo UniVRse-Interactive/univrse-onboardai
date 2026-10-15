@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { workspaceLimits } from './workspace-limits.mjs';
 
 const hopByHop = new Set([
   'connection',
@@ -53,7 +54,13 @@ export function createApiProxy({
 }) {
   const origin = parseApiServiceUrl(apiUrl);
   return async function apiProxy(req, res) {
-    const body = await readBody(req, maxBodyBytes).catch(() => null);
+    const upload =
+      req.method === 'POST' &&
+      req.path === '/guest-workspace/documents' &&
+      req.is('application/octet-stream');
+    const body = await readBody(req, upload ? workspaceLimits.bytes : maxBodyBytes).catch(
+      () => null,
+    );
     if (body === null)
       return res
         .status(413)

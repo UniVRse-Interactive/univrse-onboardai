@@ -1,6 +1,6 @@
 // Editable portal content. Activities are suggestions, not HR assignments.
 export const navigation = [
-  { path: '/', label: 'Dashboard', short: 'Home', icon: 'home' },
+  { path: '/dashboard', label: 'Dashboard', short: 'Home', icon: 'home' },
   { path: '/onboarding', label: 'My onboarding', short: 'Journey', icon: 'checklist' },
   { path: '/support', label: 'People & support', short: 'People', icon: 'people' },
   { path: '/mira', label: 'Ask Alya', short: 'Alya', icon: 'spark' },
@@ -45,7 +45,7 @@ export const tasks = [
   },
   {
     id: 'company',
-    title: 'Step inside UniVRse',
+    title: 'Get to know your company',
     stage: 1,
     time: '5 min',
     owner: 'You',
@@ -55,7 +55,7 @@ export const tasks = [
       'Get familiar with its capabilities.',
       'Bring one question to your next team conversation.',
     ],
-    action: 'Ask Alya about UniVRse',
+    action: 'Ask Alya about your company',
     target: '/mira',
   },
   {

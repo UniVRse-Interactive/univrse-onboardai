@@ -5,6 +5,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { createApp } from './api-routes.mjs';
 import { avatarRoute } from './avatar-route.mjs';
 import { createWindowsVoice } from './optional-windows-voice.mjs';
+import { createSharedVoice } from './kokoro-voice.mjs';
 import { describeKnowledgeSource } from './company-document-retriever.mjs';
 import { describeChatStorage } from './chat-store.mjs';
 if (existsSync('.env')) process.loadEnvFile('.env');
@@ -18,7 +19,8 @@ if (process.env.GOOGLE_CLOUD_TTS !== 'enabled' && !process.env.K_SERVICE) {
     console.warn(`Local voice unavailable: ${error.message}`);
   }
 }
-const app = createApp({ localVoice });
+const sharedVoice = createSharedVoice();
+const app = createApp({ localVoice, sharedVoice });
 process.on('exit', () => {
   localVoice?.close();
   app.locals.closeChat();
@@ -45,6 +47,14 @@ server.listen(port, process.env.HOST || '127.0.0.1', () => {
     console.info(`Company knowledge: ${describeKnowledgeSource(process.env)}.`);
   if (process.env.AI_MODE === 'gemini-chat')
     console.info(`Saved chats: ${describeChatStorage(process.env)}.`);
+  if (process.env.VOICE_WARMUP !== 'false') {
+    sharedVoice
+      .prepare()
+      .then(() => console.info('Alya’s shared voice is ready.'))
+      .catch(() =>
+        console.warn('Voice warmup unavailable. Run npm run voice:prepare to install the model.'),
+      );
+  }
 });
 let stopping = false;
 async function shutdown() {

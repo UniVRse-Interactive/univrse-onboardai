@@ -8,6 +8,7 @@ The project stays in JavaScript and React. `.jsx` files contain React screens; `
 | ---------------------- | ------------------------------------------------------------------------------ |
 | `src/portal/`          | The website shell and the welcome, onboarding and support pages                |
 | `src/avatar/`          | Alya's chat screen, avatar rendering, answer visuals and support summary       |
+| `src/access/`          | Employee/HR login interface, employee sign-up and live guest HR workspace      |
 | `server/`              | API routes, Gemini workflow, document search, saved chats and voice generation |
 | `scripts/`             | Development, connection checks, avatar import and voice setup                  |
 | `tests/`               | Regression checks using temporary data and synthetic company documents         |
@@ -20,11 +21,16 @@ The project stays in JavaScript and React. `.jsx` files contain React screens; `
 
 1. `src/main.jsx` starts React and redirects old page addresses.
 2. `src/portal/OnboardingWebsite.jsx` selects a page and renders the website shell.
-3. `src/avatar/AlyaChatPage.jsx` submits questions and displays chat, the avatar, visual answers and the employee summary.
+3. `src/avatar/AlyaChatPage.jsx` submits questions and displays chat, the avatar, visual answers and support controls.
 4. `server/index.mjs` starts the HTTP server and serves the website and compressed avatar.
 5. `server/api-routes.mjs` handles browser requests and calls the appropriate chat or voice service.
 
 ## Website
+
+`src/styles/theme.css` defines the shared navy (`#0A2D43`), gold (`#F6C44B`) and
+ivory palette. `src/brand/OnboardAiBrand.jsx` draws the shared sailboat mark and
+OnboardAi wordmark. Existing browser storage keys keep their original names so
+saved preferences survive the branding change.
 
 | File                                           | Purpose                                                |
 | ---------------------------------------------- | ------------------------------------------------------ |
@@ -66,37 +72,42 @@ Question + saved context
 
 LangChain connects the model. Vertex AI Search returns the company passages. LangGraph runs and checkpoints the conversation steps. Neither library diagnoses employees or replaces the language model.
 
+The guide uses `src/avatar/use-visual-text-pages.js` to measure available paragraph space and `src/avatar/visual-text-pagination.mjs` to paginate without dropping words. The question form is visible only in Chat; Next/Back replaces scrolling inside the guide.
+
 ## Avatar and voice
 
-| File                                         | Purpose                                                  |
-| -------------------------------------------- | -------------------------------------------------------- |
-| `src/avatar/AvatarDisplay.jsx`               | Avatar loading, presence and poster fallback             |
-| `src/avatar/avatar-renderer.js`              | Three.js camera, light, model, face and gentle movement  |
-| `src/avatar/answer-audio-player.js`          | Fetch server audio, play it and cancel safely            |
-| `src/avatar/speech-text-and-mouth-timing.js` | Prepare spoken text and estimate English mouth timing    |
-| `src/avatar/alya-chat.css`                   | Chat/avatar layout and chat controls                     |
-| `server/kokoro-voice.mjs`                    | Fixed Kokoro Heart voice, synthesis queue and WAV output |
-| `scripts/download-voice-model.mjs`           | Cache the voice model and create a sample                |
-| `scripts/import-avatar-model.mjs`            | Import and compress a revised original GLB               |
+| File                                         | Purpose                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------ |
+| `src/avatar/AvatarDisplay.jsx`               | Avatar loading, presence and poster fallback                             |
+| `src/avatar/avatar-renderer.js`              | Three.js camera, light, model, face and gentle movement                  |
+| `src/avatar/answer-audio-player.js`          | Fetch server audio, play it and cancel safely                            |
+| `src/avatar/speech-text-and-mouth-timing.js` | Prepare spoken text and estimate English mouth timing                    |
+| `src/avatar/alya-chat.css`                   | Chat/avatar layout and chat controls                                     |
+| `src/avatar/alya-workspace.css`              | Window-sized chat and visual panes with a visible avatar                 |
+| `server/kokoro-voice.mjs`                    | Fixed Kokoro Heart voice, startup warmup, synthesis queue and WAV output |
+| `scripts/download-voice-model.mjs`           | Cache the voice model and create a sample                                |
+| `scripts/import-avatar-model.mjs`            | Import and compress a revised original GLB                               |
 
-The browser plays WAV audio from `/api/voice`. Mouth movement follows the audio clock using estimated phonemes. The unused browser-voice controller was removed; text and mouth-timing helpers remain because the current player uses them.
+The browser plays WAV audio from `/api/voice`, starting with a short opening while the next segment is prepared. The installed model warms at server startup. Mouth movement follows the audio clock using estimated phonemes. The unused browser-voice controller was removed; text and mouth-timing helpers remain because the current player uses them.
 
 `server/optional-windows-voice.mjs`, `server/windows-audio-mouth-timing.mjs`, `scripts/start-windows-voice-helper.ps1` and `scripts/WindowsVoiceHelper.cs` support the existing optional Windows TTS route. They are retained because the server still calls them. The current website's shared voice uses Kokoro.
 
 ## Visual answers and HR summary
 
-| File                                      | Purpose                                                         |
-| ----------------------------------------- | --------------------------------------------------------------- |
-| `src/avatar/VisualAnswerPanel.jsx`        | Separate visual workspace and answer selection                  |
-| `src/avatar/IllustratedAnswer.jsx`        | Interactive picture selection and readable explanation          |
-| `src/avatar/AnswerIllustrations.jsx`      | Original SVG subject illustrations                              |
-| `src/avatar/visual-answer-content.mjs`    | Build a visual explanation from the delivered answer            |
-| `src/avatar/visual-answer.css`            | Visual-panel styling and keyboard focus                         |
-| `src/avatar/EmployeeSupportSummary.jsx`   | Live employee overview and reviewed export dialog               |
-| `src/avatar/hr-support-report.mjs`        | The concise report text exported for HR                         |
-| `src/avatar/employee-support-summary.css` | Summary and export-dialog styling                               |
-| `server/employee-support-tracking.mjs`    | Recorded support requests, feedback and summary templates       |
-| `server/answer-guide-metadata.mjs`        | Source-supported guide metadata for existing saved-chat records |
+| File                                     | Purpose                                                         |
+| ---------------------------------------- | --------------------------------------------------------------- |
+| `src/avatar/VisualAnswerPanel.jsx`       | Separate visual workspace and answer selection                  |
+| `src/avatar/IllustratedAnswer.jsx`       | Numbered illustration sections and full-answer reading dialog   |
+| `src/avatar/AnswerIllustrations.jsx`     | Original SVG subject illustrations                              |
+| `src/avatar/visual-answer-content.mjs`   | Build a visual explanation from the delivered answer            |
+| `src/avatar/visual-answer.css`           | Visual-panel styling and keyboard focus                         |
+| `src/access/HrWorkspace.jsx`             | Live individual reports, team counts and automatic summaries    |
+| `src/access/CompanyDocumentLibrary.jsx`  | Company uploads, file removal and company-source status         |
+| `src/access/hr-report-insights.mjs`      | Aggregate activity counts and explicit support labels           |
+| `src/avatar/hr-support-report.mjs`       | The concise report text exported for HR                         |
+| `src/avatar/answer-support-controls.css` | Feedback, explanation and source controls                       |
+| `server/employee-support-tracking.mjs`   | Recorded support requests, feedback and summary templates       |
+| `server/answer-guide-metadata.mjs`       | Source-supported guide metadata for existing saved-chat records |
 
 The persisted/API field named `card` remains compatible with existing chats and guide counts. It is metadata; the interface uses the separate visual panel. UI component renames do not rename database fields, cookies or local preference keys.
 
@@ -115,3 +126,7 @@ Use the `npm` commands in the README rather than remembering these file paths.
 Ambiguous names such as `Portal`, `AvatarStage`, `conversation` and `drive-knowledge` were replaced with names that describe their role. The architecture notes are grouped in `docs/`. Compressed source formatting is expanded consistently with Prettier. Tests and imports follow the new names.
 
 The existing removed pages and old standalone avatar demos stay removed. The unused device-voice controller and its obsolete tests were replaced with checks for the active audio player. The original avatar, live settings, saved conversations and voice cache are preserved.
+
+## Uploaded company guidance
+
+See [Account and workspace details](account-access.md). `server/guest-workspace-routes.mjs` scopes guest uploads, conversations and reports to an opaque browser cookie. `server/guest-workspace-store.mjs` stores documents and individual employee identities in separate private SQLite storage. `server/read-uploaded-document.mjs` validates files and bounds worker execution; `server/uploaded-document-worker.mjs` extracts PDF/DOCX/text content. `server/workspace-company-knowledge.mjs` combines the company document search (Vertex AI Search, when `VERTEX_SEARCH_ENGINE_ID` is set) with owner-scoped uploads, which `server/uploaded-document-search.mjs` ranks locally. Guest workspaces always use their own SQLite file, also when saved chats use Firestore.

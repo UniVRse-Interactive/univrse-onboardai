@@ -24,6 +24,7 @@ export function encodeWav(samples, sampleRate = 24000) {
 }
 export function createSharedVoice({ allowDownload = false } = {}) {
   let enginePromise = null,
+    warmupPromise = null,
     tail = Promise.resolve(),
     waiting = 0;
   async function engine() {
@@ -46,7 +47,14 @@ export function createSharedVoice({ allowDownload = false } = {}) {
   return {
     name: sharedVoiceName,
     async prepare() {
-      await engine();
+      // Use the synthesis queue for warmup too, so it cannot overlap a reply.
+      // The small greeting is discarded; nothing plays in a visitor's browser.
+      if (!warmupPromise)
+        warmupPromise = this.render('Hello.').catch((error) => {
+          warmupPromise = null;
+          throw error;
+        });
+      await warmupPromise;
     },
     async render(text, rate = 1) {
       if (waiting >= 8) throw new Error('VOICE_BUSY');

@@ -146,6 +146,12 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
       },
     };
   }
+  const eraseOwner = db.transaction((owner) => {
+    const chats = db.prepare('SELECT id FROM conversations WHERE owner=?').all(owner);
+    if (chats.some((chat) => busy.has(chat.id))) throw chatBusy(busyMessages.eraseOwner);
+    for (const chat of chats) remove(chat.id);
+    db.prepare('DELETE FROM support_preferences WHERE owner=?').run(owner);
+  });
   function setLearning(owner, id, learning) {
     owned(owner, id);
     if (busy.has(id)) throw chatBusy(busyMessages.learning);
@@ -164,6 +170,9 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
     create: async (owner) => create(owner),
     read: async (owner, id) => read(owner, id),
     erase: async (owner, id) => erase(owner, id),
+    // SQLite only (no Firestore equivalent): guest workspaces remove one guest's
+    // chats, checkpoints and support records together, or nothing while one is busy.
+    eraseOwner: async (owner) => eraseOwner(owner),
     acquire: async (owner, id) => acquire(owner, id),
     setLearning: async (owner, id, learning) => setLearning(owner, id, learning),
     supportSummary: async (owner) => {
