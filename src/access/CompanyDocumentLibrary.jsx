@@ -2,15 +2,18 @@ import React, { useEffect, useRef, useState } from 'react';
 import Icon from '../portal/Icon';
 import { reportDate } from '../avatar/hr-support-report.mjs';
 import { workspaceRequest } from './guest-workspace-api';
+import { companyKnowledgeStatus } from './company-knowledge-status.mjs';
 
 export default function CompanyDocumentLibrary({ workspace, onRefresh }) {
   const [busy, setBusy] = useState(false),
     [status, setStatus] = useState(''),
     [error, setError] = useState('');
   const abortRef = useRef(null);
-  const drive = workspace.companyKnowledge?.drive;
-  const driveDocuments = drive?.documents || [];
-  const totalDocuments = workspace.documents.length + driveDocuments.length;
+  const knowledge = companyKnowledgeStatus(
+    workspace.companyKnowledge?.drive,
+    workspace.documents.length,
+  );
+  const totalDocuments = workspace.documents.length;
   useEffect(() => () => abortRef.current?.abort(), []);
   async function upload(files) {
     if (!files.length || busy) return;
@@ -107,46 +110,23 @@ export default function CompanyDocumentLibrary({ workspace, onRefresh }) {
             </span>
           </h3>
           <span className="hr-ready-indicator">
-            <i />{' '}
-            {busy
-              ? 'Updating'
-              : drive?.state === 'unavailable'
-                ? 'Connection needs attention'
-                : totalDocuments
-                  ? 'Ready for Alya'
-                  : 'Awaiting documents'}
+            <i /> {busy ? 'Updating' : knowledge.indicator}
           </span>
         </header>
-        {driveDocuments.length > 0 && (
-          <section className="hr-drive-library" aria-label="Connected Google Drive documents">
+        {knowledge.searchConnected && (
+          <section className="hr-drive-library" aria-label="Shared company document search">
             <h4>
-              Google Drive <span>Connected</span>
+              Company document search <span>Connected</span>
             </h4>
-            <ul className="hr-document-list">
-              {driveDocuments.map((document) => (
-                <li key={document.title}>
-                  <span className="hr-file-type">
-                    <Icon name="book" size={18} />
-                  </span>
-                  <div>
-                    <strong>{document.title}</strong>
-                    <small>
-                      Google Drive · {document.characters.toLocaleString()} readable characters
-                    </small>
-                  </div>
-                  <span className="hr-source-label">Synced</span>
-                </li>
-              ))}
-            </ul>
             <p>
-              Alya checks the current Drive guidance when answering. Uploads below add to these
-              company documents.
+              Alya searches your shared company documents (Vertex AI Search) when answering. Uploads
+              below add to them.
             </p>
           </section>
         )}
-        {drive?.state === 'unavailable' && (
+        {knowledge.unavailable && (
           <p className="hr-workspace-error" role="alert">
-            {drive.error}
+            {knowledge.warning}
           </p>
         )}
         {workspace.documents.length ? (
@@ -186,7 +166,7 @@ export default function CompanyDocumentLibrary({ workspace, onRefresh }) {
           <div className="hr-library-empty">
             <Icon name="book" size={30} />
             <h3>
-              {driveDocuments.length
+              {knowledge.searchConnected
                 ? 'Add more company guidance.'
                 : 'Your company guidance starts here.'}
             </h3>
