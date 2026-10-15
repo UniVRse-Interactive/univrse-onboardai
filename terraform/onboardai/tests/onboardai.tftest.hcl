@@ -123,13 +123,18 @@ run "deployer_holds_only_resource_level_roles" {
   command = apply
 
   assert {
-    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("resource\\s+\"google_(project|folder|organization)_iam_", file("${path.module}/${f}")))])
-    error_message = "No project-, folder- or organization-level IAM: every grant must be on a single resource."
+    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("resource\\s+\"google_(folder|organization)_iam_", file("${path.module}/${f}")))])
+    error_message = "No folder- or organization-level IAM. The one project-level binding (api-run, Vertex AI) is pinned in api_uses_vertex_ai_without_a_secret; every other grant must be on a single resource."
   }
 
   assert {
     condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("roles/(owner|editor|viewer|run\\.admin|iam\\.serviceAccountTokenCreator|iam\\.serviceAccountAdmin|resourcemanager\\.)", file("${path.module}/${f}")))])
     error_message = "Basic roles, Cloud Run Admin, token-creator and admin roles must not appear in this module."
+  }
+
+  assert {
+    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("google_project_iam_(binding|policy)|google_project_iam_member\"\\s+\"deployer", file("${path.module}/${f}")))])
+    error_message = "The deployer holds no project-level role."
   }
 
   assert {
@@ -159,27 +164,44 @@ run "deployer_holds_only_resource_level_roles" {
   }
 }
 
-run "only_api_runtime_reads_the_gemini_key" {
+run "api_uses_vertex_ai_without_a_secret" {
   command = apply
 
   assert {
-    condition     = google_secret_manager_secret.gemini_api_key.secret_id == "onboardai-gemini-api-key"
-    error_message = "Secret name is fixed by the service contract."
+    condition     = google_project_iam_member.api_uses_vertex_ai.role == "roles/aiplatform.user" && google_project_iam_member.api_uses_vertex_ai.member == "serviceAccount:${google_service_account.runtime["api"].email}" && google_project_iam_member.api_uses_vertex_ai.project == "onboardai-test-123"
+    error_message = "onboardai-api-run must hold roles/aiplatform.user on the project."
+  }
+
+  # Exactly one project-level IAM resource of any flavour, and it is the one above.
+  assert {
+    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_(member|binding|policy|audit_config)\"", file("${path.module}/${f}")))]) == 1
+    error_message = "Exactly one project-level IAM resource may exist (api-run: roles/aiplatform.user)."
   }
 
   assert {
-    condition     = google_secret_manager_secret_iam_member.api_reads_gemini_key.member == "serviceAccount:${google_service_account.runtime["api"].email}" && google_secret_manager_secret_iam_member.api_reads_gemini_key.role == "roles/secretmanager.secretAccessor"
-    error_message = "onboardai-api-run must be the secret accessor."
+    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 1
+    error_message = "No other project-level IAM resource type (member, binding, policy, custom role) may exist."
   }
 
   assert {
-    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_secret_manager_secret_iam_", file("${path.module}/${f}")))]) == 1
-    error_message = "Exactly one secret IAM grant may exist (api-run reads the Gemini key)."
+    condition     = google_project_iam_member.api_uses_vertex_ai.member != "serviceAccount:${google_service_account.deployer.email}" && google_project_iam_member.api_uses_vertex_ai.member != "serviceAccount:${google_service_account.runtime["web"].email}" && google_project_iam_member.api_uses_vertex_ai.member != "serviceAccount:${google_service_account.runtime["tts"].email}"
+    error_message = "The deployer, web-run and tts-run hold no project-level role."
+  }
+
+  # The Gemini key is gone: no secret, secret IAM or secret version is managed.
+  assert {
+    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("google_secret_manager_", file("${path.module}/${f}")))])
+    error_message = "This module manages no Secret Manager resource; the API authenticates to Vertex AI with its service account."
   }
 
   assert {
-    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("google_secret_manager_secret_version", file("${path.module}/${f}")))])
-    error_message = "Secret values never go in Terraform; the user adds the version with gcloud."
+    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("GEMINI_API_KEY|gemini_api_key", file("${path.module}/${f}")))])
+    error_message = "No Gemini API key may be referenced in the module."
+  }
+
+  assert {
+    condition     = alltrue([for api in ["aiplatform.googleapis.com", "secretmanager.googleapis.com"] : contains(keys(google_project_service.required), api) && google_project_service.required[api].disable_on_destroy == false])
+    error_message = "aiplatform and secretmanager APIs must be managed with disable_on_destroy = false."
   }
 }
 
@@ -256,18 +278,13 @@ run "cloud_run_matches_service_contract" {
   }
 
   assert {
-    condition     = alltrue([for api in ["run.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "secretmanager.googleapis.com"] : contains(keys(google_project_service.required), api) && google_project_service.required[api].disable_on_destroy == false])
+    condition     = alltrue([for api in ["run.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "secretmanager.googleapis.com", "aiplatform.googleapis.com"] : contains(keys(google_project_service.required), api) && google_project_service.required[api].disable_on_destroy == false])
     error_message = "Required APIs must be managed and never disabled on destroy."
   }
 }
 
 run "outputs_carry_the_setup_commands" {
   command = apply
-
-  assert {
-    condition     = output.gemini_api_key_add_command == "gcloud secrets versions add onboardai-gemini-api-key --project=onboardai-test-123 --data-file=-"
-    error_message = "The secret command must read the value from stdin."
-  }
 
   assert {
     condition = alltrue([

@@ -70,7 +70,10 @@ test('long passages stay bounded and document text remains reference text', () =
 });
 
 async function withServer(options, check) {
-  const server = createApp(options).listen(0, '127.0.0.1');
+  const server = createApp({ getAccessToken: async () => 'test-token', ...options }).listen(
+    0,
+    '127.0.0.1',
+  );
   await once(server, 'listening');
   try {
     await check(`http://127.0.0.1:${server.address().port}`);
@@ -85,13 +88,13 @@ const ask = (url) =>
     body: JSON.stringify({ question: 'What are the working hours?', taskId: 'quiz-part-1' }),
   });
 
-test('explicit document-search mode works with a configured Gemini key and never calls Gemini', async () => {
+test('explicit document-search mode works with a configured Vertex project and never calls Gemini', async () => {
   let googleCalls = 0;
   await withServer(
     {
       env: {
         AI_MODE: 'document-search',
-        GEMINI_API_KEY: 'test-secret',
+        GOOGLE_CLOUD_PROJECT: 'test-project',
         GOOGLE_DRIVE_FOLDER_ID: 'test-folder',
       },
       loadDriveKnowledge: async (folder) => {
@@ -121,7 +124,8 @@ test('explicit document-search mode works with a configured Gemini key and never
 test('Gemini billing errors explain credit depletion without leaking raw provider data or substituting local results', async () => {
   await withServer(
     {
-      env: { GEMINI_API_KEY: 'test-secret' },
+      env: { GOOGLE_CLOUD_PROJECT: 'test-project' },
+      getAccessToken: async () => 'test-secret',
       fetchImpl: async () => new Response('private provider details', { status: 402 }),
     },
     async (url) => {

@@ -7,17 +7,17 @@ the same project.
 
 | Creates                                | Name                                                                               |
 | -------------------------------------- | ---------------------------------------------------------------------------------- |
-| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, drive              |
+| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, drive  |
 | Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image        |
 | Cloud Run services (placeholder image) | `onboardai-web`, `onboardai-api`, `onboardai-tts`, all public (`allUsers` invoker) |
 | Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                      |
 | Deployer service account (no key)      | `onboardai-deployer`                                                               |
 | Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                 |
-| Secret Manager secret (container only) | `onboardai-gemini-api-key`, readable only by `onboardai-api-run`                   |
+| Vertex AI access (project-level role)  | `roles/aiplatform.user` for `onboardai-api-run`, the only project-level binding    |
 
 **Who owns what.** Terraform owns each service's shape: identity, CPU, memory,
 scaling, concurrency, timeout, startup probe, ingress and public access. The
-deploy workflow owns the image, the environment variables, the secret reference
+deploy workflow owns the image, the environment variables
 and traffic. Both pass the same settings: the workflow's `WEB_RUN_FLAGS`,
 `API_RUN_FLAGS` and `TTS_RUN_FLAGS` lines must equal
 `terraform output cloud_run_deploy_flags`, and `terraform test` fails if they
@@ -29,11 +29,12 @@ differ. To change a setting, edit `locals.tf`, copy the new output into
 - Terraform 1.9 or newer, the gcloud CLI, and the GitHub CLI (`gh`) logged in
   with admin rights on `UniVRse-Interactive/univrse-onboardai`.
 - Owner (or equivalent IAM, IAM Workload Identity Pool, Cloud Run, Artifact
-  Registry and Secret Manager admin roles) on the project.
+  Registry and project IAM admin roles) on the project. The project-level
+  Vertex AI grant needs permission to set the project IAM policy.
 - `cloudresourcemanager.googleapis.com` and `serviceusage.googleapis.com` enabled
   (the FinOps stack already did this in the shared project).
 
-Do steps 1 to 4 **before** the pull request that adds `deploy.yml` is merged.
+Do steps 1 to 3 **before** the pull request that adds `deploy.yml` is merged.
 The merge pushes to `main`, and that push starts a deploy. Without the
 repository variables that deploy stops at its first check.
 
@@ -56,24 +57,7 @@ terraform apply
 State is local (`terraform.tfstate` here, gitignored). Keep it safe, and
 move it to a GCS backend before anyone else applies this module.
 
-### 2. Add the Gemini API key (only for AI modes that use it)
-
-Needed only when `AI_MODE` is `gemini` or `gemini-chat`. With `demo` or
-`document-search` the deploy mounts no secret, the secret may stay empty, and
-you can skip this step.
-
-```sh
-terraform output -raw gemini_api_key_add_command
-```
-
-Run the printed `gcloud secrets versions add ... --data-file=-` command, paste
-the key, press Enter, then Ctrl-D. The key never enters the shell history,
-Terraform state or this repository. The API service receives it as the
-environment variable `GEMINI_API_KEY`, from version `latest` (in those two
-modes only; the deploy fails at the API if the secret has no version). To rotate the key,
-add a new version and redeploy.
-
-### 3. Share the Google Drive folder
+### 2. Share the Google Drive folder
 
 ```sh
 terraform output -raw api_runtime_service_account_email
@@ -82,7 +66,7 @@ terraform output -raw api_runtime_service_account_email
 In Google Drive, share the company documents folder with that address as
 **Viewer**. Skip this when `AI_MODE` does not use Drive.
 
-### 4. Set the GitHub repository variables
+### 3. Set the GitHub repository variables
 
 ```sh
 terraform output -raw github_variable_commands
@@ -104,7 +88,7 @@ read these variables (none of them is a secret):
 To change `AI_MODE`, `GEMINI_MODEL` or `GOOGLE_DRIVE_FOLDER_ID` later, set the
 variable in GitHub and run the deploy again.
 
-### 5. Trigger the first deploy
+### 4. Trigger the first deploy
 
 Merge the pull request (a push to `main` deploys), or run it by hand:
 
@@ -129,7 +113,7 @@ previous tip. When the comparison is impossible (a new branch, a force push, a
 missing commit), the images are built. The deploy always builds all three, in
 CI and for the push.
 
-### 6. Check
+### 5. Check
 
 ```sh
 terraform output service_urls   # open onboardai-web in a browser
@@ -139,6 +123,18 @@ terraform plan                  # expect: No changes
 `terraform plan` after a deploy must show no changes. If it plans an update to a
 service, the deploy flags and `locals.tf` have drifted apart; fix them before
 you apply.
+
+## Gemini on Vertex AI
+
+The API has no Gemini API key. In `AI_MODE` `gemini` or `gemini-chat` it calls
+Gemini on Vertex AI as `onboardai-api-run`, using Application Default
+Credentials, with `roles/aiplatform.user` granted by this module. The deploy
+sets `GOOGLE_CLOUD_PROJECT` (the project ID) and `GOOGLE_CLOUD_LOCATION=global`.
+Use `global`: `gemini-3.5-flash-lite` answers there, and returns 404 on
+`asia-southeast1`. The module manages `aiplatform.googleapis.com` (already on
+in the project; the first apply adopts it) and never disables it. The deploy
+always passes `--clear-secrets` to the API, which drops the old
+`GEMINI_API_KEY` secret mount from earlier revisions.
 
 ## Roll back
 
@@ -206,8 +202,11 @@ show "Memory limit exceeded".
   repository, Service Account User on the three runtime accounts, and nothing
   else. It cannot create services, change IAM policies, or touch any other
   Cloud Run service in the project.
-- Only `onboardai-api-run` can read the Gemini key. The web and tts accounts
-  hold no roles.
+- There is no Gemini API key and no Secret Manager secret. The API calls
+  Gemini on Vertex AI as `onboardai-api-run` (Application Default Credentials),
+  which holds `roles/aiplatform.user` on the project. That is the only
+  project-level binding in this module; the web and tts accounts and the
+  deployer hold none.
 - The repository is public, so its Actions logs are public too, and they show
   the project ID and the service URLs. Neither is a credential. To hide the
   project ID, make `GCP_PROJECT_ID` a repository secret instead and change
@@ -215,7 +214,7 @@ show "Memory limit exceeded".
 
 ## Tear down
 
-The services and the secret have `deletion_protection = true`. Set both to
-`false`, run `terraform apply`, then run `terraform destroy`. Destroy leaves the
+The services have `deletion_protection = true`. Set it to
+`false` in `cloud_run.tf`, run `terraform apply`, then run `terraform destroy`. Destroy leaves the
 APIs on. A deleted workload identity pool keeps its ID reserved for 30 days;
 to recreate it within that time, undelete the pool instead.

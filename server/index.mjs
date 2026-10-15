@@ -9,7 +9,7 @@ import { readDriveKnowledge, driveFailure } from './google-drive-documents.mjs';
 if (existsSync('.env')) process.loadEnvFile('.env');
 let localVoice = null;
 // K_SERVICE is set by Cloud Run, which never has a Windows voice.
-if (!process.env.GOOGLE_CLOUD_PROJECT && !process.env.K_SERVICE) {
+if (process.env.GOOGLE_CLOUD_TTS !== 'enabled' && !process.env.K_SERVICE) {
   try {
     localVoice = await createWindowsVoice();
     if (localVoice) console.log(`Local voice ready: ${localVoice.name}`);

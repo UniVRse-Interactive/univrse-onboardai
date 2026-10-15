@@ -1,18 +1,29 @@
 # One service account per identity; none is the default compute account.
-# Every grant below is on a single resource. This module has no project-level
-# IAM binding at all (tests/onboardai.tftest.hcl enforces that).
+# Every grant below is on a single resource, except one: the API runtime holds
+# roles/aiplatform.user on the project (Vertex AI has no narrower scope for
+# generateContent). It is the only project-level binding; tests enforce that.
 
 # --- Runtime identities ------------------------------------------------------
 
 # onboardai-web-run, onboardai-api-run, onboardai-tts-run. web and tts hold no
-# roles. api reads the Gemini key (secrets.tf) and the Drive folder that is
-# shared with its email address (a Drive share, not IAM).
+# roles. api calls Gemini on Vertex AI (below) and reads the Drive folder that
+# is shared with its email address (a Drive share, not IAM).
 resource "google_service_account" "runtime" {
   for_each = local.services
 
   account_id   = "${each.value.name}-run"
   display_name = "OnboardAi ${each.key}: Cloud Run runtime"
   description  = "Runs the ${each.value.name} Cloud Run service."
+
+  depends_on = [google_project_service.required]
+}
+
+# Gemini on Vertex AI, authenticated by ADC as onboardai-api-run: no API key.
+# The only project-level binding in this module; web, tts and the deployer get none.
+resource "google_project_iam_member" "api_uses_vertex_ai" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member  = "serviceAccount:${google_service_account.runtime["api"].email}"
 
   depends_on = [google_project_service.required]
 }
