@@ -1,0 +1,89 @@
+# Local development backing services for OnboardAi (Postgres + Firestore emulator).
+# Local only: ports bind to 127.0.0.1 and the credential below is a dev placeholder.
+#   docker compose up -d      start (data persists in named volumes)
+#   docker compose down       stop (Firestore exports its data on clean stop)
+#   docker compose down -v    stop and wipe all local data
+name: onboardai-local
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    ports:
+      - '127.0.0.1:5442:5432'
+    environment:
+      POSTGRES_USER: onboardai
+      POSTGRES_PASSWORD: onboardai_local
+      POSTGRES_DB: onboardai
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U onboardai -d onboardai']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Firebase Emulator Suite: Firestore emulator + Emulator UI (http://127.0.0.1:4000).
+  # The UI runs in the browser and calls each emulator at the host:port the hub
+  # reports, so every container port equals its published host port.
+  # The UI only works with emulators started by firebase-tools (not gcloud's).
+  firestore:
+    build:
+      dockerfile_inline: |
+        FROM node:22-trixie-slim
+        RUN apt-get update \
+          && apt-get install -y --no-install-recommends openjdk-21-jre-headless curl ca-certificates \
+          && rm -rf /var/lib/apt/lists/* \
+          && npm install -g firebase-tools@15.34.0 \
+          && npm cache clean --force
+    init: true
+    working_dir: /srv
+    # Export replaces its target dir, which fails on a mount point, so data lives in
+    # /data/state. --import needs an existing dir; the first start has none.
+    command:
+      - sh
+      - -c
+      - |
+        if [ -d /data/state ]; then imp="--import=/data/state"; else imp=""; fi
+        exec firebase emulators:start --project demo-onboardai \
+          --only firestore,ui --config /firebase.json $$imp --export-on-exit=/data/state
+    configs:
+      - source: firebase_json
+        target: /firebase.json
+    environment:
+      FIREBASE_TELEMETRY_COLLECTION: 'false'
+      CI: 'true'
+    ports:
+      - '127.0.0.1:8681:8681'
+      - '127.0.0.1:4000:4000'
+      - '127.0.0.1:4400:4400'
+      - '127.0.0.1:4500:4500'
+      - '127.0.0.1:9150:9150'
+    volumes:
+      - firebase-data:/data
+    stop_signal: SIGINT
+    stop_grace_period: 60s
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fs http://127.0.0.1:8681/ >/dev/null']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+configs:
+  firebase_json:
+    content: |
+      {
+        "emulators": {
+          "singleProjectMode": true,
+          "firestore": { "host": "0.0.0.0", "port": 8681, "websocketPort": 9150 },
+          "ui": { "enabled": true, "host": "0.0.0.0", "port": 4000 },
+          "hub": { "host": "0.0.0.0", "port": 4400 },
+          "logging": { "host": "0.0.0.0", "port": 4500 }
+        }
+      }
+
+volumes:
+  postgres-data:
+  firebase-data:
