@@ -13,6 +13,8 @@ import { createRemoteVoice } from '../server/remote-voice.mjs';
 import { parseApiServiceUrl } from '../server/api-proxy.mjs';
 import { parseTrustProxy } from '../server/service-runtime.mjs';
 import { encodeWav } from '../server/kokoro-voice.mjs';
+import { createGuestWorkspaceStore } from '../server/guest-workspace-store.mjs';
+import { workspaceLimits } from '../server/workspace-limits.mjs';
 
 async function listen(handler) {
   const server = http.createServer(handler);
@@ -244,6 +246,79 @@ test('web to API: session cookie round-trips through the proxy and cross-site re
   } finally {
     await web.close();
     await api.close();
+  }
+});
+
+test('employee workspaces and document uploads work through the web proxy with bounded bodies', async () => {
+  const store = createGuestWorkspaceStore({ path: ':memory:' });
+  const app = createApp({
+    env: { AI_MODE: 'document-search', NODE_ENV: 'production' },
+    trustProxy: 2,
+    guestStore: store,
+  });
+  const api = await listen(app);
+  const web = await listen(createWebApp({ apiUrl: api.url, distDir: tmpdir() }));
+  try {
+    const first = await fetch(web.url + '/api/guest-workspace', {
+      headers: { Origin: web.url },
+    });
+    assert.equal(first.status, 200);
+    const snapshot = await first.json();
+    const cookie = first.headers.getSetCookie()[0].split(';')[0];
+    assert.match(first.headers.getSetCookie()[0], /HttpOnly; Secure; SameSite=Strict/);
+    const headers = { Origin: web.url, Cookie: cookie };
+    const text =
+      'Working Hours\n' + 'Office hours are 10 AM to 6 PM Monday to Friday.\n'.repeat(1600);
+    assert.ok(Buffer.byteLength(text) > 64 * 1024);
+    const uploaded = await fetch(web.url + '/api/guest-workspace/documents', {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': 'company-guide.txt',
+      },
+      body: text,
+    });
+    assert.equal(uploaded.status, 201);
+    const again = await fetch(web.url + '/api/guest-workspace', { headers });
+    assert.equal((await again.json()).documents[0].title, 'company-guide.txt');
+    assert.equal(
+      (
+        await fetch(web.url + '/api/guest-workspace/guests/' + snapshot.lastGuestId + '/config', {
+          headers,
+        })
+      ).status,
+      200,
+    );
+    const cross = await json(
+      web.url,
+      '/api/guest-workspace/guests',
+      {},
+      {
+        ...headers,
+        Origin: 'https://other.example',
+      },
+    );
+    assert.equal(cross.status, 403);
+    const largeJson = await json(
+      web.url,
+      '/api/guest-workspace/guests',
+      {
+        padding: 'x'.repeat(70 * 1024),
+      },
+      headers,
+    );
+    assert.equal(largeJson.status, 413, 'JSON retains the smaller proxy limit');
+    const oversized = await fetch(web.url + '/api/guest-workspace/documents', {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'big.txt' },
+      body: Buffer.alloc(workspaceLimits.bytes + 1, 'x'),
+    });
+    assert.equal(oversized.status, 413, 'uploads remain bounded by the shared file limit');
+  } finally {
+    await web.close();
+    await api.close();
+    app.locals.closeChat();
   }
 });
 

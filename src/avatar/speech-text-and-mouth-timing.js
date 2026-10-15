@@ -14,12 +14,17 @@ export function speechChunks(text) {
   const chunks = [];
   let current = '';
   for (const word of words) {
-    if (current.length + word.length > 210) {
+    // A short opening can play while the rest of the audio is being generated.
+    // Later segments stay longer to avoid a request for every short phrase.
+    const limit = chunks.length === 0 ? 105 : 210;
+    if (current && current.length + word.length > limit) {
       chunks.push(current.trim());
       current = '';
     }
     current += word + ' ';
-    if (/[.!?]$/.test(word) && current.length > 65) {
+    const sentenceEnd = /[.!?][”"')]*$/.test(word);
+    const openingPause = chunks.length === 0 && /[,;:]$/.test(word) && current.length > 45;
+    if ((sentenceEnd && (chunks.length === 0 || current.length > 65)) || openingPause) {
       chunks.push(current.trim());
       current = '';
     }

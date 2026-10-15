@@ -63,8 +63,7 @@ export default function AvatarDisplay({ speechRef, speaking, thinking, reducedMo
       )}
       <div className="alya-canvas" ref={container} style={{ opacity: phase === 'ready' ? 1 : 0 }} />
       <div className="alya-stage-top">
-        <span className="alya-stage-brand">UNIVRSE / ONBOARDAI</span>
-        <span className="alya-original-label">YOUR ORIGINAL AVATAR</span>
+        <span className="alya-stage-brand">YOUR ONBOARDING COMPANION</span>
       </div>
       {phase !== 'ready' && (
         <div className="alya-model-state" role="status">

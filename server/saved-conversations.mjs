@@ -180,6 +180,17 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
     create,
     read,
     erase,
+    eraseOwner: db.transaction((owner) => {
+      const chats = db.prepare('SELECT id FROM conversations WHERE owner=?').all(owner);
+      if (chats.some((chat) => busy.has(chat.id)))
+        throw new ChatError(
+          409,
+          'CHAT_BUSY',
+          'Wait for this employee’s answer to finish before removing their record.',
+        );
+      for (const chat of chats) remove(chat.id);
+      db.prepare('DELETE FROM support_preferences WHERE owner=?').run(owner);
+    }),
     acquire,
     save,
     setLearning,

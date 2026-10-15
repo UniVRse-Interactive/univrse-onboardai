@@ -114,4 +114,14 @@ test('artwork labels and time highlights use explicit answer subjects and actual
   assert.deepEqual(clothes.items[0].clothes, ['jeans', 'shorts', 'slippers']);
   assert.equal(clothes.items[0].ripped, true);
   assert.equal(clothes.items[0].plain, clothes.items[0].body);
+  const clothingAtWork = visualAnswer(
+    sourced('Ripped jeans and slippers are not allowed during office hours.'),
+  );
+  assert.equal(clothingAtWork.items[0].scene, 'clothing');
+  assert.equal(clothingAtWork.items[0].plain, clothingAtWork.items[0].body);
+  const dottedTimes = visualAnswer(
+    sourced('Normal operating hours are 9:00 a.m. to 5:30 p.m., Monday through Friday.'),
+  );
+  assert.equal(dottedTimes.items[0].scene, 'time');
+  assert.deepEqual(dottedTimes.items[0].times, ['9:00 a.m.', '5:30 p.m.']);
 });

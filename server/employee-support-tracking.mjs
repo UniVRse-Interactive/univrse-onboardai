@@ -1,7 +1,7 @@
 import { supportRequest, teachingFormats } from './answer-style-preferences.mjs';
 
 const emptyFormats = () => ({ standard: 0, steps: 0, example: 0, brief: 0 });
-export function employeeOverview({ turns, requests, feedback, humanHelpRequests }) {
+export function employeeOverview({ turns, conversations, requests, feedback, humanHelpRequests }) {
   const requested = Object.entries(requests)
     .filter(([, count]) => count > 0)
     .map(([key, count]) => {
@@ -15,7 +15,7 @@ export function employeeOverview({ turns, requests, feedback, humanHelpRequests 
   let interaction = !turns
     ? 'The employee’s onboarding summary will take shape as they use Alya.'
     : requested.length
-      ? `During onboarding conversations, the employee requested ${requested.join(' and ')}.`
+      ? `The employee requested ${requested.join(' and ')}.`
       : 'The employee has used Alya for onboarding guidance without requesting a different explanation so far.';
   if (feedback.helpful)
     interaction += ` They marked ${feedback.helpful} ${feedback.helpful === 1 ? 'answer' : 'answers'} helpful.`;
@@ -23,6 +23,11 @@ export function employeeOverview({ turns, requests, feedback, humanHelpRequests 
     interaction += ` They marked ${feedback.unclear} ${feedback.unclear === 1 ? 'answer' : 'answers'} still unclear.`;
   if (!feedback.helpful && !feedback.unclear && turns)
     interaction += ' Their feedback on the explanations is still to be confirmed.';
+  if (turns && conversations)
+    interaction =
+      `Across ${turns} answered ${turns === 1 ? 'question' : 'questions'} in ${conversations} ${conversations === 1 ? 'conversation' : 'conversations'}, ` +
+      interaction[0].toLowerCase() +
+      interaction.slice(1);
   const recommendations = [];
   if (requests.steps)
     recommendations.push('Offer one manageable action at a time, with clear numbered steps.');
@@ -85,7 +90,13 @@ export function summariseSupport(events, { recording = true, version = 0, update
   const last = events.length ? Math.max(...events.map((e) => e.updated)) : null;
   const ranked = Object.entries(formats).sort((a, b) => b[1] - a[1]);
   const mostUsed = turns >= 3 && ranked[0][1] > ranked[1][1] ? ranked[0][0] : null;
-  const overview = employeeOverview({ turns, requests, feedback, humanHelpRequests });
+  const overview = employeeOverview({
+    turns,
+    conversations: conversations.size,
+    requests,
+    feedback,
+    humanHelpRequests,
+  });
   return {
     recording,
     version,
