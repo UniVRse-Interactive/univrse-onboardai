@@ -126,6 +126,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
+      contents: read
       id-token: write
     env:
       IMAGE_PREFIX: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/onboardai
@@ -140,6 +141,7 @@ jobs:
       API_RUN_FLAGS: --cpu=1 --memory=1Gi --concurrency=80 --min-instances=0 --max-instances=1 --timeout=300 --port=8080 --execution-environment=gen2 --ingress=all --cpu-throttling --cpu-boost --startup-probe=httpGet.path=/api/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=12
       TTS_RUN_FLAGS: --cpu=2 --memory=2Gi --concurrency=8 --min-instances=0 --max-instances=2 --timeout=300 --port=8080 --execution-environment=gen2 --ingress=all --cpu-throttling --cpu-boost --startup-probe=httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=48
     outputs:
+      is_tip: ${{ steps.tip.outputs.is_tip }}
       web_url: ${{ steps.deploy.outputs.web_url }}
       api_url: ${{ steps.deploy.outputs.api_url }}
       tts_url: ${{ steps.deploy.outputs.tts_url }}
@@ -169,8 +171,39 @@ jobs:
             echo "$key=$rev" >> "$GITHUB_OUTPUT"
           done
 
+      # Stale-run guard. "Re-run failed jobs" on an older Deploy run executes that
+      # run's commit and that commit's workflow file, which can undo a newer
+      # deploy (issue #15). Right before deploying, check that this run's commit is
+      # still the tip of main; if not, deploy and smoke test are skipped. A re-run
+      # of a run created before this guard existed still uses its old workflow
+      # file, so the guard protects runs from this commit onward. Fails closed:
+      # if the tip cannot be read, nothing is deployed.
+      - name: Check this commit is still the tip of main
+        id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha) || [[ ! "$tip" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Cannot read the current tip of main from GitHub, so $GITHUB_SHA is not deployed (fail closed). Re-run this job, or run Deploy on main."
+            echo "is_tip=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          if [[ "$tip" != "$GITHUB_SHA" ]]; then
+            echo "::warning::Skipping deploy: this run is for $GITHUB_SHA but main is now at $tip. Run Deploy on main instead of re-running this run."
+            {
+              echo "### Deploy skipped: stale run"
+              echo "This run is for \`$GITHUB_SHA\`, but main is now at \`$tip\`. Nothing was changed in Cloud Run. Run the Deploy workflow on main instead of re-running this run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "is_tip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$GITHUB_SHA is the tip of main."
+          echo "is_tip=true" >> "$GITHUB_OUTPUT"
+
       - name: Deploy
         id: deploy
+        if: steps.tip.outputs.is_tip == 'true'
         run: |
           set -euo pipefail
           # deploy KEY "ENV_VARS" [extra gcloud flags...]; sets DEPLOYED_URL.
@@ -239,6 +272,8 @@ jobs:
   smoke:
     name: Smoke test
     needs: deploy
+    # Skipped (not failed) when the deploy job found the run stale.
+    if: needs.deploy.outputs.is_tip == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions: {}

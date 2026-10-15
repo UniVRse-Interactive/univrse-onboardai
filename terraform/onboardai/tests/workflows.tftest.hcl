@@ -257,3 +257,55 @@ run "ci_skips_docker_builds_only_when_proven" {
     error_message = "The verify job (format check, tests, build, secret scan) must always run."
   }
 }
+
+run "stale_deploy_guard" {
+  command = plan
+
+  # A re-run of an old Deploy run must not overwrite production: the deploy job
+  # checks the commit is still the tip of main right before gcloud run deploy.
+  assert {
+    condition = (
+      length([for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s if try(s.id, "") == "tip"]) == 1 &&
+      one([for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.env.GH_TOKEN if try(s.id, "") == "tip"]) == "$${{ github.token }}" &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.run if try(s.id, "") == "tip"]), "commits/main") &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.run if try(s.id, "") == "tip"]), "::warning::") &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.run if try(s.id, "") == "tip"]), "$GITHUB_SHA") &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.run if try(s.id, "") == "tip"]), "exit 1")
+    )
+    error_message = "The deploy job needs a step with id 'tip' that reads the tip of main with GITHUB_TOKEN, warns with the SHAs, and fails closed."
+  }
+
+  # The guard is the step directly before Deploy, so nothing slow runs between them.
+  assert {
+    condition = (
+      index([for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : try(s.id, "")], "tip") + 1 ==
+      index([for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : try(s.id, "")], "deploy")
+    )
+    error_message = "The tip-of-main check must be the step immediately before the Deploy step."
+  }
+
+  # Deploy and smoke test are gated on the guard.
+  assert {
+    condition = (
+      one([for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.if if try(s.id, "") == "deploy"]) == "steps.tip.outputs.is_tip == 'true'" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.outputs.is_tip == "$${{ steps.tip.outputs.is_tip }}" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.if == "needs.deploy.outputs.is_tip == 'true'" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.needs == "deploy"
+    )
+    error_message = "Deploy step and smoke job must run only when the tip check says is_tip == 'true'."
+  }
+
+  # No other step may run gcloud run deploy.
+  assert {
+    condition = length([
+      for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s
+      if strcontains(try(s.run, ""), "gcloud run deploy") && try(s.id, "") != "deploy"
+    ]) == 0
+    error_message = "Only the gated Deploy step may run gcloud run deploy."
+  }
+
+  assert {
+    condition     = yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.permissions == { contents = "read", "id-token" = "write" }
+    error_message = "The deploy job needs only contents: read (tip lookup) and id-token: write."
+  }
+}
