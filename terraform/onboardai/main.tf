@@ -1,8 +1,9 @@
 # OnboardAi MVP in the OnBoard AI project: three Cloud Run services (web, api,
 # tts), their images, the GitHub Actions deployer, Vertex AI (Gemini and Vertex
 # AI Search over the documents bucket), Firestore and Cloud Monitoring alerts.
-# This module is the only stack in the project; its state is in the GCS backend
-# (versions.tf).
+# The module builds one stack per environment (production, staging) in that
+# project, each with its own state in the GCS backend (environment.tf,
+# versions.tf).
 #
 # Prerequisite, done by hand once per project (the google provider needs both to
 # enable anything else; the state bucket is created by hand too):
@@ -10,9 +11,10 @@
 
 # disable_on_destroy = false: removing this module never turns an API off.
 # Managing an API that is already on (iam, monitoring, storage are on by
-# default in a new project) adopts it.
+# default in a new project) adopts it. API enablement is project-wide, so only
+# production's state manages it; staging uses the APIs production turned on.
 resource "google_project_service" "required" {
-  for_each = toset(local.apis)
+  for_each = local.is_production ? toset(local.apis) : toset([])
 
   service            = each.value
   disable_on_destroy = false

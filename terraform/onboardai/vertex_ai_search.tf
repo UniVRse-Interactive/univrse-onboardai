@@ -2,6 +2,8 @@
 #   documents bucket --(manual import, output import_documents_command)--> data
 #   store onboardai-docs --> engine onboardai-search <-- onboardai-api searches
 #   projects/<number>/locations/global/collections/default_collection/engines/onboardai-search/servingConfigs/default_search
+# Staging has its own bucket, data store and engine, each ID suffixed -staging,
+# with the same configuration.
 # The team uploads files to the bucket; importing them is a manual REST call,
 # not Terraform. The API reads no file from the bucket and holds no bucket role.
 
@@ -46,13 +48,23 @@ resource "google_storage_bucket" "docs" {
 # google_project_service_identity (google-beta only) calls
 # services.generateServiceIdentity, which creates the agent and returns once it
 # exists; calling it again is a no-op. The grant below waits for it.
+#
+# The agent is project-wide, so only production's state manages it; staging's
+# grant relies on it existing. count needs the moved block below: production
+# applied it as a single resource.
 resource "google_project_service_identity" "discovery_engine" {
+  count    = local.is_production ? 1 : 0
   provider = google-beta
 
   project = var.project_id
   service = "discoveryengine.googleapis.com"
 
   depends_on = [google_project_service.required]
+}
+
+moved {
+  from = google_project_service_identity.discovery_engine
+  to   = google_project_service_identity.discovery_engine[0]
 }
 
 # Read access to this bucket only, so imports can read the documents.
@@ -75,13 +87,14 @@ resource "google_storage_bucket_iam_member" "discovery_engine_reads_docs" {
 # layout-based chunks of at most 500 tokens, each prefixed with its ancestor
 # headings so a chunk from the middle of a document keeps its section context.
 #
-# deletion_policy = "PREVENT": Terraform refuses to destroy or replace the data
-# store (README, Tear down). Discovery Engine has no server-side delete
-# protection, so this does not stop a delete from the console or the API.
+# deletion_policy = "PREVENT" (while var.deletion_protection is true):
+# Terraform refuses to destroy or replace the data store (README, Tear down).
+# Discovery Engine has no server-side delete protection, so this does not stop
+# a delete from the console or the API.
 resource "google_discovery_engine_data_store" "docs" {
   location          = local.search_location
   data_store_id     = local.data_store_id
-  display_name      = "OnboardAi documents"
+  display_name      = "${local.display_name} documents"
   industry_vertical = "GENERIC"
   content_config    = "CONTENT_REQUIRED"
   solution_types    = ["SOLUTION_TYPE_SEARCH"]
@@ -99,7 +112,7 @@ resource "google_discovery_engine_data_store" "docs" {
     }
   }
 
-  deletion_policy = "PREVENT"
+  deletion_policy = var.deletion_protection ? "PREVENT" : "DELETE"
 
   depends_on = [google_project_service.required]
 }
@@ -111,7 +124,7 @@ resource "google_discovery_engine_search_engine" "docs" {
   location          = google_discovery_engine_data_store.docs.location
   collection_id     = local.search_collection_id
   engine_id         = local.search_engine_id
-  display_name      = "OnboardAi search"
+  display_name      = "${local.display_name} search"
   industry_vertical = "GENERIC"
   data_store_ids    = [google_discovery_engine_data_store.docs.data_store_id]
 
@@ -119,5 +132,26 @@ resource "google_discovery_engine_search_engine" "docs" {
     search_tier = "SEARCH_TIER_ENTERPRISE"
   }
 
-  deletion_policy = "PREVENT"
+  deletion_policy = var.deletion_protection ? "PREVENT" : "DELETE"
+}
+
+# --- Search access of a non-production api -------------------------------------
+
+# Staging's api account searches its own engine through a grant on that engine
+# alone (engines carry their own IAM policy), instead of a Discovery Engine role
+# on the project. It holds no Discovery Engine role anywhere else, so it cannot
+# search production's engine or read production's data store. If the service
+# ever stopped honouring engine-level grants for search, staging search would
+# fail with 403; it would not fall back to production's data.
+# Production keeps its project-level roles/discoveryengine.viewer (identity.tf)
+# so its plan stays unchanged.
+resource "google_discovery_engine_search_engine_iam_member" "api_searches_engine" {
+  count = local.is_production ? 0 : 1
+
+  project       = var.project_id
+  location      = google_discovery_engine_search_engine.docs.location
+  collection_id = google_discovery_engine_search_engine.docs.collection_id
+  engine_id     = google_discovery_engine_search_engine.docs.engine_id
+  role          = "roles/discoveryengine.viewer"
+  member        = "serviceAccount:${google_service_account.runtime["api"].email}"
 }

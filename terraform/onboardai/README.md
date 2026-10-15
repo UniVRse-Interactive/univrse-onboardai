@@ -3,8 +3,11 @@
 This Terraform root module builds the OnboardAi MVP in the **OnBoard AI**
 project (`project-65a9b676-abdb-4393-bc1`, number `48074397808`, region
 `asia-southeast1`) and prepares it for the GitHub Actions deploy in
-`.github/workflows/deploy.yml`. It is the only stack in that project; its state
-is in Cloud Storage (see [State](#state)).
+`.github/workflows/deploy.yml`. It builds two stacks in that project from the
+same code: **production** (deployed from `main`, described below) and
+**staging** (deployed from `staging`, every ID suffixed `-staging`; see
+[Staging](#staging)). Each has its own state in Cloud Storage (see
+[State](#state)).
 
 | Creates                                | Name                                                                                                                        |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -48,10 +51,22 @@ repository variables that deploy stops at its first check.
 ## State
 
 `versions.tf` keeps the state in `gs://project-65a9b676-abdb-4393-bc1-tfstate`
-under the prefix `onboardai`. The GCS backend locks the state during a plan or
-apply, and bucket versioning keeps every earlier state. The module does not
-manage that bucket: a module must not own the bucket its own state is in.
-Nothing but `.terraform/` is kept locally.
+under the prefix `onboardai`, one object per Terraform workspace:
+
+| Workspace | `environment` | State object                |
+| --------- | ------------- | --------------------------- |
+| `default` | `production`  | `onboardai/default.tfstate` |
+| `staging` | `staging`     | `onboardai/staging.tfstate` |
+
+The GCS backend locks the state during a plan or apply, and bucket versioning
+keeps every earlier state. The module does not manage that bucket: a module
+must not own the bucket its own state is in. Nothing but `.terraform/` is kept
+locally.
+
+A plan fails with `Module output value precondition failed` when the selected
+workspace and `environment` disagree (for example staging inputs with the
+`default` workspace selected), so neither stack's inputs can be planned against
+the other's state. `terraform workspace show` prints the selected one.
 
 ## One-time setup
 
@@ -151,6 +166,10 @@ terraform output service_urls   # open onboardai-web in a browser
 terraform plan                  # expect: No changes
 ```
 
+The first production plan after the staging change (issue #20) shows one
+state-only move and nothing else; see
+[Staging: production's one-time state move](#productions-one-time-state-move).
+
 `terraform plan` after a deploy must show no changes. If it plans an update to a
 service, the deploy flags and `locals.tf` have drifted apart; fix them before
 you apply.
@@ -245,7 +264,13 @@ show "Memory limit exceeded".
   the repository ID is `1418194026`, the owner ID is `281514177`, the ref is
   `refs/heads/main`, the workflow is `.github/workflows/deploy.yml` on `main`,
   and the event is `push` or `workflow_dispatch`. Pull requests, forks, other
-  branches and other workflows cannot get a token.
+  branches and other workflows cannot get a token. Staging has its own pool and
+  provider with the same rule for `refs/heads/staging`.
+- The deploy jobs name a GitHub environment (`production` for `main`, `staging`
+  for `staging`), which changes the OIDC token's `sub` claim. Neither provider
+  reads `sub`: the conditions use `repository_id`, `repository_owner_id`,
+  `ref`, `workflow_ref` and `event_name`, and the deployer binding uses
+  `attribute.repository_id`.
 - The deployer holds no project-level role. It holds Cloud Run Developer on the
   three OnboardAi services, Artifact Registry Writer on the `onboardai`
   repository, Service Account User on the three runtime accounts, and nothing
@@ -264,17 +289,207 @@ show "Memory limit exceeded".
 
 ## Tear down
 
-Destroy is blocked on purpose:
+Destroy is blocked on purpose while `deletion_protection` is `true` (the
+default):
 
-- The Cloud Run services have `deletion_protection = true`. Set it to `false`
-  in `cloud_run.tf` and apply first.
-- The data store and the engine have `deletion_policy = "PREVENT"`. Set it to
-  `"DELETE"` in `vertex_ai_search.tf` and apply first. Deleting the data store
-  deletes the imported documents.
+- The Cloud Run services have `deletion_protection = true`.
+- The data store and the engine have `deletion_policy = "PREVENT"`. Deleting
+  the data store deletes the imported documents.
 - Firestore has delete protection on and `deletion_policy = "ABANDON"`:
   `terraform destroy` only drops it from state, and the data stays.
-- The documents bucket is not force-destroyed: empty it first.
+- The documents bucket is never force-destroyed: empty it first.
+
+To tear a stack down, apply once with `-var deletion_protection=false` (review
+the plan: it only lifts those guards), empty the bucket, then destroy. For
+staging, see [Staging: tear down](#tear-down-staging).
 
 Destroy leaves the APIs on. A deleted workload identity pool keeps its ID
 reserved for 30 days; to recreate it within that time, undelete the pool
 instead.
+
+## Staging
+
+A second stack in the same project, built from the same code with
+`environment = "staging"`, in its own workspace and state. `main` deploys
+production and `staging` deploys staging, through the same
+`.github/workflows/deploy.yml`.
+
+| Resource                   | Production                                        | Staging                                                                   |
+| -------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------- |
+| Cloud Run services         | `onboardai-web`, `onboardai-api`, `onboardai-tts` | `onboardai-web-staging`, `onboardai-api-staging`, `onboardai-tts-staging` |
+| Runtime service accounts   | `onboardai-<service>-run`                         | `onboardai-<service>-run-staging`                                         |
+| Deployer service account   | `onboardai-deployer`                              | `onboardai-deployer-staging`                                              |
+| Artifact Registry          | `onboardai`                                       | `onboardai-staging`                                                       |
+| WIF pool / provider        | `onboardai-github` / `github-actions`             | `onboardai-github-staging` / `github-actions-staging`                     |
+| Documents bucket           | `<project>-onboardai-docs`                        | `<project>-onboardai-docs-staging`                                        |
+| Data store / engine        | `onboardai-docs` / `onboardai-search`             | `onboardai-docs-staging` / `onboardai-search-staging`                     |
+| Firestore database         | `(default)`                                       | `onboardai-staging` (a project has one `(default)`)                       |
+| Alerts                     | `OnboardAi: ...`                                  | `OnboardAi [staging]: ...`, watching the staging services                 |
+| Labels                     | `app`, `managed-by`, `component`                  | the same plus `environment = staging`                                     |
+| Deploys from / GitHub vars | `main` / repository variables                     | `staging` / variables of the GitHub environment `staging`                 |
+
+Staging has production's shape: the same Cloud Run settings (one set of
+`*_RUN_FLAGS` serves both), Enterprise search with the same document
+processing, Native-mode Firestore, the same bucket and repository policies, and
+the same alerts. API enablement and the Discovery Engine service agent are
+project-wide and stay in production's state; staging relies on them and never
+manages them.
+
+### Production's one-time state move
+
+Staging skips the Discovery Engine service agent, so that resource now has a
+`count`, and a `moved` block in `vertex_ai_search.tf` renames it in
+production's state. The first production plan after this change shows only:
+
+```text
+# google_project_service_identity.discovery_engine has moved to google_project_service_identity.discovery_engine[0]
+Plan: 0 to add, 0 to change, 0 to destroy.
+```
+
+Applying that plan rewrites production's state and calls no Google API. After
+it, `terraform plan` shows `No changes` again. Until it is applied, every
+production plan shows the move (`-detailed-exitcode` returns 2).
+
+### Create the staging stack
+
+```sh
+cd terraform/onboardai
+export GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token)   # or ADC
+cat > staging.tfvars <<'EOF'              # gitignored (*.tfvars); never commit it
+environment  = "staging"
+project_id   = "project-65a9b676-abdb-4393-bc1"
+alert_emails = ["someone@example.com"]
+EOF
+terraform init
+terraform workspace select -or-create staging   # first time: writes an empty onboardai/staging.tfstate
+terraform plan -var-file=staging.tfvars -out=staging.tfplan   # review: everything is "to add", every name ends in -staging
+terraform apply staging.tfplan
+terraform workspace select default              # back to production
+```
+
+`terraform.tfvars` (production's inputs) is loaded in every workspace;
+`staging.tfvars` overrides it. Forgetting `-var-file=staging.tfvars` in the
+`staging` workspace, or passing it in `default`, fails the plan at the
+workspace guard before anything is planned.
+
+Then upload documents and import them as in step 2, in the `staging`
+workspace: `terraform output -raw docs_bucket_name` and
+`terraform output -raw import_documents_command` print the staging bucket and
+the staging data store.
+
+### Set up GitHub for staging
+
+In the `staging` workspace:
+
+```sh
+terraform output -raw github_environment_commands   # creates environment "staging", deployable from the staging branch only
+terraform output -raw github_variable_commands      # gh variable set ... --env staging (all nine variables)
+```
+
+Review the printed lines, then run them (gh with admin rights on the
+repository). Production's repository variables do not change. The deploy jobs
+of a `staging` run read `vars.*` from the `staging` environment, which takes
+precedence over the repository variables of the same name.
+
+The first deploy from `main` after this change makes GitHub create an empty
+`production` environment, because the deploy jobs now name one. With no
+variables of its own it falls back to the repository variables, as before. You
+can restrict it to the `main` branch or add reviewers in the repository
+settings later.
+
+### Deploy staging
+
+Push to `staging` (merging a pull request into it does that), or run it by
+hand:
+
+```sh
+gh workflow run deploy.yml --repo UniVRse-Interactive/univrse-onboardai --ref staging
+```
+
+The run checks that the staging deployer, provider, engine and database all
+end in `-staging`, pushes to `onboardai-staging`, deploys
+`onboardai-<service>-staging` and smoke-tests the staging URLs
+(`terraform output service_urls` in the `staging` workspace). Staging and
+production deploys never queue behind each other. CI runs on pull requests
+into, and pushes to, both branches.
+
+### Isolation inside the shared project
+
+- **Deploy identity.** The staging pool's provider accepts only the deploy
+  workflow on `refs/heads/staging` (repository and owner pinned by numeric ID,
+  push or workflow_dispatch). `onboardai-deployer-staging` holds Cloud Run
+  Developer on the three staging services, Artifact Registry Writer on
+  `onboardai-staging` and Service Account User on the three staging runtime
+  accounts: nothing on production, and no project-level role.
+- **Firestore.** `onboardai-api-run-staging` holds `roles/datastore.user` on the
+  project with an IAM condition, `resource.name` equal to
+  `projects/<project>/databases/onboardai-staging` (by project ID or number).
+  Firestore evaluates database-level IAM conditions, so it cannot read or
+  write `(default)`.
+- **Vertex AI Search.** `onboardai-api-run-staging` holds no Discovery Engine
+  role on the project. It holds `roles/discoveryengine.viewer` on the engine
+  `onboardai-search-staging` only (engines carry their own IAM policy), so it
+  cannot search `onboardai-search` or read `onboardai-docs`. If engine-level
+  grants were not honoured for search, staging search would fail with 403 and
+  never reach production's data. Check it once after the first staging deploy
+  with a chat that needs the documents.
+- **Gemini.** `roles/aiplatform.user` on the project, unconditioned, as in
+  production.
+
+After the staging apply, the API's own view of its grants can be checked
+without changing anything:
+
+```sh
+gcloud projects get-iam-policy project-65a9b676-abdb-4393-bc1 \
+  --flatten=bindings --filter="bindings.members:onboardai-api-run-staging@" \
+  --format="table(bindings.role, bindings.condition.expression)"
+```
+
+### Production follow-ups
+
+Production's grants are wider than staging's and were left unchanged so that
+its plan stays empty:
+
+- `onboardai-api-run` holds `roles/datastore.user` and
+  `roles/discoveryengine.viewer` on the whole project, unconditioned, so it can
+  reach staging's database and search staging's engine. Narrow it the same way
+  (a condition on `(default)`, a grant on `onboardai-search`); each is a
+  replace of a production IAM binding, so plan and apply it on its own.
+- The GitHub environment `production` has no protection rules; consider
+  limiting it to `main`.
+
+### Cost of staging
+
+Every staging service scales to zero, so an idle staging stack costs little.
+What it adds:
+
+- **Vertex AI Search, Enterprise tier**: per 1,000 search queries, plus index
+  storage for the imported documents. Same tier as production for parity; the
+  largest variable cost.
+- **Firestore named database**: the free tier applies to `(default)` only, so
+  every read, write and stored GiB of `onboardai-staging` is billed.
+- **Gemini** calls from staging chats, at production's rates.
+- **Cloud Run**: request time of staging deploys, smoke tests and use
+  (request-based billing, no minimum instances).
+- **Artifact Registry**: up to 5 versions of each of the three images
+  (`images_to_keep`), roughly as much storage as production's.
+- **Cloud Storage**: the staging documents bucket, with 30 days of old
+  versions.
+- **Cloud Monitoring**: two more alert conditions.
+
+### Tear down staging
+
+In the `staging` workspace:
+
+```sh
+terraform apply -var-file=staging.tfvars -var deletion_protection=false   # lifts the guards only; review the plan
+gcloud storage rm --all-versions "gs://$(terraform output -raw docs_bucket_name)/**"
+terraform destroy -var-file=staging.tfvars -var deletion_protection=false
+terraform workspace select default
+terraform workspace delete staging          # deletes onboardai/staging.tfstate
+```
+
+Destroy deletes the staging database, data store (with its documents) and
+engine, and never touches production or the shared APIs. The pool
+`onboardai-github-staging` stays reserved for 30 days after deletion. Remove
+the GitHub environment `staging` by hand if staging is gone for good.

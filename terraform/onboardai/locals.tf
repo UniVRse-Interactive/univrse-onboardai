@@ -1,9 +1,14 @@
 locals {
-  # Common labels, merged with a per-component label where a resource accepts labels.
-  labels = {
-    app        = "onboardai"
-    managed-by = "terraform"
-  }
+  # Common labels, merged with a per-component label where a resource accepts
+  # labels. Staging adds environment = staging; production keeps the labels it
+  # was applied with (adding one would update every production resource).
+  labels = merge(
+    {
+      app        = "onboardai"
+      managed-by = "terraform"
+    },
+    { for k, v in { environment = var.environment } : k => v if !local.is_production },
+  )
 
   apis = [
     "run.googleapis.com",
@@ -21,23 +26,56 @@ locals {
     "monitoring.googleapis.com", # alert policies and email channels
   ]
 
-  # Project-level roles of onboardai-api-run, the only project-level bindings in
-  # this module (tests/onboardai.tftest.hcl enforces it). None of these services
-  # offers a narrower predefined grant the API could use.
+  # Project-level roles of the api runtime account, the only project-level
+  # bindings in this module (tests/onboardai.tftest.hcl enforces it).
+  #
+  # production: the three roles it was applied with, none conditioned. They
+  # reach every Firestore database and every Vertex AI Search engine in the
+  # project, staging's included (README, Staging: production follow-ups).
+  #
+  # staging: Gemini on the project (Vertex AI has no narrower grant), Firestore
+  # only through the IAM condition below, and no Discovery Engine role on the
+  # project at all: it searches through a grant on its own engine
+  # (vertex_ai_search.tf), so it cannot search production's engine.
   api_project_roles = {
-    "roles/aiplatform.user"        = "Gemini generateContent on Vertex AI"
-    "roles/discoveryengine.viewer" = "Vertex AI Search: discoveryengine.servingConfigs.search"
-    "roles/datastore.user"         = "Firestore (default) database: read and write documents"
+    for role, purpose in {
+      "roles/aiplatform.user"        = "Gemini generateContent on Vertex AI"
+      "roles/discoveryengine.viewer" = "Vertex AI Search: discoveryengine.servingConfigs.search"
+      "roles/datastore.user"         = "Firestore: read and write documents"
+    } : role => purpose
+    if local.is_production || role != "roles/discoveryengine.viewer"
   }
+
+  # IAM conditions on api_project_roles, by role (staging only). Firestore
+  # evaluates resource.name for database-level IAM conditions, so
+  # roles/datastore.user reaches the staging database and not (default). Both
+  # spellings of the project are accepted; each one names the staging database
+  # only.
+  api_project_role_conditions = {
+    for role, c in {
+      "roles/datastore.user" = {
+        title       = "${local.firestore_database_name} database only"
+        description = "Firestore access for the ${var.environment} api: the ${local.firestore_database_name} database, never (default)."
+        expression = join(" || ", [
+          for p in distinct([var.project_id, data.google_project.this.number]) :
+          "resource.name == \"projects/${p}/databases/${local.firestore_database_name}\""
+        ])
+      }
+    } : role => c if !local.is_production
+  }
+
+  # (default) is production's; a project holds only one, so staging gets a
+  # named database.
+  firestore_database_name = local.is_production ? "(default)" : "onboardai${local.name_suffix}"
 
   # ---------------------------------------------------------------------------
   # Vertex AI Search, Firestore and the documents bucket (contract v2).
   # ---------------------------------------------------------------------------
   search_location      = "global"
   search_collection_id = "default_collection" # the only collection data stores are created in
-  data_store_id        = "onboardai-docs"
-  search_engine_id     = "onboardai-search"
-  docs_bucket_name     = "${var.project_id}-onboardai-docs"
+  data_store_id        = "onboardai-docs${local.name_suffix}"
+  search_engine_id     = "onboardai-search${local.name_suffix}"
+  docs_bucket_name     = "${var.project_id}-onboardai-docs${local.name_suffix}"
 
   # Service agent that Discovery Engine reads Cloud Storage imports as.
   discovery_engine_service_agent = "service-${data.google_project.this.number}@gcp-sa-discoveryengine.iam.gserviceaccount.com"
@@ -58,18 +96,23 @@ locals {
   })
 
   # Service contract v1: Artifact Registry repository and image path.
-  repository_id = "onboardai"
+  repository_id = "onboardai${local.name_suffix}"
   image_prefix  = "${var.region}-docker.pkg.dev/${var.project_id}/${local.repository_id}"
 
   # ---------------------------------------------------------------------------
-  # GitHub Actions identity. Only the deploy workflow on main of this one
-  # repository (pinned by numeric ID), started by a push or a manual dispatch,
-  # can exchange its OIDC token. Pull requests (refs/pull/...), other branches,
-  # other workflows on main (e.g. a future issue_comment or pull_request_target
-  # workflow that outsiders can trigger) and forks are refused.
+  # GitHub Actions identity. Each environment has its own pool, provider and
+  # deployer. Only the deploy workflow on the environment's branch (main for
+  # production, staging for staging) of this one repository (pinned by numeric
+  # ID), started by a push or a manual dispatch, can exchange its OIDC token.
+  # Pull requests (refs/pull/...), other branches, other workflows on that
+  # branch (e.g. a future issue_comment or pull_request_target workflow that
+  # outsiders can trigger) and forks are refused.
   # ---------------------------------------------------------------------------
-  github_deploy_ref          = "refs/heads/main"
+  github_deploy_branch       = local.is_production ? "main" : var.environment
+  github_deploy_ref          = "refs/heads/${local.github_deploy_branch}"
   github_deploy_workflow_ref = "${var.github_repository}/.github/workflows/deploy.yml@${local.github_deploy_ref}"
+  wif_pool_id                = "onboardai-github${local.name_suffix}"
+  wif_provider_id            = "github-actions${local.name_suffix}"
 
   wif_attribute_condition = join(" && ", [
     "assertion.repository_id == '${var.github_repository_id}'",
@@ -91,10 +134,13 @@ locals {
   probe_period_seconds  = 5
   probe_timeout_seconds = 3
 
+  # Every environment gets the same shape: only names and descriptions differ.
+  # account_id is the runtime service account (6-30 characters).
   services = {
     web = {
-      name        = "onboardai-web"
-      description = "OnboardAi web: serves the built frontend and avatar, proxies /api/* to onboardai-api."
+      name        = "onboardai-web${local.name_suffix}"
+      account_id  = "onboardai-web-run${local.name_suffix}"
+      description = "${local.display_name} web: serves the built frontend and avatar, proxies /api/* to onboardai-api${local.name_suffix}."
       cpu         = "1"
       memory      = "512Mi"
       concurrency = 80
@@ -109,8 +155,9 @@ locals {
     }
 
     api = {
-      name        = "onboardai-api"
-      description = "OnboardAi API: /api/* routes, Gemini chat and Vertex AI Search retrieval."
+      name        = "onboardai-api${local.name_suffix}"
+      account_id  = "onboardai-api-run${local.name_suffix}"
+      description = "${local.display_name} API: /api/* routes, Gemini chat and Vertex AI Search retrieval."
       cpu         = "1"
       # The SQLite conversation file (written to the in-memory filesystem) lives
       # in this limit until conversations move to Firestore.
@@ -126,8 +173,9 @@ locals {
     }
 
     tts = {
-      name        = "onboardai-tts"
-      description = "OnboardAi TTS: Kokoro voice (model baked into the image)."
+      name        = "onboardai-tts${local.name_suffix}"
+      account_id  = "onboardai-tts-run${local.name_suffix}"
+      description = "${local.display_name} TTS: Kokoro voice (model baked into the image)."
       # Measured (README "Cloud Run settings"): one Kokoro q8 render of the longest
       # input peaks near 1 GiB RSS and an 1100 MiB limit was OOM-killed, so 2 GiB.
       # A second vCPU rendered about 17% faster and keeps the event loop free
@@ -171,8 +219,12 @@ locals {
     ])
   }
 
-  # Every repository variable the workflows read (tests/workflows.tftest.hcl
-  # checks both directions). Values come from this module.
+  # Every variable the workflows read (tests/workflows.tftest.hcl checks both
+  # directions). Values come from this module. Production keeps them as
+  # repository variables; any other environment sets the same names in the
+  # GitHub environment of its own name, which the deploy jobs select by branch.
+  github_variable_scope = local.is_production ? "" : " --env ${var.environment}"
+
   github_variables = {
     GCP_PROJECT_ID          = var.project_id
     GCP_REGION              = var.region

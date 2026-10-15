@@ -1,20 +1,25 @@
-# Deploys main to Cloud Run (production): tts, then api, then web.
+# Deploys to Cloud Run: main to production, staging to the staging stack
+# (onboardai-*-staging in the same project). tts, then api, then web.
 # CI runs first on the same commit; nothing is pushed or deployed unless every
-# CI job passes. One-time setup and rollback: terraform/onboardai/README.md.
+# CI job passes. One-time setup, staging and rollback:
+# terraform/onboardai/README.md.
 name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# One deploy at a time and never cancelled halfway. Pushes that arrive during a
-# deploy wait; if several wait, GitHub keeps only the newest.
+# One deploy per environment at a time, never cancelled halfway. Pushes that
+# arrive during a deploy wait; if several wait, GitHub keeps only the newest.
+# Production and staging never wait for each other. A manual run on any other
+# branch deploys nothing (ci and config skip it) and gets a group of its own, so
+# it never displaces a waiting deploy.
 concurrency:
-  group: deploy-production
+  group: deploy-${{ github.ref == 'refs/heads/main' && 'production' || github.ref == 'refs/heads/staging' && 'staging' || format('none-{0}', github.run_id) }}
   cancel-in-progress: false
 
 defaults:
@@ -22,17 +27,21 @@ defaults:
     shell: bash
 
 env:
-  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-  GCP_REGION: ${{ vars.GCP_REGION }}
   # Vertex AI location the API uses for Gemini (GOOGLE_CLOUD_LOCATION). The
   # model is served on "global"; regional endpoints such as asia-southeast1 do not have it.
   VERTEX_LOCATION: global
+  # The stack this run deploys: main -> production, staging -> staging (the only
+  # two refs that get past ci and config). NAME_SUFFIX is appended to every
+  # staging resource ID, as local.name_suffix in terraform/onboardai.
+  DEPLOY_ENV: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
+  NAME_SUFFIX: ${{ github.ref == 'refs/heads/staging' && '-staging' || '' }}
 
 jobs:
   ci:
     name: CI
-    # Workload Identity Federation only trusts refs/heads/main; skip other refs early.
-    if: github.ref == 'refs/heads/main'
+    # Workload Identity Federation trusts refs/heads/main (production provider)
+    # and refs/heads/staging (staging provider) only; skip other refs early.
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
     uses: ./.github/workflows/ci.yml
     with:
       # Build all three images in CI, whatever the commit changed.
@@ -42,11 +51,19 @@ jobs:
 
   config:
     name: Check repository variables
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'
+    # Every job that reads vars.* names the GitHub environment of its stack:
+    # vars.* resolve from that environment first, then from the repository.
+    # production defines no environment variables, so it reads the repository
+    # variables as before; staging holds its own nine. The environment changes
+    # the OIDC token's sub claim, which neither WIF provider reads.
+    environment: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
       GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
       GCP_DEPLOYER_SA: ${{ vars.GCP_DEPLOYER_SA }}
       AI_MODE: ${{ vars.AI_MODE }}
@@ -61,21 +78,30 @@ jobs:
           failed=0
           check() {
             if [[ ! "$2" =~ $3 ]]; then
-              echo "::error::Repository variable $1 is missing or malformed. Set it with the commands from 'terraform output github_variable_commands' (terraform/onboardai/README.md)."
+              echo "::error::Variable $1 is missing or malformed for $DEPLOY_ENV. Set it with the commands from 'terraform output github_variable_commands' in the $DEPLOY_ENV workspace (terraform/onboardai/README.md)."
               failed=1
             fi
           }
           check GCP_PROJECT_ID "$GCP_PROJECT_ID" '^[a-z][a-z0-9-]{4,28}[a-z0-9]$'
           check GCP_REGION "$GCP_REGION" '^[a-z]+-[a-z]+[0-9]+$'
           check GCP_WIF_PROVIDER "$GCP_WIF_PROVIDER" '^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$'
-          check GCP_DEPLOYER_SA "$GCP_DEPLOYER_SA" "^onboardai-deployer@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com$"
+          check GCP_DEPLOYER_SA "$GCP_DEPLOYER_SA" "^onboardai-deployer${NAME_SUFFIX}@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com$"
           check AI_MODE "$AI_MODE" '^(demo|gemini|gemini-chat|document-search)$'
           check GEMINI_MODEL "$GEMINI_MODEL" '^[A-Za-z0-9._-]+$'
           check VERTEX_SEARCH_LOCATION "$VERTEX_SEARCH_LOCATION" '^(global|us|eu)$'
           check VERTEX_SEARCH_ENGINE_ID "$VERTEX_SEARCH_ENGINE_ID" '^[a-z0-9][a-z0-9_-]{0,62}$'
           check FIRESTORE_DATABASE_ID "$FIRESTORE_DATABASE_ID" '^(\(default\)|[a-z][a-z0-9-]{2,61}[a-z0-9])$'
+          # Each stack names its own resources: a staging run only ones ending
+          # in -staging, a production run none of those.
+          for name in GCP_WIF_PROVIDER VERTEX_SEARCH_ENGINE_ID FIRESTORE_DATABASE_ID; do
+            value=${!name}
+            if [[ -n "$NAME_SUFFIX" && "$value" != *"$NAME_SUFFIX" ]] || [[ -z "$NAME_SUFFIX" && "$value" == *-staging ]]; then
+              echo "::error::Variable $name names a resource of the wrong stack for this $DEPLOY_ENV deploy."
+              failed=1
+            fi
+          done
           if [[ "$AI_MODE" =~ ^(gemini|gemini-chat)$ ]]; then
-            echo "::notice::AI_MODE=$AI_MODE: the API calls Gemini on Vertex AI ($VERTEX_LOCATION) as onboardai-api-run."
+            echo "::notice::AI_MODE=$AI_MODE: the API calls Gemini on Vertex AI ($VERTEX_LOCATION) as onboardai-api-run$NAME_SUFFIX."
           else
             echo "::notice::AI_MODE=$AI_MODE: no Gemini calls (sample content or document search)."
           fi
@@ -84,6 +110,7 @@ jobs:
   images:
     name: Build and push (${{ matrix.service }})
     needs: [ci, config]
+    environment: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -94,7 +121,9 @@ jobs:
         service: [web, api, tts]
     env:
       SERVICE: ${{ matrix.service }}
-      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/onboardai/${{ matrix.service }}:${{ github.sha }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      # The stack's repository is onboardai$NAME_SUFFIX under this registry.
+      REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,7 +133,7 @@ jobs:
       # Build before authenticating: the auth step writes a credentials file into
       # the workspace, and the workspace is the Docker build context.
       - name: Build image
-        run: docker build --platform linux/amd64 --target "$SERVICE" -t "$IMAGE" .
+        run: docker build --platform linux/amd64 --target "$SERVICE" -t "$REGISTRY/onboardai$NAME_SUFFIX/$SERVICE:$GITHUB_SHA" .
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
@@ -119,17 +148,21 @@ jobs:
         run: |
           set -euo pipefail
           gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
-          docker push "$IMAGE"
+          docker push "$REGISTRY/onboardai$NAME_SUFFIX/$SERVICE:$GITHUB_SHA"
 
   deploy:
     name: Deploy tts, api, web
     needs: images
+    environment: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       id-token: write
     env:
-      IMAGE_PREFIX: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/onboardai
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      # The stack's repository is onboardai$NAME_SUFFIX under this registry.
+      REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}
       AI_MODE: ${{ vars.AI_MODE }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
       VERTEX_SEARCH_LOCATION: ${{ vars.VERTEX_SEARCH_LOCATION }}
@@ -143,6 +176,9 @@ jobs:
       API_RUN_FLAGS: --cpu=1 --memory=1Gi --concurrency=80 --min-instances=0 --max-instances=1 --timeout=300 --port=8080 --execution-environment=gen2 --ingress=all --cpu-throttling --cpu-boost --startup-probe=httpGet.path=/api/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=12
       TTS_RUN_FLAGS: --cpu=2 --memory=2Gi --concurrency=8 --min-instances=0 --max-instances=2 --timeout=300 --port=8080 --execution-environment=gen2 --ingress=all --cpu-throttling --cpu-boost --startup-probe=httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=48
     outputs:
+      # The smoke job names no environment; it prints rollback commands with these.
+      project_id: ${{ vars.GCP_PROJECT_ID }}
+      region: ${{ vars.GCP_REGION }}
       web_url: ${{ steps.deploy.outputs.web_url }}
       api_url: ${{ steps.deploy.outputs.api_url }}
       tts_url: ${{ steps.deploy.outputs.tts_url }}
@@ -164,11 +200,12 @@ jobs:
         run: |
           set -euo pipefail
           for key in web api tts; do
-            if ! rev=$(gcloud run services describe "onboardai-$key" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.traffic[0].revisionName)'); then
-              echo "::error::Cannot read onboardai-$key. Apply terraform/onboardai first; it creates the three services."
+            name="onboardai-$key$NAME_SUFFIX"
+            if ! rev=$(gcloud run services describe "$name" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.traffic[0].revisionName)'); then
+              echo "::error::Cannot read $name. Apply terraform/onboardai ($DEPLOY_ENV) first; it creates the three services."
               exit 1
             fi
-            echo "onboardai-$key serves ${rev:-nothing yet}"
+            echo "$name serves ${rev:-nothing yet}"
             echo "$key=$rev" >> "$GITHUB_OUTPUT"
           done
 
@@ -178,7 +215,7 @@ jobs:
           set -euo pipefail
           # deploy KEY "ENV_VARS" [extra gcloud flags...]; sets DEPLOYED_URL.
           deploy() {
-            local key=$1 env_vars=$2 name="onboardai-$1" flags_var url
+            local key=$1 env_vars=$2 name="onboardai-$1$NAME_SUFFIX" flags_var url
             shift 2
             flags_var="${key^^}_RUN_FLAGS"
             local -a flags
@@ -187,8 +224,8 @@ jobs:
             gcloud run deploy "$name" \
               --project="$GCP_PROJECT_ID" \
               --region="$GCP_REGION" \
-              --image="$IMAGE_PREFIX/$key:$GITHUB_SHA" \
-              --service-account="$name-run@$GCP_PROJECT_ID.iam.gserviceaccount.com" \
+              --image="$REGISTRY/onboardai$NAME_SUFFIX/$key:$GITHUB_SHA" \
+              --service-account="onboardai-$key-run$NAME_SUFFIX@$GCP_PROJECT_ID.iam.gserviceaccount.com" \
               --set-env-vars="$env_vars" \
               "${flags[@]}" "$@" \
               --quiet
@@ -208,7 +245,7 @@ jobs:
           tts_url=$DEPLOYED_URL
 
           # Gemini, Vertex AI Search and Firestore all use the service's own
-          # identity (ADC as onboardai-api-run): there is no API key.
+          # identity (ADC as onboardai-api-run$NAME_SUFFIX): there is no API key.
           # --set-env-vars replaces the whole set, so variables an earlier
           # revision carried and this list lacks are dropped.
           api_env="NODE_ENV=production,AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,VERTEX_SEARCH_LOCATION=$VERTEX_SEARCH_LOCATION,VERTEX_SEARCH_ENGINE_ID=$VERTEX_SEARCH_ENGINE_ID,FIRESTORE_DATABASE_ID=$FIRESTORE_DATABASE_ID,TTS_SERVICE_URL=$tts_url"
@@ -227,12 +264,12 @@ jobs:
           PREVIOUS_TTS: ${{ steps.previous.outputs.tts }}
         run: |
           {
-            echo "### Deploy of $GITHUB_SHA failed"
+            echo "### Deploy of $GITHUB_SHA to $DEPLOY_ENV failed"
             echo "A revision that failed to start receives no traffic. To put all three services back on the revisions that served before this run:"
             echo '```sh'
             for pair in "web=$PREVIOUS_WEB" "api=$PREVIOUS_API" "tts=$PREVIOUS_TTS"; do
               if [[ -n "${pair#*=}" ]]; then
-                echo "gcloud run services update-traffic onboardai-${pair%%=*} --project=$GCP_PROJECT_ID --region=$GCP_REGION --to-revisions=${pair#*=}=100"
+                echo "gcloud run services update-traffic onboardai-${pair%%=*}$NAME_SUFFIX --project=$GCP_PROJECT_ID --region=$GCP_REGION --to-revisions=${pair#*=}=100"
               fi
             done
             echo '```'
@@ -245,6 +282,8 @@ jobs:
     timeout-minutes: 20
     permissions: {}
     env:
+      GCP_PROJECT_ID: ${{ needs.deploy.outputs.project_id }}
+      GCP_REGION: ${{ needs.deploy.outputs.region }}
       WEB_URL: ${{ needs.deploy.outputs.web_url }}
       API_URL: ${{ needs.deploy.outputs.api_url }}
       TTS_URL: ${{ needs.deploy.outputs.tts_url }}
@@ -292,12 +331,12 @@ jobs:
           PREVIOUS_TTS: ${{ needs.deploy.outputs.previous_tts }}
         run: |
           {
-            echo "### Smoke test of $GITHUB_SHA failed"
+            echo "### Smoke test of $GITHUB_SHA on $DEPLOY_ENV failed"
             echo "The new revisions are serving. To put all three services back on the revisions that served before this run:"
             echo '```sh'
             for pair in "web=$PREVIOUS_WEB" "api=$PREVIOUS_API" "tts=$PREVIOUS_TTS"; do
               if [[ -n "${pair#*=}" ]]; then
-                echo "gcloud run services update-traffic onboardai-${pair%%=*} --project=$GCP_PROJECT_ID --region=$GCP_REGION --to-revisions=${pair#*=}=100"
+                echo "gcloud run services update-traffic onboardai-${pair%%=*}$NAME_SUFFIX --project=$GCP_PROJECT_ID --region=$GCP_REGION --to-revisions=${pair#*=}=100"
               fi
             done
             echo '```'

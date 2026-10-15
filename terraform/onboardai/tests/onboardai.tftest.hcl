@@ -3,6 +3,9 @@
 # created in GCP. `command = apply` against the mock fills computed values
 # (emails, resource names) with stand-ins, so references between resources can
 # be compared.
+#
+# This file checks the production environment (var.environment's default);
+# tests/staging.tftest.hcl checks staging.
 
 mock_provider "google" {}
 mock_provider "google-beta" {}
@@ -10,6 +13,13 @@ mock_provider "google-beta" {}
 variables {
   project_id   = "onboardai-test-123"
   alert_emails = ["alerts-a@example.com", "alerts-b@example.com"]
+}
+
+# terraform test runs in whichever workspace is selected, so the workspace guard
+# is replaced here; tests/state_guard.tftest.hcl tests it directly, and the run
+# state_guard_is_wired_to_the_workspace below checks its inputs.
+override_module {
+  target = module.state_guard
 }
 
 override_data {
@@ -367,8 +377,8 @@ run "documents_bucket_is_private_and_readable_only_by_discovery_engine" {
   }
 
   assert {
-    condition     = google_project_service_identity.discovery_engine.service == "discoveryengine.googleapis.com"
-    error_message = "The service agent must be generated before the bucket grant."
+    condition     = length(google_project_service_identity.discovery_engine) == 1 && google_project_service_identity.discovery_engine[0].service == "discoveryengine.googleapis.com"
+    error_message = "The service agent must be generated before the bucket grant (production's state owns it)."
   }
 }
 
@@ -589,4 +599,112 @@ run "rejects_empty_alert_emails" {
   }
 
   expect_failures = [var.alert_emails]
+}
+
+# ---------------------------------------------------------------------------
+# Production keeps exactly what it was applied with (issue #20)
+# ---------------------------------------------------------------------------
+
+run "production_keeps_its_names_labels_and_grants" {
+  command = apply
+
+  assert {
+    condition = alltrue([
+      for labels in concat(
+        [for s in google_cloud_run_v2_service.service : s.labels],
+        [google_artifact_registry_repository.onboardai.labels, google_storage_bucket.docs.labels],
+      ) : !contains(keys(labels), "environment")
+    ]) && google_monitoring_alert_policy.server_errors.user_labels == tomap({ app = "onboardai", managed-by = "terraform" })
+    error_message = "Production resources carry no environment label: adding one would update every production resource."
+  }
+
+  assert {
+    condition = (
+      google_service_account.deployer.account_id == "onboardai-deployer" &&
+      { for k, a in google_service_account.runtime : k => a.account_id } == { web = "onboardai-web-run", api = "onboardai-api-run", tts = "onboardai-tts-run" } &&
+      google_artifact_registry_repository.onboardai.repository_id == "onboardai" &&
+      google_iam_workload_identity_pool.github.workload_identity_pool_id == "onboardai-github" &&
+      google_iam_workload_identity_pool_provider.github.workload_identity_pool_provider_id == "github-actions"
+    )
+    error_message = "Production IDs never carry a suffix."
+  }
+
+  assert {
+    condition = (
+      google_iam_workload_identity_pool.github.display_name == "OnboardAi GitHub Actions" &&
+      google_iam_workload_identity_pool_provider.github.display_name == "GitHub Actions" &&
+      google_service_account.deployer.display_name == "OnboardAi: GitHub Actions deployer" &&
+      google_service_account.deployer.description == "Impersonated by the deploy workflow on main through Workload Identity Federation. Pushes images and deploys the three OnboardAi services. Has no key." &&
+      google_cloud_run_v2_service.service["web"].description == "OnboardAi web: serves the built frontend and avatar, proxies /api/* to onboardai-api." &&
+      google_monitoring_alert_policy.api_latency.display_name == "OnboardAi: onboardai-api p95 latency above 20 s"
+    )
+    error_message = "Production display names and descriptions are the ones it was applied with."
+  }
+
+  assert {
+    condition     = alltrue([for m in google_project_iam_member.api_runtime : length(m.condition) == 0])
+    error_message = "Production's api roles carry no IAM condition (adding one would replace the binding)."
+  }
+
+  assert {
+    condition     = length(google_discovery_engine_search_engine_iam_member.api_searches_engine) == 0
+    error_message = "Production searches through its project-level role; the engine-level grant is staging's."
+  }
+
+  assert {
+    condition     = output.github_environment_commands == null
+    error_message = "Production keeps its repository variables; the GitHub environment setup output is staging's only (null keeps production's outputs unchanged)."
+  }
+
+  assert {
+    condition = (
+      google_cloud_run_v2_service.service["api"].deletion_protection == true &&
+      google_discovery_engine_search_engine.docs.deletion_policy == "PREVENT"
+    )
+    error_message = "deletion_protection defaults to true."
+  }
+}
+
+run "state_guard_is_wired_to_the_workspace" {
+  command = plan
+
+  assert {
+    condition     = can(regex("module \"state_guard\" \\{\\s*source\\s*=\\s*\"\\./modules/state_guard\"\\s*environment\\s*=\\s*var\\.environment\\s*workspace\\s*=\\s*terraform\\.workspace\\s*\\}", file("${path.module}/environment.tf")))
+    error_message = "module.state_guard must receive environment = var.environment and workspace = terraform.workspace."
+  }
+
+  assert {
+    condition     = sum([for f in fileset("${path.module}/modules/state_guard", "*.tf") : length(regexall("(?m)^\\s*(resource|data)\\s+\"", file("${path.module}/modules/state_guard/${f}")))]) == 0
+    error_message = "The guard manages and reads nothing, so it adds nothing to either state."
+  }
+}
+
+run "deletion_protection_can_be_lifted_for_tear_down" {
+  command = plan
+
+  variables {
+    deletion_protection = false
+  }
+
+  assert {
+    condition = (
+      alltrue([for s in google_cloud_run_v2_service.service : s.deletion_protection == false]) &&
+      google_discovery_engine_data_store.docs.deletion_policy == "DELETE" &&
+      google_discovery_engine_search_engine.docs.deletion_policy == "DELETE" &&
+      google_firestore_database.default.delete_protection_state == "DELETE_PROTECTION_DISABLED" &&
+      google_firestore_database.default.deletion_policy == "DELETE" &&
+      google_storage_bucket.docs.force_destroy == false
+    )
+    error_message = "deletion_protection = false lifts every delete guard except the bucket's (documents are emptied by hand)."
+  }
+}
+
+run "rejects_unknown_environment" {
+  command = plan
+
+  variables {
+    environment = "prod"
+  }
+
+  expect_failures = [var.environment]
 }

@@ -1,5 +1,6 @@
 # Checks that .github/workflows agree with this module and keep the security
 # rules of a public repository with id-token: write. Offline: `terraform test`.
+# Runs use production (var.environment's default) unless they set staging.
 
 mock_provider "google" {}
 mock_provider "google-beta" {}
@@ -7,6 +8,12 @@ mock_provider "google-beta" {}
 variables {
   project_id   = "onboardai-test-123"
   alert_emails = ["alerts-a@example.com"]
+}
+
+# terraform test runs in whichever workspace is selected; the guard is tested
+# on its own in tests/state_guard.tftest.hcl.
+override_module {
+  target = module.state_guard
 }
 
 # Well-formed stand-ins for the apply run below: the provider validates service
@@ -100,9 +107,18 @@ run "deploy_flags_match_terraform" {
     error_message = "GOOGLE_DRIVE_FOLDER_ID is retired; no workflow may mention it."
   }
 
+  # Names the deploy computes, with NAME_SUFFIX empty for production and
+  # -staging for staging (deploy_selects_the_stack_by_branch). Terraform's
+  # names are checked against them in tests/onboardai.tftest.hcl (production)
+  # and tests/staging.tftest.hcl (staging_deploy_names_match_terraform).
   assert {
-    condition     = strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--service-account=\"$name-run@$GCP_PROJECT_ID.iam.gserviceaccount.com\"")
-    error_message = "deploy.yml must deploy each service as onboardai-<service>-run, the accounts Terraform creates."
+    condition = (
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--service-account=\"onboardai-$key-run$NAME_SUFFIX@$GCP_PROJECT_ID.iam.gserviceaccount.com\"") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "name=\"onboardai-$1$NAME_SUFFIX\"") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--image=\"$REGISTRY/onboardai$NAME_SUFFIX/$key:$GITHUB_SHA\"") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "docker push \"$REGISTRY/onboardai$NAME_SUFFIX/$SERVICE:$GITHUB_SHA\"")
+    )
+    error_message = "deploy.yml must deploy onboardai-<service>$NAME_SUFFIX as onboardai-<service>-run$NAME_SUFFIX from repository onboardai$NAME_SUFFIX, the names Terraform creates."
   }
 
   assert {
@@ -152,11 +168,11 @@ run "wif_condition_matches_the_deploy_workflow" {
     error_message = "The WIF condition trusts .github/workflows/deploy.yml; it must exist."
   }
 
-  # The condition accepts push and workflow_dispatch only; deploy.yml must be
-  # triggered by exactly those.
+  # The conditions accept push and workflow_dispatch only; deploy.yml must be
+  # triggered by exactly those, on main (production) and staging (staging).
   assert {
-    condition     = can(regex("(?s)\non:\n  push:\n    branches: \\[main\\]\n  workflow_dispatch:\n\n", file("${path.module}/../../.github/workflows/deploy.yml")))
-    error_message = "deploy.yml must trigger on push to main and workflow_dispatch only."
+    condition     = can(regex("(?s)\non:\n  push:\n    branches: \\[main, staging\\]\n  workflow_dispatch:\n\n", file("${path.module}/../../.github/workflows/deploy.yml")))
+    error_message = "deploy.yml must trigger on push to main or staging and workflow_dispatch only."
   }
 
   assert {
@@ -331,5 +347,107 @@ run "ci_skips_docker_builds_only_when_proven" {
   assert {
     condition     = try(yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.verify.if, null) == null && try(yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.verify.needs, null) == null && alltrue([for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.verify.steps : try(s.if, null) == null])
     error_message = "The verify job (format check, tests, build, secret scan) must always run."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# One workflow, two stacks (issue #20)
+# ---------------------------------------------------------------------------
+
+# main deploys production, staging deploys staging, nothing else deploys. Every
+# job that reads vars.* names the GitHub environment of its stack, so staging
+# reads its environment variables and production its repository variables.
+run "deploy_selects_the_stack_by_branch" {
+  command = plan
+
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.ci.if == "github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.config.if == "github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging'"
+    )
+    error_message = "ci and config must run for refs/heads/main and refs/heads/staging only (the refs the two WIF providers trust)."
+  }
+
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).env.DEPLOY_ENV == "$${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}" &&
+      alltrue([for j in ["config", "images", "deploy"] : yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs[j].environment == "$${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}"])
+    )
+    error_message = "DEPLOY_ENV and the environment of config, images and deploy must all map refs/heads/staging to staging and anything else (main) to production."
+  }
+
+  # vars.* in a job without an environment would read production's repository
+  # variables during a staging deploy.
+  assert {
+    condition = alltrue([
+      for name, job in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs :
+      try(job.environment, null) == "$${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}"
+      if strcontains(jsonencode(job), "vars.")
+    ]) && !strcontains(jsonencode(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).env), "vars.")
+    error_message = "Every job that reads vars.* must name the stack's environment, and the workflow-level env must not read vars.* at all."
+  }
+
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).concurrency.group == "deploy-$${{ github.ref == 'refs/heads/main' && 'production' || github.ref == 'refs/heads/staging' && 'staging' || format('none-{0}', github.run_id) }}" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).concurrency["cancel-in-progress"] == false
+    )
+    error_message = "One deploy per environment: group deploy-production for main (unchanged), deploy-staging for staging, a group of its own for any other ref; never cancelled."
+  }
+
+  # (YAML 1.1 reads the key `on` as true.)
+  assert {
+    condition = (
+      try(yamldecode(file("${path.module}/../../.github/workflows/ci.yml"))["on"], yamldecode(file("${path.module}/../../.github/workflows/ci.yml"))["true"]).pull_request.branches == ["main", "staging"] &&
+      try(yamldecode(file("${path.module}/../../.github/workflows/ci.yml"))["on"], yamldecode(file("${path.module}/../../.github/workflows/ci.yml"))["true"]).push.branches == ["main", "staging"]
+    )
+    error_message = "ci.yml must run on pull requests into, and pushes to, main and staging."
+  }
+
+  # A staging run must never deploy with production's values, nor the other way round.
+  assert {
+    condition = (
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "          check GCP_DEPLOYER_SA \"$GCP_DEPLOYER_SA\" \"^onboardai-deployer$${NAME_SUFFIX}@$${GCP_PROJECT_ID}\\.iam\\.gserviceaccount\\.com$\"\n") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "          for name in GCP_WIF_PROVIDER VERTEX_SEARCH_ENGINE_ID FIRESTORE_DATABASE_ID; do\n") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "if [[ -n \"$NAME_SUFFIX\" && \"$value\" != *\"$NAME_SUFFIX\" ]] || [[ -z \"$NAME_SUFFIX\" && \"$value\" == *-staging ]]; then")
+    )
+    error_message = "The config job must check that the deployer, WIF provider, engine and database belong to the stack being deployed."
+  }
+
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.env.GCP_PROJECT_ID == "$${{ needs.deploy.outputs.project_id }}" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.env.GCP_REGION == "$${{ needs.deploy.outputs.region }}" &&
+      length(regexall("update-traffic onboardai-\\$\\{pair%%=\\*\\}\\$NAME_SUFFIX ", file("${path.module}/../../.github/workflows/deploy.yml"))) == 2
+    )
+    error_message = "Rollback commands must name the deployed stack's services, project and region."
+  }
+}
+
+run "staging_deploy_flags_match_terraform" {
+  command = plan
+
+  variables {
+    environment = "staging"
+  }
+
+  assert {
+    condition = alltrue([
+      for key, flags in output.cloud_run_deploy_flags :
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "      ${upper(key)}_RUN_FLAGS: ${flags}\n")
+    ])
+    error_message = "Staging's flags differ from deploy.yml's *_RUN_FLAGS, which serve both stacks."
+  }
+}
+
+run "production_values_pass_the_production_checks" {
+  command = apply
+
+  assert {
+    condition = alltrue([
+      for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) --repo [^ ]+ --body '([^']*)'$", output.github_variable_commands) :
+      !endswith(m[1], "-staging") if contains(["GCP_WIF_PROVIDER", "VERTEX_SEARCH_ENGINE_ID", "FIRESTORE_DATABASE_ID"], m[0])
+    ]) && google_service_account.deployer.account_id == "onboardai-deployer"
+    error_message = "Production's provider, engine and database must not look like staging's, or the config job would refuse the production deploy."
   }
 }

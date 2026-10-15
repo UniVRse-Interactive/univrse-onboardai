@@ -2,6 +2,7 @@
 # granted Cloud Run Developer on each one instead of on the project. Terraform
 # owns their shape (identity, resources, scaling, probe, ingress, public access);
 # the deploy workflow owns the image, environment variables, secrets and traffic.
+# Staging's three (onboardai-<service>-staging) have the same shape.
 resource "google_cloud_run_v2_service" "service" {
   for_each = local.services
 
@@ -12,7 +13,7 @@ resource "google_cloud_run_v2_service" "service" {
   labels      = merge(local.labels, { component = each.key })
 
   # Terraform refuses to delete a service while this is true (see README, Tear down).
-  deletion_protection = true
+  deletion_protection = var.deletion_protection
 
   template {
     service_account                  = google_service_account.runtime[each.key].email

@@ -8,6 +8,17 @@ variable "project_id" {
   }
 }
 
+variable "environment" {
+  description = "Stack this plan manages. production: workspace default, state onboardai/default.tfstate, the names it was applied with. staging: workspace staging, state onboardai/staging.tfstate, every resource ID suffixed -staging. A plan fails when this and the selected workspace disagree (environment.tf)."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = contains(["production", "staging"], var.environment)
+    error_message = "environment must be production or staging."
+  }
+}
+
 variable "region" {
   description = "Region of the Cloud Run services and the Artifact Registry repository (service contract v1: asia-southeast1)."
   type        = string
@@ -91,6 +102,16 @@ variable "alert_emails" {
     condition     = length(var.alert_emails) > 0 && alltrue([for e in var.alert_emails : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", e))])
     error_message = "alert_emails needs at least one address, and every entry must be an email address."
   }
+}
+
+# ---------------------------------------------------------------------------
+# Tear down
+# ---------------------------------------------------------------------------
+
+variable "deletion_protection" {
+  description = "Keeps Terraform (and, for Firestore, anyone) from deleting the Cloud Run services, the Vertex AI Search data store and engine, and the Firestore database. Leave it true. To tear a stack down, apply once with false, then destroy (README, Tear down)."
+  type        = bool
+  default     = true
 }
 
 # ---------------------------------------------------------------------------
