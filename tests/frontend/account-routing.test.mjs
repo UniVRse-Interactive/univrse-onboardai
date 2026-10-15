@@ -60,3 +60,35 @@ test('app-wide account actions', () => {
   assert.equal(r.to, null);
   assert.equal(afterAccountAction('change-password', null).account, null);
 });
+
+import { sessionCheckOutcome } from '../../src/access/account-routing.mjs';
+import { ensureSession, registerSessionVerifier } from '../../src/access/account-api.mjs';
+
+test('repeat session check: a missing or ended session returns to sign-in', () => {
+  assert.equal(sessionCheckOutcome(emp, { account: null }).type, 'expired');
+  assert.equal(
+    sessionCheckOutcome(emp, { error: { status: 401, code: 'SESSION_EXPIRED' } }).type,
+    'expired',
+  );
+  assert.equal(sessionCheckOutcome(emp, { account: { ...emp } }).type, 'ok');
+  assert.equal(sessionCheckOutcome(null, { account: null }).type, 'ok');
+});
+test('repeat session check: other failures never sign the user out', () => {
+  assert.equal(
+    sessionCheckOutcome(emp, { error: { status: 503, code: 'ACCOUNTS_UNAVAILABLE' } }).type,
+    'ok',
+  );
+  assert.equal(sessionCheckOutcome(emp, { error: { status: 0, code: '' } }).type, 'ok');
+});
+test('repeat session check: a changed account or forced change updates state', () => {
+  const r = sessionCheckOutcome(emp, { account: { ...emp, mustChangePassword: true } });
+  assert.equal(r.type, 'update');
+  assert.equal(sessionCheckOutcome(emp, { account: hr }).type, 'update');
+});
+test('ensureSession allows sending without a verifier and obeys one', async () => {
+  assert.equal(await ensureSession(), true);
+  const off = registerSessionVerifier(async () => false);
+  assert.equal(await ensureSession(), false);
+  off();
+  assert.equal(await ensureSession(), true);
+});

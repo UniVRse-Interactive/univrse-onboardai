@@ -4,7 +4,7 @@ import Icon from '../portal/Icon';
 import { createServerSpeech } from './answer-audio-player';
 import AnswerStyleSettings, { learningFormats } from './AnswerStyleSettings';
 import VisualAnswerPanel from './VisualAnswerPanel';
-import { reportAccountResponse } from '../access/account-api.mjs';
+import { ensureSession, reportAccountResponse } from '../access/account-api.mjs';
 import './answer-support-controls.css';
 import './alya-chat.css';
 import './alya-workspace.css';
@@ -532,6 +532,9 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
     );
     const timeout = setTimeout(() => abort.abort('timeout'), 65000);
     try {
+      // Signed-in browsers must still have a session; otherwise the question
+      // would be answered anonymously and never saved to the account.
+      if (!(await ensureSession())) return;
       const task = config.tasks.find((task) => task.id === 'company-resources') || config.tasks[0];
       // Shared Kokoro audio is requested separately; no Google TTS is called.
       const response = await fetch(apiBase + '/chat', {

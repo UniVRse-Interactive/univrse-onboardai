@@ -980,7 +980,14 @@ export default function OnboardingWebsite() {
       />
     );
   if (['/hr', '/hr-preview'].includes(path))
-    return <HrWorkspace navigate={navigate} account={account} onSignOut={session.signOut} />;
+    return (
+      <HrWorkspace
+        navigate={navigate}
+        account={account}
+        accounts={session.accounts === true}
+        onSignOut={session.signOut}
+      />
+    );
   if (['/employee', '/guest/employee'].includes(path))
     return <GuestEmployeeEntry navigate={navigate} />;
   return (
@@ -1006,8 +1013,9 @@ export default function OnboardingWebsite() {
             </span>
             {account ? (
               <>
-                <span className="uv-account-id">
-                  Signed in as <strong>{account.username}</strong>
+                <span className="uv-account-id" title={'Signed in as ' + account.username}>
+                  <span className="uv-account-prefix">Signed in as </span>
+                  <strong>{account.username}</strong>
                 </span>
                 <button type="button" className="uv-access-link" onClick={session.signOut}>
                   Sign out

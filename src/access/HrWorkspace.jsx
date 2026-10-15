@@ -160,7 +160,7 @@ function EmployeeSummary({ employee }) {
   );
 }
 
-export default function HrWorkspace({ navigate, account = null, onSignOut }) {
+export default function HrWorkspace({ navigate, account = null, onSignOut, accounts = false }) {
   const hrAccount = account?.role === 'hr' ? account : null;
   const [workspace, setWorkspace] = useState(null),
     [employeeId, setEmployeeId] = useState(''),
@@ -390,7 +390,7 @@ export default function HrWorkspace({ navigate, account = null, onSignOut }) {
             <CompanyDocumentLibrary workspace={workspace} onRefresh={() => refresh(true)} />
             <p className="hr-access-note">
               Temporary access · This browser’s employee records are retained for 24 hours after the
-              last activity. Account access is not connected yet.
+              last activity.{accounts ? '' : ' Account access is not connected yet.'}
             </p>
           </>
         )}

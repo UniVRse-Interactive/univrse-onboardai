@@ -27,3 +27,19 @@ export function afterAccountAction(action, account) {
     return { account: { ...account, mustChangePassword: true }, to: null, notice: false };
   return { account, to: null, notice: false };
 }
+
+// What a repeat GET /api/auth/session means for a browser that believes it is
+// signed in as `current`. `result` is { account } from a 200, or { error } from
+// an AccountApiError; a network failure never signs anyone out.
+export function sessionCheckOutcome(current, result) {
+  if (!current) return { type: 'ok' };
+  if (result?.error) {
+    const { status, code } = result.error;
+    return status === 401 && code === 'SESSION_EXPIRED' ? { type: 'expired' } : { type: 'ok' };
+  }
+  const account = result?.account ?? null;
+  if (!account) return { type: 'expired' };
+  if (account.id !== current.id || account.mustChangePassword !== current.mustChangePassword)
+    return { type: 'update', account };
+  return { type: 'ok' };
+}

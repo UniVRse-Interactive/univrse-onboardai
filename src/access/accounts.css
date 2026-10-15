@@ -70,24 +70,24 @@
   outline-offset: 4px;
 }
 .account-card > p {
-  color: #52677b;
+  color: #3e5368;
   font-size: 14px;
   line-height: 1.6;
 }
 .account-card .access-eyebrow {
-  color: #256a91;
+  color: #1d5f84;
 }
 .account-field {
   gap: 6px;
 }
 .account-required {
   font-weight: 400;
-  color: #52677b;
+  color: #3e5368;
   font-size: 12px;
 }
 .account-field-hint {
   font-size: 11px;
-  color: #52677b;
+  color: #3e5368;
   line-height: 1.4;
 }
 .account-field-error {
@@ -142,7 +142,7 @@
   display: none;
 }
 .account-empty {
-  color: #52677b;
+  color: #3e5368;
   font-style: italic;
 }
 .account-visually-hidden {
@@ -154,10 +154,19 @@
   white-space: nowrap;
 }
 
-/* HR employee accounts */
-.hr-accounts {
+/* HR employee accounts. The HR page is a dark slate ground (workspace-palette.css
+   sets its text to #edf3f7), so this section is its own light surface and sets
+   every colour it needs. Selectors carry .hr-preview-page to win over the palette. */
+.hr-preview-page .hr-accounts {
+  --access-ink: #1f3047;
+  --access-muted: #3e5368;
+  --access-accent: #1d5f84;
   margin-top: 38px;
   scroll-margin-top: 24px;
+  padding: 26px 28px 30px;
+  background: #e8eff4;
+  color: #1f3047;
+  border-radius: 12px;
 }
 .hr-accounts-heading {
   display: flex;
@@ -169,12 +178,12 @@
 .hr-accounts-heading h2 {
   margin: 6px 0;
 }
-.hr-accounts-heading p {
+.hr-preview-page .hr-accounts-heading p {
   font-size: 13px;
   color: #3e5368;
 }
-.hr-accounts-heading .access-eyebrow {
-  color: #52677b;
+.hr-preview-page .hr-accounts-heading .access-eyebrow {
+  color: #3e5368;
   font-size: 10px;
 }
 .account-actions {
@@ -182,6 +191,18 @@
   gap: 10px;
   flex-wrap: wrap;
   align-items: center;
+}
+.hr-preview-page .hr-accounts .account-secondary {
+  background: #f4f8fb;
+  color: #1f3047;
+}
+.hr-preview-page .hr-accounts .account-primary {
+  background: #1d5f84;
+  border-color: #1d5f84;
+  color: #fff;
+}
+.hr-preview-page .hr-accounts .account-link-button {
+  color: #1d5f84;
 }
 .account-primary,
 .account-secondary,
@@ -226,7 +247,7 @@
   outline-offset: 2px;
 }
 .account-link-button {
-  color: #256a91;
+  color: #1d5f84;
   text-decoration: underline;
   font-size: 13px;
   padding: 8px 4px;
@@ -234,7 +255,7 @@
 .account-panel {
   margin: 20px 0;
   padding: 22px;
-  background: #eef4f8;
+  background: #f4f8fb;
   border: 1px solid #a9bfce;
   border-radius: 8px;
 }
@@ -266,7 +287,7 @@
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #256a91;
+  color: #1d5f84;
 }
 .account-group-fields {
   display: grid;
@@ -284,7 +305,8 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
-  background: #e8eff4;
+  background: #f4f8fb;
+  color: #1f3047;
 }
 .account-table th,
 .account-table td {
@@ -306,7 +328,7 @@
 }
 .account-table td small {
   display: block;
-  color: #52677b;
+  color: #3e5368;
   font-size: 11px;
   margin-top: 2px;
 }
@@ -344,10 +366,10 @@
   min-height: 36px;
   padding: 6px 10px;
   font-size: 12px;
-  color: #256a91;
-  border: 1px solid #a9bfce;
+  color: #1d5f84;
+  border: 1px solid #7f9cb0;
   border-radius: 5px;
-  background: #eef4f8;
+  background: #f4f8fb;
 }
 .account-row-actions button:hover {
   background: #fff;
@@ -357,6 +379,13 @@
 .account-profile {
   max-width: 920px;
   margin: 0 auto;
+  /* Room for the floating Ask Alya button. */
+  padding-bottom: 110px;
+}
+/* My profile sits on the dark portal ground, so its notes use light text. */
+.account-profile .account-note,
+.account-profile .account-empty {
+  color: #c0d1dd;
 }
 .account-profile-grid {
   display: grid;
@@ -390,6 +419,39 @@
 }
 .uv-account-id {
   font-size: 12px;
+  min-width: 0;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uv-header-actions .uv-access-link {
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .uv-account-prefix,
+  .uv-header-actions .uv-preview-label {
+    display: none;
+  }
+  .uv-account-id {
+    max-width: 84px;
+  }
+  .uv-header-actions {
+    min-width: 0;
+    flex-wrap: nowrap;
+  }
+  .hr-preview-page .hr-accounts {
+    padding: 18px 14px 22px;
+  }
+  .account-session {
+    min-width: 0;
+  }
+  .account-session .account-signed-in {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 .uv-header-actions .uv-access-link {
   cursor: pointer;
@@ -427,7 +489,7 @@
     font-size: 10px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #52677b;
+    color: #3e5368;
   }
   .hr-accounts-heading,
   .account-actions {

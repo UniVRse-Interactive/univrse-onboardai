@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { accountApi, signInNotice, subscribeAccountErrors } from './account-api.mjs';
-import { afterAccountAction } from './account-routing.mjs';
+import {
+  accountApi,
+  registerSessionVerifier,
+  signInNotice,
+  subscribeAccountErrors,
+} from './account-api.mjs';
+import { afterAccountAction, sessionCheckOutcome } from './account-routing.mjs';
 
 // Account state for the whole site. `accounts` is null until /api/config answers.
 // With accounts off (or unreachable) nothing else is ever requested.
@@ -48,6 +53,46 @@ export default function useAccountSession({ onNavigate }) {
     return () => {
       live = false;
       unsubscribe();
+    };
+  }, []);
+
+  // While the page believes it is signed in, confirm the cookie still works on
+  // focus and before chat sends, so a vanished cookie is not mistaken for a session.
+  useEffect(() => {
+    let checking = null;
+    async function verify() {
+      const current = accountRef.current;
+      if (!current) return true;
+      if (!checking)
+        checking = (async () => {
+          let result;
+          try {
+            result = await accountApi.session({ report: false });
+          } catch (error) {
+            result = error.name === 'AbortError' || !error.status ? { network: true } : { error };
+          }
+          const outcome = result.network ? { type: 'ok' } : sessionCheckOutcome(current, result);
+          if (outcome.type === 'expired') {
+            setState((s) => ({ ...s, account: null, notice: signInNotice }));
+            navigateRef.current('/login');
+          } else if (outcome.type === 'update')
+            setState((s) => ({ ...s, account: outcome.account }));
+          return outcome.type !== 'expired';
+        })().finally(() => {
+          checking = null;
+        });
+      return checking;
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') verify();
+    };
+    window.addEventListener('focus', onVisible);
+    document.addEventListener('visibilitychange', onVisible);
+    const unregister = registerSessionVerifier(verify);
+    return () => {
+      window.removeEventListener('focus', onVisible);
+      document.removeEventListener('visibilitychange', onVisible);
+      unregister();
     };
   }, []);
 

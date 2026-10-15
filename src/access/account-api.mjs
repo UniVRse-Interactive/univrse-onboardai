@@ -33,6 +33,19 @@ export function reportAccountResponse(status, data) {
   return action;
 }
 
+let sessionVerifier = null;
+export function registerSessionVerifier(verifier) {
+  sessionVerifier = verifier;
+  return () => {
+    if (sessionVerifier === verifier) sessionVerifier = null;
+  };
+}
+// Resolves false when a signed-in browser no longer has a session. Chat calls
+// this before sending so a question is never answered anonymously by mistake.
+export async function ensureSession() {
+  return sessionVerifier ? sessionVerifier() : true;
+}
+
 export const signInNotice = 'Your session ended. Sign in again.';
 
 export function networkErrorMessage() {

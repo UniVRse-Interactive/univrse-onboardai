@@ -133,7 +133,6 @@ function AddEmployeePanel({ onClose, onDone }) {
     event.preventDefault();
     if (busy) return;
     const submitted = { ...account };
-    setAccount({ ...account, temporaryPassword: '', confirmation: '' });
     const found = { ...validateNewEmployee(submitted) };
     Object.assign(found, fieldErrors(validateProfileForm(profile)).errors);
     setSummary('');
@@ -307,7 +306,6 @@ function ResetPasswordPanel({ employee, onClose, onDone }) {
     event.preventDefault();
     if (busy) return;
     const submitted = { ...values };
-    setValues({ temporaryPassword: '', confirmation: '' });
     setSummary('');
     const problem = passwordProblem(submitted.temporaryPassword, username);
     if (problem || submitted.temporaryPassword !== submitted.confirmation) {
@@ -463,8 +461,17 @@ export default function HrEmployees() {
   }, []);
   useEffect(() => {
     load();
+    // Employees change their own password and sign in elsewhere; refresh when
+    // HR returns to this page.
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       sequence.current++;
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [load]);
   function open(next) {
