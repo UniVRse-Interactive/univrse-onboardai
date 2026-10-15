@@ -6,20 +6,27 @@ import { tasks, demoAnswer, systemPrompt } from './sample-onboarding-content.mjs
 import { readDriveKnowledge, driveSystemPrompt, driveFailure } from './google-drive-documents.mjs';
 import { searchDocuments } from './document-search.mjs';
 import { createSharedVoice, sharedVoiceName } from './kokoro-voice.mjs';
+import { createRemoteVoice } from './remote-voice.mjs';
+import { parseVoiceRequest, voiceRequestError, voiceFailure } from './voice-request.mjs';
 import { randomBytes } from 'node:crypto';
 import { sessionHash } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
 import { mountGuestWorkspaceRoutes } from './guest-workspace-routes.mjs';
+import { vertexConfig, vertexGenerateContentUrl, createAccessTokenProvider } from './vertex-ai.mjs';
 
 export function createApp({
   env = process.env,
   fetchImpl = fetch,
   localVoice = null,
   loadDriveKnowledge = readDriveKnowledge,
-  sharedVoice = createSharedVoice(),
+  sharedVoice = env.TTS_SERVICE_URL
+    ? createRemoteVoice({ url: env.TTS_SERVICE_URL })
+    : createSharedVoice(),
+  trustProxy = false,
   conversationService = null,
   guestModels = null,
   guestStore = null,
+  getAccessToken = null,
 } = {}) {
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
@@ -29,12 +36,18 @@ export function createApp({
     (conversations ||= createConversationService({ env, loadDocuments: loadDriveKnowledge }));
 
   app.disable('x-powered-by');
+  // With a trusted proxy in front, req.ip and req.host are the browser's IP and host.
+  app.set('trust proxy', trustProxy);
   app.use(express.json({ limit: '24kb' }));
 
   app.use((req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
     next();
   });
+
+  // Legacy billed Cloud Text-to-Speech is opt-in; GOOGLE_CLOUD_PROJECT alone only means Vertex AI.
+  const cloudTts = env.GOOGLE_CLOUD_TTS === 'enabled' && Boolean(env.GOOGLE_CLOUD_PROJECT);
+  const vertexToken = getAccessToken || createAccessTokenProvider();
 
   const googleVoiceAuth = new GoogleAuth({
     scopes: ['https://www.googleapis.com/auth/cloud-platform'],
@@ -82,14 +95,14 @@ export function createApp({
     guestWorkspace.close();
   };
 
-  // Public configuration. API keys stay on the server.
+  // Public configuration. Credentials stay on the server.
   app.get('/api/config', (req, res) => {
     res.json({
       aiMode: memoryChat
         ? 'gemini-memory'
         : documentSearch
           ? 'document-search'
-          : env.GEMINI_API_KEY
+          : vertexConfig(env)
             ? 'gemini'
             : 'demo',
       conversationMemory: memoryChat,
@@ -97,11 +110,7 @@ export function createApp({
       adaptiveLearning: memoryChat,
       supportSummary: false,
 
-      speechMode: env.GOOGLE_CLOUD_PROJECT
-        ? 'google'
-        : localVoice
-          ? 'windows-local'
-          : 'browser-demo',
+      speechMode: cloudTts ? 'google' : localVoice ? 'windows-local' : 'browser-demo',
 
       voiceName: localVoice?.name || null,
       sharedVoiceName,
@@ -122,7 +131,7 @@ export function createApp({
     // Same-origin browser requests only; no permission is granted by a thread ID.
     if (req.get('origin')) {
       try {
-        if (new URL(req.get('origin')).host !== req.get('host'))
+        if (new URL(req.get('origin')).host !== req.host)
           return res.status(403).json({ error: 'Open chat on the website itself.' });
       } catch {
         return res.status(403).json({ error: 'Invalid request origin.' });
@@ -238,18 +247,10 @@ export function createApp({
   // A single server-controlled voice for every visitor. No device voice,
   // cloud TTS billing, client voice override or public audio cache.
   app.post('/api/voice', async (req, res) => {
-    const { text, rate = 1 } = req.body || {};
-    if (
-      typeof text !== 'string' ||
-      !text.trim() ||
-      text.length > 700 ||
-      ![0.85, 0.95, 1, 1.05].includes(rate)
-    )
-      return res
-        .status(400)
-        .json({ error: 'Enter voice text of up to 700 characters with a supported speed.' });
+    const request = parseVoiceRequest(req.body);
+    if (!request) return res.status(400).json({ error: voiceRequestError });
     try {
-      const wav = await sharedVoice.render(text.trim(), rate);
+      const wav = await sharedVoice.render(request.text, request.rate);
       if (res.destroyed) return;
       res.set({
         'Content-Type': 'audio/wav',
@@ -259,12 +260,8 @@ export function createApp({
       res.send(wav);
     } catch (error) {
       if (res.destroyed) return;
-      res.status(503).json({
-        error:
-          error.message === 'VOICE_BUSY'
-            ? 'Alya’s voice is busy. Please try again shortly.'
-            : 'Alya’s shared voice is unavailable. The administrator should run npm run voice:prepare. Your text answer is still available.',
-      });
+      const { status, code, error: message } = voiceFailure(error);
+      res.status(status).json({ code, error: message });
     }
   });
 
@@ -325,7 +322,7 @@ export function createApp({
 
     // Used by both the text chat and the avatar.
     async function deliver(result) {
-      if (localVoice && !env.GOOGLE_CLOUD_PROJECT && req.body.speechEnabled === true) {
+      if (localVoice && !cloudTts && req.body.speechEnabled === true) {
         const rate = Math.max(0.8, Math.min(1.1, Number(req.body.speechRate) || 0.95));
 
         try {
@@ -354,8 +351,9 @@ export function createApp({
       }
     }
 
-    // Without a Gemini key, return a labelled sample answer.
-    if (!env.GEMINI_API_KEY) {
+    // Without Vertex AI configured, return a labelled sample answer.
+    const vertex = vertexConfig(env);
+    if (!vertex) {
       return deliver(demoAnswer(question, task, style));
     }
 
@@ -378,48 +376,43 @@ export function createApp({
     }
 
     try {
-      const model = env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+      const token = await vertexToken();
 
-      const response = await fetchImpl(
-        'https://generativelanguage.googleapis.com/v1beta/models/' +
-          encodeURIComponent(model) +
-          ':generateContent',
-        {
-          method: 'POST',
+      const response = await fetchImpl(vertexGenerateContentUrl(vertex), {
+        method: 'POST',
 
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': env.GEMINI_API_KEY,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+
+        signal: AbortSignal.timeout(25000),
+
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: instruction }],
           },
 
-          signal: AbortSignal.timeout(25000),
-
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [{ text: instruction }],
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: question.trim() }],
             },
+          ],
 
-            contents: [
-              {
-                role: 'user',
-                parts: [{ text: question.trim() }],
-              },
-            ],
-
-            generationConfig: {
-              temperature: 0.2,
-              maxOutputTokens: 1600,
-            },
-          }),
-        },
-      );
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 1600,
+          },
+        }),
+      });
 
       if (!response.ok) {
         if (response.status === 402) {
           return res.status(402).json({
             code: 'GEMINI_CREDIT_REQUIRED',
             error:
-              "Gemini cannot answer because the project's prepaid credit is depleted. The project owner must add credits in Google AI Studio Billing, then try again.",
+              "Gemini cannot answer because the project's prepaid credit is depleted. The project owner must restore billing for the Google Cloud project, then try again.",
           });
         }
         throw new Error('Google AI request failed.');
@@ -448,7 +441,7 @@ export function createApp({
       res.status(502).json({
         error:
           'Google AI could not answer right now. ' +
-          'Check your API key, model access and quota, ' +
+          'Check Vertex AI access, model availability and quota, ' +
           'then try again.',
       });
     }
@@ -488,7 +481,7 @@ export function createApp({
 
   // GOOGLE TEXT-TO-SPEECH
   app.post('/api/tts', async (req, res) => {
-    if (!env.GOOGLE_CLOUD_PROJECT) {
+    if (!cloudTts) {
       return res.status(503).json({
         error: 'Google voice is not configured. ' + 'Use the local preview voice.',
       });

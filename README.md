@@ -75,7 +75,7 @@ The original avatar is kept as lossless gzip. Its transfer is about 52.4 MiB; it
 
 The existing `.env`, saved chats and voice cache remain local. Git and Docker exclude `.env`, credentials, chat databases, private files, generated builds, dependencies and test artifacts. `check:share` is a helpful pattern check, not a guarantee that every confidential value has been identified.
 
-Company chat reads Google Docs directly inside the configured Drive folder. Enable it with `AI_MODE=gemini-chat` and the server-only settings in `.env`. Never put API keys in browser code or variables beginning with `VITE_`.
+Company chat reads Google Docs directly inside the configured Drive folder. Enable it with `AI_MODE=gemini-chat` and the server-only settings in `.env`. Gemini uses Vertex AI with Application Default Credentials: set `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`) and run `gcloud auth application-default login`. Never put credentials in browser code or variables beginning with `VITE_`.
 
 Successful chats are saved in SQLite and belong to an opaque browser-session cookie. The selected chat and voice preferences survive normal refreshes. The editable profile is not employee sign-in. Support summaries describe recorded requests and feedback; they do not diagnose disability or score ability. Employee chat does not display reports or export controls. Employee APIs do not return aggregate summaries. The HR workspace shows live activity for each guest, with individual feedback, support requests, suggested support and check-ins. Guest HR/employee views share an isolated browser workspace; this is not verified HR access. Real employee report access still requires connected authentication and company permissions.
 
@@ -85,7 +85,7 @@ On the login page choose HR → Continue without an account. Upload a PDF, DOCX,
 
 Uploads are limited to 5 MB each and twelve files. Text-based PDFs are supported; scanned pages need a readable copy. A separate ignored SQLite database stores extracted text and conversations; workspaces expire after 24 hours without activity and are cleaned on a later request. Another browser gets its own empty workspace. See [Account and workspace details](docs/account-access.md) for limits and the authentication boundary.
 
-The employee assistant reads connected Google Drive guidance plus uploaded files. The server selects the configured answer engine. Gemini uses the existing server-only key and quota; relevant passages are sent to Google. There is no model selector in the website. The existing private `/mira` chat history remains available separately.
+The employee assistant reads connected Google Drive guidance plus uploaded files. The server selects the configured answer engine. Gemini uses Vertex AI with Application Default Credentials and the configured project's quota; relevant passages are sent to Google. There is no model selector in the website. The existing private `/mira` chat history remains available separately.
 
 ## GitHub and hosting later
 

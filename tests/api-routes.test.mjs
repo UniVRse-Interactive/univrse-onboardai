@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createApp } from '../server/api-routes.mjs';
-async function server(env = {}, fetchImpl, localVoice) {
-  const s = createApp({ env, fetchImpl, localVoice }).listen(0, '127.0.0.1');
+const fakeToken = async () => 'test-access-token';
+async function server(env = {}, fetchImpl, localVoice, getAccessToken = fakeToken) {
+  const s = createApp({ env, fetchImpl, localVoice, getAccessToken }).listen(0, '127.0.0.1');
   await once(s, 'listening');
   return {
     url: `http://127.0.0.1:${s.address().port}`,
@@ -50,48 +51,180 @@ test('local demo is labelled and does not invent policies, links or approvals', 
     await s.close();
   }
 });
-test('Gemini integration sends server-side credentials and grounded system instruction', async () => {
-  let request;
-  const s = await server({ GEMINI_API_KEY: 'test-only-key' }, async (url, options) => {
-    request = { url, options };
-    return Response.json({
-      candidates: [{ content: { parts: [{ text: 'Ask HR to confirm the sample guide.' }] } }],
-    });
+const vertexReply = () =>
+  Response.json({
+    candidates: [{ content: { parts: [{ text: 'Ask HR to confirm the sample guide.' }] } }],
   });
+test('Gemini mode calls Vertex AI global with a bearer token and no API key', async () => {
+  let request;
+  const s = await server(
+    { GOOGLE_CLOUD_PROJECT: 'test-project', GEMINI_MODEL: 'gemini-test-model' },
+    async (url, options) => {
+      request = { url, options };
+      return vertexReply();
+    },
+  );
   try {
     const d = await (
       await post(s.url, '/api/chat', { question: 'What is next?', taskId: 'quiz-part-1' })
     ).json();
     assert.equal(d.mode, 'gemini');
-    assert.equal(request.options.headers['x-goog-api-key'], 'test-only-key');
-    assert.match(request.options.body, /UNAPPROVED SAMPLE/);
+    assert.equal(
+      request.url,
+      'https://aiplatform.googleapis.com/v1/projects/test-project/locations/global' +
+        '/publishers/google/models/gemini-test-model:generateContent',
+    );
+    assert.equal(request.options.headers.Authorization, 'Bearer test-access-token');
+    assert.equal(request.options.headers['x-goog-api-key'], undefined);
+    const body = JSON.parse(request.options.body);
+    assert.match(body.systemInstruction.parts[0].text, /UNAPPROVED SAMPLE/);
+    assert.equal(body.contents[0].role, 'user');
+    assert.equal(body.contents[0].parts[0].text, 'What is next?');
+    assert.deepEqual(body.generationConfig, { temperature: 0.2, maxOutputTokens: 1600 });
     const config = await (await fetch(s.url + '/api/config')).json();
-    assert.equal(JSON.stringify(config).includes('test-only-key'), false);
+    assert.equal(config.aiMode, 'gemini');
+    assert.equal(JSON.stringify(config).includes('test-access-token'), false);
+  } finally {
+    await s.close();
+  }
+});
+test('Gemini mode uses the regional Vertex AI host for a regional location', async () => {
+  let url;
+  const s = await server(
+    { GOOGLE_CLOUD_PROJECT: 'test-project', GOOGLE_CLOUD_LOCATION: 'us-central1' },
+    async (u) => {
+      url = u;
+      return vertexReply();
+    },
+  );
+  try {
+    await post(s.url, '/api/chat', { question: 'What is next?', taskId: 'quiz-part-1' });
+    assert.equal(
+      url,
+      'https://us-central1-aiplatform.googleapis.com/v1/projects/test-project/locations/us-central1' +
+        '/publishers/google/models/gemini-3.5-flash-lite:generateContent',
+    );
+  } finally {
+    await s.close();
+  }
+});
+test('Gemini mode without GOOGLE_CLOUD_PROJECT falls back to demo answers and never calls Google', async () => {
+  const s = await server({}, async () => assert.fail('Vertex must not be called'));
+  try {
+    const config = await (await fetch(s.url + '/api/config')).json();
+    assert.equal(config.aiMode, 'demo');
+    const d = await (
+      await post(s.url, '/api/chat', { question: 'What is next?', taskId: 'quiz-part-1' })
+    ).json();
+    assert.notEqual(d.mode, 'gemini');
   } finally {
     await s.close();
   }
 });
 test('Google failures stay visible and never silently become demo answers', async () => {
   const s = await server(
-    { GEMINI_API_KEY: 'test-only-key' },
-    async () => new Response('failure', { status: 429 }),
+    { GOOGLE_CLOUD_PROJECT: 'test-project' },
+    async () => new Response('private provider details', { status: 429 }),
   );
   try {
     const r = await post(s.url, '/api/chat', { question: 'help', taskId: 'quiz-part-1' });
     assert.equal(r.status, 502);
-    assert.match((await r.json()).error, /Google AI/);
+    const text = JSON.stringify(await r.json());
+    assert.match(text, /Google AI/);
+    assert.ok(!text.includes('private provider'));
   } finally {
     await s.close();
   }
 });
+test('credential lookup failures return a safe error and never leak the token error', async () => {
+  const s = await server(
+    { GOOGLE_CLOUD_PROJECT: 'test-project' },
+    async () => assert.fail('no request without a token'),
+    undefined,
+    async () => {
+      throw new Error('secret ADC failure detail');
+    },
+  );
+  try {
+    const r = await post(s.url, '/api/chat', { question: 'help', taskId: 'quiz-part-1' });
+    assert.equal(r.status, 502);
+    assert.ok(!JSON.stringify(await r.json()).includes('secret ADC'));
+  } finally {
+    await s.close();
+  }
+});
+test('no server or script file reads GEMINI_API_KEY', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const offenders = [];
+  for (const dir of ['server', 'scripts'])
+    for (const f of readdirSync(new URL(`../${dir}/`, import.meta.url)))
+      if (
+        f !== 'check-shareable-files.mjs' &&
+        /\.(mjs|js|ps1|cs)$/.test(f) &&
+        readFileSync(new URL(`../${dir}/${f}`, import.meta.url), 'utf8').includes('GEMINI_API_KEY')
+      )
+        offenders.push(`${dir}/${f}`);
+  assert.deepEqual(offenders, []);
+});
 test('TTS proxy rejects external audio and oversized SSML before any cloud request', async () => {
-  const s = await server({ GOOGLE_CLOUD_PROJECT: 'test-project' });
+  const s = await server({ GOOGLE_CLOUD_PROJECT: 'test-project', GOOGLE_CLOUD_TTS: 'enabled' });
   try {
     for (const ssml of [
       '<speak><audio src="https://example.com/private"/></speak>',
       '<speak>' + 'A'.repeat(5000) + '</speak>',
     ])
       assert.equal((await post(s.url, '/api/tts', { input: { ssml } })).status, 400);
+  } finally {
+    await s.close();
+  }
+});
+test('GOOGLE_CLOUD_PROJECT alone does not enable Cloud TTS or change speechMode', async () => {
+  const s = await server({ GOOGLE_CLOUD_PROJECT: 'test-project' }, async (url) =>
+    assert.fail('no request expected: ' + url),
+  );
+  try {
+    const config = await (await fetch(s.url + '/api/config')).json();
+    assert.equal(config.speechMode, 'browser-demo');
+    const r = await post(s.url, '/api/tts', { input: { ssml: '<speak>Hello</speak>' } });
+    assert.equal(r.status, 503);
+    assert.match((await r.json()).error, /not configured/);
+  } finally {
+    await s.close();
+  }
+});
+test('GOOGLE_CLOUD_TTS=enabled keeps the legacy Cloud TTS route and speechMode', async () => {
+  const s = await server(
+    { GOOGLE_CLOUD_PROJECT: 'test-project', GOOGLE_CLOUD_TTS: 'enabled' },
+    async (url) => assert.fail('no request expected: ' + url),
+  );
+  try {
+    const config = await (await fetch(s.url + '/api/config')).json();
+    assert.equal(config.speechMode, 'google');
+    // Past the not-configured gate: invalid SSML is rejected with 400, not 503.
+    const r = await post(s.url, '/api/tts', { input: { ssml: 'plain text' } });
+    assert.equal(r.status, 400);
+  } finally {
+    await s.close();
+  }
+});
+test('Windows local voice still works when only GOOGLE_CLOUD_PROJECT is set', async () => {
+  const voice = { name: 'V', render: async () => ({ audioContent: 'w' }) };
+  const s = await server(
+    { GOOGLE_CLOUD_PROJECT: 'test-project' },
+    async () => vertexReply(),
+    voice,
+  );
+  try {
+    const config = await (await fetch(s.url + '/api/config')).json();
+    assert.equal(config.speechMode, 'windows-local');
+    const d = await (
+      await post(s.url, '/api/chat', {
+        question: 'x',
+        taskId: 'quiz-part-1',
+        speechEnabled: true,
+      })
+    ).json();
+    assert.equal(d.speech?.audioContent, 'w');
   } finally {
     await s.close();
   }

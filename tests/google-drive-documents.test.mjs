@@ -56,7 +56,10 @@ test('raw Google errors and credentials are never exposed in Drive failure messa
 });
 
 async function withServer(options, callback) {
-  const server = createApp(options).listen(0, '127.0.0.1');
+  const server = createApp({ getAccessToken: async () => 'test-access-token', ...options }).listen(
+    0,
+    '127.0.0.1',
+  );
   await once(server, 'listening');
   try {
     await callback(`http://127.0.0.1:${server.address().port}`);
@@ -174,7 +177,7 @@ test('chat sends Drive reference text to Gemini and returns its answer with sour
   let requestBody;
   await withServer(
     {
-      env: { GEMINI_API_KEY: 'test-server-key', GOOGLE_DRIVE_FOLDER_ID: 'test-folder' },
+      env: { GOOGLE_CLOUD_PROJECT: 'test-project', GOOGLE_DRIVE_FOLDER_ID: 'test-folder' },
       loadDriveKnowledge: async (folder) => {
         assert.equal(folder, 'test-folder');
         return [{ title: 'Test handbook', text: 'Test company hours: 10 AM to 6 PM.' }];
@@ -198,7 +201,7 @@ test('chat sends Drive reference text to Gemini and returns its answer with sour
       assert.match(data.source, /Test handbook/);
       assert.match(requestBody.systemInstruction.parts[0].text, /Test company hours/);
       assert.match(requestBody.systemInstruction.parts[0].text, /reference data/);
-      assert.ok(!JSON.stringify(data).includes('test-server-key'));
+      assert.ok(!JSON.stringify(data).includes('test-access-token'));
     },
   );
 });
@@ -207,7 +210,7 @@ test('Drive failures stop the Gemini request and retain a safe actionable error'
   let called = false;
   await withServer(
     {
-      env: { GEMINI_API_KEY: 'test-server-key', GOOGLE_DRIVE_FOLDER_ID: 'test-folder' },
+      env: { GOOGLE_CLOUD_PROJECT: 'test-project', GOOGLE_DRIVE_FOLDER_ID: 'test-folder' },
       loadDriveKnowledge: async () => {
         throw new DriveKnowledgeError(
           'DRIVE_EMPTY_DOCUMENTS',

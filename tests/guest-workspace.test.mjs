@@ -244,6 +244,20 @@ test('Gemini retrieves only current workspace files, preserves memory and expose
   }
 });
 
+test('employee chat recognises Vertex AI configuration without requiring an API key', async () => {
+  const s = await server(null, { env: { GOOGLE_CLOUD_PROJECT: 'onboardai-test' } });
+  const client = s.client();
+  try {
+    const id = (await client()).body.lastGuestId;
+    const config = await client('/guests/' + id + '/config');
+    assert.equal(config.status, 200);
+    assert.equal(config.body.aiMode, 'gemini-memory');
+    assert.equal(config.body.answerFormatsAvailable, true);
+  } finally {
+    await s.close();
+  }
+});
+
 test('Drive guidance and website uploads both feed employee answers without a user engine selector', async () => {
   let drive = [
       {
@@ -429,5 +443,7 @@ test('employee removal clears only owned records, rejects busy chats and permits
     store.removeGuest('one', replacement.id);
     assert.equal(store.snapshot('one').guests.length, 0);
     assert.equal(store.snapshot('one').lastGuestId, null);
-  } finally { store.close(); }
+  } finally {
+    store.close();
+  }
 });

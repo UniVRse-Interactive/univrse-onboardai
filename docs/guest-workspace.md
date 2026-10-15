@@ -11,7 +11,7 @@ These are working features inside the existing OnboardAi website.
 5. Ask Alya a question or request a smaller explanation, example or brief answer. Helpful / Still unclear and requests for human help also update the employee’s report. The HR page refreshes every ten seconds while visible and on tab focus.
 6. Download the automatic support summary from HR if needed. No email, notification or task assignment is sent.
 
-The answer engine is configured by the server, with no user-facing selector or technical status strip. AI_MODE=document-search uses source excerpts; otherwise a configured Gemini key enables conversational answers. Missing or failed Gemini access remains visible rather than silently switching engines. Relevant source passages and recent conversation context are sent to Google in Gemini mode.
+The answer engine is configured by the server, with no user-facing selector or technical status strip. AI_MODE=document-search uses source excerpts; otherwise GOOGLE_CLOUD_PROJECT enables conversational answers through Gemini on Vertex AI with Application Default Credentials. Missing or failed Gemini access remains visible rather than silently switching engines. Relevant source passages and recent conversation context are sent to Google in Gemini mode.
 
 Every employee starts with zero activity. The two synthetic employee reports were removed. Document guidance is shared across the guests in one workspace; histories, preferences, feedback and reports are individual. Report recommendations use recorded explicit requests and feedback. No diagnosis, intelligence estimate, personality or employment assessment is inferred.
 

@@ -1,15 +1,8 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { createChatMemory, ChatError } from './saved-conversations.mjs';
-
-export const guestWorkspaceLifetime = 24 * 60 * 60 * 1000;
-export const workspaceLimits = {
-  files: 12,
-  guests: 5,
-  bytes: 5 * 1024 * 1024,
-  characters: 250000,
-  totalCharacters: 750000,
-};
+import { guestWorkspaceLifetime, workspaceLimits } from './workspace-limits.mjs';
+export { guestWorkspaceLifetime, workspaceLimits } from './workspace-limits.mjs';
 
 // This database contains isolated guest workspaces, never the existing employee database.
 export function createGuestWorkspaceStore({

@@ -7,7 +7,11 @@ import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { AIMessage } from '@langchain/core/messages';
 import { createChatMemory } from '../server/saved-conversations.mjs';
-import { createConversationService, conversationFailure } from '../server/gemini-chat-workflow.mjs';
+import {
+  createConversationService,
+  conversationFailure,
+  createGeminiModels,
+} from '../server/gemini-chat-workflow.mjs';
 import { createKnowledgeRetriever } from '../server/company-document-retriever.mjs';
 import { createApp } from '../server/api-routes.mjs';
 
@@ -350,5 +354,48 @@ test('cancelling a turn prevents late memory writes, and simultaneous turns cann
     assert.equal(service.memory.read('person', chat.id).messages.length, 0);
   } finally {
     service.close();
+  }
+});
+
+test('chat models are built for Vertex AI with project, location and model passed through', () => {
+  const m = createGeminiModels({
+    GOOGLE_CLOUD_PROJECT: 'test-project',
+    GOOGLE_CLOUD_LOCATION: 'us-central1',
+    GEMINI_MODEL: 'gemini-test-model',
+    GOOGLE_API_KEY: 'must-be-ignored',
+  });
+  const chat = m.summarize;
+  assert.equal(chat.platform, 'gcp');
+  assert.equal(chat.isVertexExpress, false);
+  assert.equal(chat.location, 'us-central1');
+  assert.equal(chat.model, 'gemini-test-model');
+  assert.equal(chat.endpoint, 'us-central1-aiplatform.googleapis.com');
+  assert.equal(chat.apiClient.hasApiKey(), false);
+  assert.equal(chat.params.googleAuthOptions.projectId, 'test-project');
+  assert.equal(createGeminiModels({ GOOGLE_CLOUD_PROJECT: 'p' }).summarize.location, 'global');
+  assert.equal(
+    createGeminiModels({ GOOGLE_CLOUD_PROJECT: 'p' }).summarize.endpoint,
+    'aiplatform.googleapis.com',
+  );
+});
+
+test('chat without GOOGLE_CLOUD_PROJECT returns 503 GEMINI_NOT_CONFIGURED', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'vertex-unconfigured-'));
+  const service = createConversationService({
+    env: { CHAT_DATABASE_PATH: join(dir, 'chat.sqlite') },
+    loadDocuments: async () => docs,
+  });
+  try {
+    await assert.rejects(service.ask('owner', randomUUID(), 'hello', randomUUID()), (error) => {
+      const failure = conversationFailure(error);
+      return failure.status === 503 && failure.code === 'GEMINI_NOT_CONFIGURED';
+    });
+    assert.throws(
+      () => createGeminiModels({}),
+      (e) => e.code === 'GEMINI_NOT_CONFIGURED',
+    );
+  } finally {
+    await service.close();
+    rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -16,6 +16,7 @@ import { tasks } from './sample-onboarding-content.mjs';
 import { sharedVoiceName } from './kokoro-voice.mjs';
 import { createWorkspaceKnowledge } from './workspace-company-knowledge.mjs';
 import { driveFailure } from './google-drive-documents.mjs';
+import { vertexConfig } from './vertex-ai.mjs';
 
 // Guest HR and employee views share an isolated browser workspace. This cookie
 // is not an HR credential and cannot open the separate employee/Drive database.
@@ -24,7 +25,7 @@ export function mountGuestWorkspaceRoutes(
   { env, models, store: providedStore, loadDrive } = {},
 ) {
   const router = express.Router(),
-    available = !!(env.GEMINI_API_KEY || models);
+    available = !!(vertexConfig(env) || models);
   let saved = providedStore,
     service;
   const store = () => (saved ||= createGuestWorkspaceStore({ geminiAvailable: available }));
@@ -59,7 +60,7 @@ export function mountGuestWorkspaceRoutes(
     res.set('Cache-Control', 'no-store');
     if (req.get('origin')) {
       try {
-        if (new URL(req.get('origin')).host !== req.get('host')) throw new Error();
+        if (new URL(req.get('origin')).host !== req.host) throw new Error();
       } catch {
         return res.status(403).json({ error: 'Open this workspace on the website itself.' });
       }

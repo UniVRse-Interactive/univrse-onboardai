@@ -5,6 +5,7 @@ import { createKnowledgeRetriever } from './company-document-retriever.mjs';
 import { createChatMemory, ChatError } from './saved-conversations.mjs';
 import { driveFailure } from './google-drive-documents.mjs';
 import { adaptLearning, learningInstruction, updateLearning } from './answer-style-preferences.mjs';
+import { vertexConfig } from './vertex-ai.mjs';
 import { createAnswerGuide } from './answer-guide-metadata.mjs';
 
 const planSchema = {
@@ -42,12 +43,23 @@ const textOf = (m) =>
         .map((p) => p.text)
         .join('') || '';
 
+const notConfiguredMessage =
+  'The administrator must set GOOGLE_CLOUD_PROJECT and grant Vertex AI access before chat can answer.';
+
 export function createGeminiModels(env) {
-  // Explicit Google AI API mode avoids confusing Drive's ADC with Gemini keys.
+  // Gemini on Vertex AI with Application Default Credentials. No API key is used.
+  const vertex = vertexConfig(env);
+  if (!vertex) throw new ChatError(503, 'GEMINI_NOT_CONFIGURED', notConfiguredMessage);
   const model = new ChatGoogle({
-    model: env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
-    apiKey: env.GEMINI_API_KEY,
-    platformType: 'gai',
+    model: vertex.model,
+    platformType: 'gcp',
+    location: vertex.location,
+    // An empty key stops a stray GOOGLE_API_KEY from switching the client to key auth.
+    apiKey: '',
+    googleAuthOptions: {
+      projectId: vertex.project,
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    },
     maxRetries: 0,
     maxOutputTokens: 1200,
   });
@@ -72,14 +84,14 @@ export function conversationFailure(error) {
       status: 402,
       code: 'GEMINI_CREDIT_REQUIRED',
       error:
-        'Gemini needs available prepaid credit. The project owner must add credit in Google AI Studio Billing, then try again. Your saved chats are kept.',
+        'Gemini needs available prepaid credit. The project owner must restore billing for the Google Cloud project, then try again. Your saved chats are kept.',
     };
   if (status === 401 || status === 403)
     return {
       status: 502,
       code: 'GEMINI_ACCESS_REQUIRED',
       error:
-        'Gemini access was denied. The administrator should check the server API key and its Gemini API restrictions.',
+        'Gemini access was denied. The administrator should check that the API service account has the Vertex AI User role.',
     };
   if (status === 429)
     return {
@@ -276,12 +288,8 @@ export function createConversationService({
         'LEARNING_ACTION_REMOVED',
         'Guided topics have been removed. Ask your company or onboarding question directly.',
       );
-    if (!providedModels && !env.GEMINI_API_KEY)
-      throw new ChatError(
-        503,
-        'GEMINI_NOT_CONFIGURED',
-        'The administrator must configure the server Gemini API key before chat can answer.',
-      );
+    if (!providedModels && !vertexConfig(env))
+      throw new ChatError(503, 'GEMINI_NOT_CONFIGURED', notConfiguredMessage);
     const { row, release } = memory.acquire(owner, id);
     try {
       const completed = row.messages.find(

@@ -28,7 +28,7 @@ Chats expire after 30 days without a successful answer. Expired records are remo
 
 Use `AI_MODE=gemini-chat` in the server `.env` for the connected company assistant. The existing local `.env` is preserved. The shareable `.env.example` has blank credentials and starts with sample answers. Keep the key server-side, without a `VITE_` prefix.
 
-Earlier setup encountered **HTTP 402 / prepaid credit depleted**. Billing and quota depend on the Google project linked to the API key; changing a file name does not change them. Check the current account in [Google AI Studio Billing](https://aistudio.google.com/billing) if that error returns. See Google's [Gemini billing guide](https://ai.google.dev/gemini-api/docs/billing#prepay).
+Gemini runs on Vertex AI using Application Default Credentials (the api service account on Cloud Run, or `gcloud auth application-default login` locally). It needs `GOOGLE_CLOUD_PROJECT`; `GOOGLE_CLOUD_LOCATION` defaults to `global`. Without a project, `gemini` mode serves sample answers and `gemini-chat` returns `GEMINI_NOT_CONFIGURED`. An HTTP 402 means billing on the Google Cloud project must be restored; 401/403 means the service account lacks the Vertex AI User role.
 
 Then run this from the project folder:
 
