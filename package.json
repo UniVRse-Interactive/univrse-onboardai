@@ -7,14 +7,17 @@
     "dev": "node scripts/start-development-server.mjs",
     "build": "vite build",
     "start": "node server/index.mjs --production",
-    "test": "node --test tests/*.test.mjs tests/server/*.test.mjs",
+    "test": "node --test \"tests/*.test.mjs\" \"tests/server/*.test.mjs\" \"tests/frontend/*.test.mjs\"",
     "voice:prepare": "node scripts/download-voice-model.mjs",
     "check:share": "node scripts/check-shareable-files.mjs",
     "check:gemini": "node scripts/check-gemini-connection.mjs",
     "check:search": "node scripts/check-vertex-ai-search.mjs",
     "docs:import": "node scripts/import-company-documents.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "db:up": "docker compose up -d --wait",
+    "db:migrate": "node scripts/migrate-database.mjs",
+    "hr:create": "node scripts/create-hr-account.mjs"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.3.1",
@@ -30,11 +33,13 @@
     "kokoro-js": "^1.2.1",
     "mammoth": "^1.13.0",
     "pdfjs-dist": "^6.4.299",
+    "pg": "^8.23.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "pg-mem": "^3.0.14",
     "prettier": "3.9.10",
     "vite": "^7.1.0"
   },

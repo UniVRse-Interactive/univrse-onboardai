@@ -5,21 +5,36 @@ import { ChatError, storageError } from './chat-errors.mjs';
 export const FIRESTORE_TIMEOUT_MS = 10000;
 
 // FIRESTORE_DATABASE_ID selects Firestore; blank keeps the local SQLite file.
+// The project is FIRESTORE_PROJECT_ID, falling back to GOOGLE_CLOUD_PROJECT, so
+// a local run can keep GOOGLE_CLOUD_PROJECT for Vertex AI while saved chats and
+// employee profiles use the emulator's demo project. Both stores share this.
 export function firestoreConfig(env) {
   const databaseId = (env.FIRESTORE_DATABASE_ID || '').trim();
   if (!databaseId) return null;
-  return { projectId: (env.GOOGLE_CLOUD_PROJECT || '').trim(), databaseId };
+  const projectId =
+    (env.FIRESTORE_PROJECT_ID || '').trim() || (env.GOOGLE_CLOUD_PROJECT || '').trim();
+  return { projectId, databaseId };
 }
 
 // The client library is loaded on first use, so SQLite-only runs never load it.
 // Credentials come from Application Default Credentials (on Cloud Run, the api
 // runtime service account). REST transport avoids a gRPC start-up on cold starts.
+// The library reads FIRESTORE_EMULATOR_HOST itself; its REST transport still
+// asks for Google credentials there, so the emulator is reached over gRPC, and
+// a fixed universe domain skips a slow credential lookup the emulator ignores.
 export function createFirestoreClient({ projectId, databaseId }) {
   let client = null;
   return async () => {
+    const emulator = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
     client ||= import('@google-cloud/firestore').then(
       ({ Firestore }) =>
-        new Firestore({ projectId, databaseId, preferRest: true, ignoreUndefinedProperties: true }),
+        new Firestore({
+          projectId,
+          databaseId,
+          preferRest: !emulator,
+          ignoreUndefinedProperties: true,
+          ...(emulator ? { universeDomain: 'googleapis.com' } : {}),
+        }),
     );
     try {
       return await client;

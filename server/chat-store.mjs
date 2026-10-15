@@ -4,8 +4,9 @@ import { createFirestoreClient, firestoreConfig } from './firestore-client.mjs';
 import { createChatMemory } from './saved-conversations.mjs';
 
 // Saved chats, preferences and support observations live in one store:
-// Firestore when FIRESTORE_DATABASE_ID is set (with GOOGLE_CLOUD_PROJECT), else
-// the local SQLite file. Both expose the same promise-based interface:
+// Firestore when FIRESTORE_DATABASE_ID is set (with FIRESTORE_PROJECT_ID or
+// GOOGLE_CLOUD_PROJECT), else the local SQLite file. Both expose the same
+// promise-based interface:
 //
 //   checkpointer                       LangGraph checkpoint saver
 //   list(owner)                        -> [{ id, title, created, updated }], newest first
@@ -19,8 +20,9 @@ import { createChatMemory } from './saved-conversations.mjs';
 //   feedback(owner, id, messageId, rating), voiceEvent(...), humanHelp(...) -> summary
 //   close()
 //
-// `owner` is an opaque string chosen by api-routes (today the hashed session
-// cookie). Failures are ChatErrors (see chat-errors.mjs).
+// `owner` is an opaque string chosen by api-routes: the hashed anonymous
+// session cookie, or `account:<uuid>` for a signed-in account. Failures are
+// ChatErrors (see chat-errors.mjs).
 export function createChatStore(env = process.env) {
   const firestore = firestoreConfig(env);
   if (!firestore) return createChatMemory(env.CHAT_DATABASE_PATH);
@@ -33,6 +35,6 @@ export function describeChatStorage(env = process.env) {
   if (!firestore)
     return `SQLite file ${env.CHAT_DATABASE_PATH || '.cache/chat/conversations.sqlite'}`;
   if (!firestore.projectId)
-    return 'not configured (FIRESTORE_DATABASE_ID is set without GOOGLE_CLOUD_PROJECT)';
+    return 'not configured (FIRESTORE_DATABASE_ID is set without GOOGLE_CLOUD_PROJECT or FIRESTORE_PROJECT_ID)';
   return `Firestore database ${firestore.databaseId} in ${firestore.projectId}`;
 }

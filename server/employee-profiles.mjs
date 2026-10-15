@@ -1,0 +1,219 @@
+import { AccountError } from './account-errors.mjs';
+import { createStorageCall } from './firestore-client.mjs';
+
+// Each employee's personal profile is one Firestore document,
+// employeeProfiles/{accountId}. Only HR writes it; an employee reads their own.
+// Every call is bounded by the storage deadline in firestore-client.mjs, and its
+// log line names the operation and Firestore status only, never profile values.
+export const profileCollection = 'employeeProfiles';
+
+// group -> field -> rule. Every field is optional text except job.fullName.
+export const profileSchema = Object.freeze({
+  job: {
+    fullName: { max: 120, required: true },
+    preferredName: { max: 80 },
+    jobTitle: { max: 120 },
+    department: { max: 120 },
+    startDate: { max: 10, kind: 'date' },
+    manager: { max: 120 },
+  },
+  contact: {
+    workEmail: { max: 254, kind: 'email' },
+    personalEmail: { max: 254, kind: 'email' },
+    mobileNumber: { max: 32, kind: 'phone' },
+  },
+  emergencyContact: {
+    name: { max: 120 },
+    relationship: { max: 60 },
+    phoneNumber: { max: 32, kind: 'phone' },
+  },
+  homeAddress: {
+    line1: { max: 200 },
+    line2: { max: 200 },
+    city: { max: 100 },
+    state: { max: 100 },
+    postcode: { max: 20 },
+    country: { max: 100 },
+  },
+});
+// Set by the server; accepted in a request body and ignored, so a profile read
+// from the API can be sent back unchanged.
+const serverFields = new Set(['updatedAt', 'updatedBy']);
+
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const phonePattern = /^\+?[0-9 ().-]*[0-9][0-9 ().-]*$/;
+const controlCharacters = /[\u0000-\u001f\u007f]/;
+const isObject = (value) =>
+  value !== null &&
+  typeof value === 'object' &&
+  !Array.isArray(value) &&
+  [Object.prototype, null].includes(Object.getPrototypeOf(value));
+
+function validDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+const problemText = {
+  required: 'is required',
+  unknown: 'is not a profile field',
+  not_object: 'must be a group of fields',
+  not_text: 'must be text',
+  too_long: 'is too long',
+  invalid_characters: 'contains line breaks or control characters',
+  invalid_email: 'is not a valid email address',
+  invalid_date: 'must be a date in YYYY-MM-DD form',
+  invalid_phone: 'must be a phone number using digits, spaces, +, -, ( ) or .',
+};
+
+function fieldProblem(value, rule) {
+  if (value === undefined || value === null) return rule.required ? ['required', ''] : [null, ''];
+  if (typeof value !== 'string') return ['not_text'];
+  const text = value.trim();
+  if (!text) return rule.required ? ['required', ''] : [null, ''];
+  if (controlCharacters.test(text)) return ['invalid_characters'];
+  if ([...text].length > rule.max) return ['too_long'];
+  if (rule.kind === 'email' && !emailPattern.test(text)) return ['invalid_email'];
+  if (rule.kind === 'date' && !validDate(text)) return ['invalid_date'];
+  if (rule.kind === 'phone' && !phonePattern.test(text)) return ['invalid_phone'];
+  return [null, text];
+}
+
+// Returns the stored form (every field present, trimmed, '' when empty), or
+// throws 400 PROFILE_INVALID with details.fields = [{ field, problem }].
+export function validateProfile(input) {
+  const problems = [];
+  const profile = {};
+  if (!isObject(input)) problems.push({ field: 'profile', problem: 'not_object' });
+  else {
+    for (const key of Object.keys(input))
+      if (!(key in profileSchema) && !serverFields.has(key))
+        problems.push({ field: key, problem: 'unknown' });
+    for (const [group, fields] of Object.entries(profileSchema)) {
+      const given = input[group] ?? {};
+      profile[group] = {};
+      if (!isObject(given)) {
+        problems.push({ field: group, problem: 'not_object' });
+        continue;
+      }
+      for (const key of Object.keys(given))
+        if (!(key in fields)) problems.push({ field: `${group}.${key}`, problem: 'unknown' });
+      for (const [name, rule] of Object.entries(fields)) {
+        const [problem, value] = fieldProblem(given[name], rule);
+        if (problem) problems.push({ field: `${group}.${name}`, problem });
+        else profile[group][name] = value;
+      }
+    }
+  }
+  if (problems.length) {
+    const listed = problems
+      .slice(0, 5)
+      .map(({ field, problem }) => `${field} ${problemText[problem]}`)
+      .join('; ');
+    throw new AccountError(
+      400,
+      'PROFILE_INVALID',
+      `Check the profile: ${listed}${problems.length > 5 ? '; and more' : ''}.`,
+      { fields: problems },
+    );
+  }
+  return profile;
+}
+
+// A stored document as the API returns it: every schema field, then the
+// server-set updatedAt (ISO 8601) and updatedBy (the HR account ID).
+export function presentProfile(data) {
+  const profile = {};
+  for (const [group, fields] of Object.entries(profileSchema)) {
+    profile[group] = {};
+    for (const name of Object.keys(fields)) {
+      const value = data?.[group]?.[name];
+      profile[group][name] = typeof value === 'string' ? value : '';
+    }
+  }
+  profile.updatedAt = typeof data?.updatedAt === 'string' ? data.updatedAt : null;
+  profile.updatedBy = typeof data?.updatedBy === 'string' ? data.updatedBy : null;
+  return profile;
+}
+
+// The part of a profile shown in HR's employee list.
+export const profileSummary = (profile) =>
+  profile && {
+    fullName: profile.job.fullName,
+    preferredName: profile.job.preferredName,
+    jobTitle: profile.job.jobTitle,
+    department: profile.job.department,
+    startDate: profile.job.startDate,
+  };
+
+function profileStorageError(error) {
+  if (error?.code === 'STORAGE_TIMEOUT')
+    return new AccountError(
+      504,
+      'PROFILE_STORAGE_TIMEOUT',
+      'Employee profiles took too long to respond. Please try again.',
+    );
+  return new AccountError(
+    503,
+    'PROFILE_STORAGE_UNAVAILABLE',
+    'Employee profiles are temporarily unavailable. Please try again shortly.',
+  );
+}
+
+export function createProfileStore({
+  // A Firestore instance, or an async function returning one.
+  firestore,
+  timeoutMs,
+  log,
+}) {
+  let client = null;
+  const database = async () =>
+    (client ??= await (typeof firestore === 'function' ? firestore() : firestore));
+  const call = createStorageCall({ timeoutMs, log });
+  const guarded = async (operation, fn) => {
+    try {
+      return await call(operation, fn);
+    } catch (error) {
+      throw profileStorageError(error);
+    }
+  };
+  const ref = (db, accountId) => db.collection(profileCollection).doc(accountId);
+
+  return {
+    read: (accountId) =>
+      guarded('read employee profile', async () => {
+        const snapshot = await ref(await database(), accountId).get();
+        return snapshot.exists ? presentProfile(snapshot.data()) : null;
+      }),
+    // Map of accountId -> profile for the IDs that have one.
+    readMany: async (accountIds) => {
+      const found = new Map();
+      for (let i = 0; i < accountIds.length; i += 100) {
+        const ids = accountIds.slice(i, i + 100);
+        const snapshots = await guarded('read employee profiles', async () => {
+          const db = await database();
+          return db.getAll(...ids.map((id) => ref(db, id)));
+        });
+        for (const snapshot of snapshots)
+          if (snapshot.exists) found.set(snapshot.id, presentProfile(snapshot.data()));
+      }
+      return found;
+    },
+    write: (accountId, profile, updatedBy, at) =>
+      guarded('save employee profile', async () => {
+        const stored = { ...profile, updatedAt: at.toISOString(), updatedBy };
+        await ref(await database(), accountId).set(stored);
+        return presentProfile(stored);
+      }),
+    remove: (accountId) =>
+      guarded('delete employee profile', async () => {
+        await ref(await database(), accountId).delete();
+      }),
+    close: async () => {
+      const open = client;
+      client = null;
+      await open?.terminate?.();
+    },
+  };
+}

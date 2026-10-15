@@ -14,6 +14,28 @@ import { sessionHash } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
 import { mountGuestWorkspaceRoutes } from './guest-workspace-routes.mjs';
 import { vertexConfig, vertexGenerateContentUrl, createAccessTokenProvider } from './vertex-ai.mjs';
+import { ChatError } from './chat-errors.mjs';
+import { accountErrors } from './account-errors.mjs';
+import { accountSettings } from './account-settings.mjs';
+import { createAccountBackends, createAccountService } from './account-service.mjs';
+import {
+  accountCookie,
+  accountCookieOptions,
+  mountAccountRoutes,
+  readCookie,
+  sameOrigin,
+  sendAccountError,
+} from './account-routes.mjs';
+
+// A stateless answer that could not be prepared: the status and JSON body the
+// browser receives (unchanged from before accounts existed).
+class AnswerFailure extends Error {
+  constructor(status, body) {
+    super(body.error);
+    this.status = status;
+    this.body = body;
+  }
+}
 
 export function createApp({
   env = process.env,
@@ -27,10 +49,22 @@ export function createApp({
   guestModels = null,
   guestStore = null,
   getAccessToken = null,
+  // Accounts service (account-service.mjs). By default it is built when
+  // DATABASE_URL is set; pass null to turn accounts off.
+  accountService = undefined,
 } = {}) {
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
   const memoryChat = env.AI_MODE === 'gemini-chat';
+  // Throws AccountsConfigError when DATABASE_URL is set without the Firestore
+  // settings accounts need (see account-settings.mjs).
+  const settings = accountSettings(env);
+  const accounts =
+    accountService !== undefined
+      ? accountService
+      : settings
+        ? createAccountService(createAccountBackends(settings))
+        : null;
   const vertexToken = getAccessToken || createAccessTokenProvider();
   // Company passages for gemini-chat and document-search: Vertex AI Search, or
   // the sample guide when VERTEX_SEARCH_ENGINE_ID is unset.
@@ -92,13 +126,32 @@ export function createApp({
     store: guestStore,
     companyRetrieve: retrieve,
   });
-  // Both stores close asynchronously (Firestore client or SQLite file).
+  mountAccountRoutes(app, { env, accounts });
+  // Both stores close asynchronously (Firestore client or SQLite file), as do
+  // the account database pool and profile client.
   app.locals.closeChat = async () => {
-    await Promise.allSettled([conversations?.close(), guestWorkspace.close()]);
+    await Promise.allSettled([conversations?.close(), guestWorkspace.close(), accounts?.close()]);
   };
 
-  // Public configuration. Credentials stay on the server.
-  app.get('/api/config', (req, res) => {
+  // A usable account session (no forced password change) for this request, or
+  // null. Never throws: /api/config must answer even if the database is down.
+  async function signedInAccount(req) {
+    const token = accounts ? readCookie(req, accountCookie) : undefined;
+    if (token === undefined) return null;
+    try {
+      const session = await accounts.session(token);
+      return session && !session.account.mustChangePassword ? session.account : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Public configuration. Credentials stay on the server. With accounts on, a
+  // signed-in account's chats are always saved, so conversationMemory is true
+  // for that browser in every answer mode.
+  app.get('/api/config', async (req, res) => {
+    const savedChats = memoryChat || Boolean(await signedInAccount(req));
+    if (accounts) res.set({ 'Cache-Control': 'no-store', Vary: 'Cookie' });
     res.json({
       aiMode: memoryChat
         ? 'gemini-memory'
@@ -107,8 +160,8 @@ export function createApp({
           : vertexConfig(env)
             ? 'gemini'
             : 'demo',
-      conversationMemory: memoryChat,
-      memoryRetentionDays: memoryChat ? 30 : null,
+      conversationMemory: savedChats,
+      memoryRetentionDays: savedChats ? 30 : null,
       adaptiveLearning: memoryChat,
       supportSummary: false,
 
@@ -121,6 +174,9 @@ export function createApp({
       model: env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
 
       knowledgeMode: memoryChat || documentSearch ? knowledgeMode(env) : 'sample-tasks',
+
+      // HR and employee sign-in is available (DATABASE_URL is set).
+      accounts: Boolean(accounts),
     });
   });
 
@@ -128,7 +184,30 @@ export function createApp({
     res.json({ ok: true });
   });
 
-  function chatOwner(req, res, next) {
+  // Saved chats belong to the signed-in account (`account:<uuid>`) when an
+  // account cookie is present, in every answer mode; an expired or invalid one
+  // is 401 SESSION_EXPIRED and never falls back to the anonymous cookie.
+  // Without an account cookie, gemini-chat uses the anonymous browser cookie.
+  async function chatOwner(req, res, next) {
+    if (accounts && readCookie(req, accountCookie) !== undefined) {
+      if (!sameOrigin(req))
+        return res.status(403).json({ error: 'Open chat on the website itself.' });
+      res.set('Cache-Control', 'no-store');
+      let session;
+      try {
+        session = await accounts.session(readCookie(req, accountCookie));
+      } catch (error) {
+        return chatFailure(res, error);
+      }
+      if (!session) {
+        res.clearCookie(accountCookie, accountCookieOptions(req, env));
+        return sendAccountError(res, accountErrors.sessionExpired());
+      }
+      if (session.account.mustChangePassword)
+        return sendAccountError(res, accountErrors.passwordChangeRequired());
+      req.chatOwner = `account:${session.account.id}`;
+      return next();
+    }
     if (!memoryChat) return res.status(404).json({ error: 'Saved conversations are not enabled.' });
     // Same-origin browser requests only; no permission is granted by a thread ID.
     if (req.get('origin')) {
@@ -338,26 +417,80 @@ export function createApp({
       res.json(result);
     }
 
+    // A signed-in account's question is saved as a turn of its conversation in
+    // every answer mode (document search, sample answers, single-turn Gemini).
+    if (accounts && readCookie(req, accountCookie) !== undefined) {
+      return chatOwner(req, res, async () => {
+        const { conversationId, requestId } = req.body;
+        if (
+          typeof conversationId !== 'string' ||
+          typeof requestId !== 'string' ||
+          !/^[0-9a-f-]{36}$/i.test(requestId)
+        )
+          return res
+            .status(400)
+            .json({ error: 'Choose a saved conversation before sending a question.' });
+        const abort = new AbortController(),
+          timer = setTimeout(() => abort.abort(), 60000);
+        const closed = () => {
+          if (!res.writableEnded) abort.abort();
+        };
+        res.on('close', closed);
+        try {
+          const result = await saveTurn(
+            req.chatOwner,
+            conversationId,
+            question.trim(),
+            requestId,
+            abort.signal,
+            () => answerOnce({ question, task, style, taskId, signal: abort.signal }),
+          );
+          if (!res.destroyed) await deliver(result);
+        } catch (error) {
+          if (res.destroyed) return;
+          if (error instanceof AnswerFailure) res.status(error.status).json(error.body);
+          else chatFailure(res, error);
+        } finally {
+          clearTimeout(timer);
+          res.off('close', closed);
+        }
+      });
+    }
+
+    let result;
+    try {
+      result = await answerOnce({ question, task, style, taskId });
+    } catch (error) {
+      if (!(error instanceof AnswerFailure)) throw error;
+      return res.status(error.status).json(error.body);
+    }
+    return deliver(result);
+  });
+
+  // One answer without conversation history, from the configured engine:
+  // document search, the labelled sample answer, or single-turn Gemini. A
+  // failure is an AnswerFailure carrying the response the browser receives.
+  async function answerOnce({ question, task, style, taskId, signal }) {
     if (documentSearch) {
       const start = performance.now();
       let passages;
       try {
-        passages = await retrieve(question.trim());
+        passages = await retrieve(question.trim(), signal ? { signal } : undefined);
       } catch (error) {
         const failure = searchFailure(error);
-        return res.status(failure.status).json({ code: failure.code, error: failure.error });
+        throw new AnswerFailure(failure.status, { code: failure.code, error: failure.error });
       }
-      return deliver({
+      return {
         ...quoteSearchResults(passages),
         taskId,
         latencyMs: Math.round(performance.now() - start),
-      });
+      };
     }
 
     // Without Vertex AI configured, return a labelled sample answer.
     const vertex = vertexConfig(env);
     if (!vertex) {
-      return deliver(demoAnswer(question, task, style));
+      return demoAnswer(question, task, style);
     }
 
     const start = performance.now();
@@ -378,7 +511,9 @@ export function createApp({
           Authorization: `Bearer ${token}`,
         },
 
-        signal: AbortSignal.timeout(25000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(25000)])
+          : AbortSignal.timeout(25000),
 
         body: JSON.stringify({
           systemInstruction: {
@@ -401,7 +536,7 @@ export function createApp({
 
       if (!response.ok) {
         if (response.status === 402) {
-          return res.status(402).json({
+          throw new AnswerFailure(402, {
             code: 'GEMINI_CREDIT_REQUIRED',
             error:
               "Gemini cannot answer because the project's prepaid credit is depleted. The project owner must restore billing for the Google Cloud project, then try again.",
@@ -422,22 +557,64 @@ export function createApp({
         throw new Error('No answer returned.');
       }
 
-      await deliver({
+      return {
         answer,
         mode: 'gemini',
         source,
         taskId,
         latencyMs: Math.round(performance.now() - start),
-      });
-    } catch {
-      res.status(502).json({
+      };
+    } catch (error) {
+      if (error instanceof AnswerFailure) throw error;
+      throw new AnswerFailure(502, {
         error:
           'Google AI could not answer right now. ' +
           'Check Vertex AI access, model availability and quota, ' +
           'then try again.',
       });
     }
-  });
+  }
+
+  // Saves one question and its answer in a saved conversation, as the guest
+  // workspace does for document-search turns. The chat is leased while the
+  // answer is prepared; repeating a request ID returns the saved answer.
+  async function saveTurn(owner, id, question, requestId, signal, compute) {
+    const turn = await chatService().memory.acquire(owner, id),
+      row = turn.row;
+    try {
+      const completed = row.messages.find(
+        (m) => m.requestId === requestId && m.role === 'assistant',
+      );
+      if (completed) {
+        const original = row.messages.find((m) => m.requestId === requestId && m.role === 'user');
+        if (original?.text !== question)
+          throw new ChatError(
+            409,
+            'REQUEST_CONFLICT',
+            'Start a new request for a different question.',
+          );
+        return completed.result;
+      }
+      if (row.messages.length >= 160)
+        throw new ChatError(
+          409,
+          'CHAT_FULL',
+          'This conversation has reached 80 questions. Start a new chat; you can still read this one.',
+        );
+      const result = { ...(await compute()), conversationId: id };
+      signal?.throwIfAborted();
+      await turn.save(
+        [
+          { id: requestId + '-u', requestId, role: 'user', text: question },
+          { id: requestId + '-a', requestId, role: 'assistant', text: result.answer, result },
+        ],
+        row.learning,
+      );
+      return result;
+    } finally {
+      await turn.release();
+    }
+  }
 
   // LOCAL WINDOWS VOICE
   app.post('/api/tts/local', async (req, res) => {

@@ -4,16 +4,16 @@ The project stays in JavaScript and React. `.jsx` files contain React screens; `
 
 ## Main folders
 
-| Folder                 | What it contains                                                               |
-| ---------------------- | ------------------------------------------------------------------------------ |
-| `src/portal/`          | The website shell and the welcome, onboarding and support pages                |
-| `src/avatar/`          | Alya's chat screen, avatar rendering, answer visuals and support summary       |
-| `src/access/`          | Employee/HR login interface, employee sign-up and live guest HR workspace      |
-| `server/`              | API routes, Gemini workflow, document search, saved chats and voice generation |
-| `scripts/`             | Development, connection checks, avatar import and voice setup                  |
-| `tests/`               | Regression checks using temporary data and synthetic company documents         |
-| `public/avatars/alya/` | The original avatar, loading poster and asset information                      |
-| `docs/`                | Architecture and behaviour explanations                                        |
+| Folder                 | What it contains                                                              |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `src/portal/`          | The website shell and the welcome, onboarding and support pages               |
+| `src/avatar/`          | Alya's chat screen, avatar rendering, answer visuals and support summary      |
+| `src/access/`          | Employee/HR login interface, employee sign-up and live guest HR workspace     |
+| `server/`              | API routes, accounts, Gemini workflow, document search, saved chats and voice |
+| `scripts/`             | Development, connection checks, avatar import and voice setup                 |
+| `tests/`               | Regression checks using temporary data and synthetic company documents        |
+| `public/avatars/alya/` | The original avatar, loading poster and asset information                     |
+| `docs/`                | Architecture and behaviour explanations                                       |
 
 `node_modules`, `dist`, `.cache` and `artifacts` are generated or private working folders. They are excluded from sharing. `.env` holds this installation's private settings; `.env.example` is the blank setup template.
 
@@ -118,6 +118,8 @@ The persisted/API field named `card` remains compatible with existing chats and 
 - `check-vertex-ai-search.mjs`: check Vertex AI Search with one live search (`npm run check:search`).
 - `import-company-documents.mjs`: upload a folder to the documents bucket and import it into Vertex AI Search (`npm run docs:import`, dry run by default).
 - `check-shareable-files.mjs`: inspect the Git file list without printing secrets or publishing files.
+- `migrate-database.mjs`: apply the account database migrations (`npm run db:migrate`).
+- `create-hr-account.mjs`: create an HR account (`npm run hr:create`).
 
 Use the `npm` commands in the README rather than remembering these file paths.
 
@@ -126,6 +128,24 @@ Use the `npm` commands in the README rather than remembering these file paths.
 Ambiguous names such as `Portal`, `AvatarStage`, `conversation` and `drive-knowledge` were replaced with names that describe their role. The architecture notes are grouped in `docs/`. Compressed source formatting is expanded consistently with Prettier. Tests and imports follow the new names.
 
 The existing removed pages and old standalone avatar demos stay removed. The unused device-voice controller and its obsolete tests were replaced with checks for the active audio player. The original avatar, live settings, saved conversations and voice cache are preserved.
+
+## Accounts
+
+HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds accounts, sessions and the audit trail; Firestore holds employee profiles and account-owned chats. See [Account access](account-access.md) for the setup, rules and API contract.
+
+| File                             | Purpose                                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------------------------- |
+| `server/account-settings.mjs`    | When accounts are on, and the start-up guard (Firestore emulator off Cloud Run)          |
+| `server/account-service.mjs`     | Sign-in, sessions, lockout, password changes and HR actions                              |
+| `server/account-store.mjs`       | PostgreSQL pool, queries and transactions; code-only error logs                          |
+| `server/account-routes.mjs`      | `/api/auth`, `/api/me` and `/api/hr` routes and the `onboardai_account` cookie           |
+| `server/account-errors.mjs`      | Account error codes and messages                                                         |
+| `server/password-hashing.mjs`    | scrypt password hashes and password rules                                                |
+| `server/employee-profiles.mjs`   | Profile validation and `employeeProfiles/{accountId}` in Firestore                       |
+| `server/database-migrations.mjs` | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                |
+| `server/migrations/`             | Plain SQL migrations                                                                     |
+| `scripts/migrate-database.mjs`   | `npm run db:migrate`                                                                     |
+| `scripts/create-hr-account.mjs`  | `npm run hr:create`: the first HR account, password never shown or passed as an argument |
 
 ## Uploaded company guidance
 

@@ -1,36 +1,274 @@
 # Account access and guest workspace
 
 The welcome page at `/` or `/login` offers Employee and HR workspace choices.
-Employees also have a sign-up interface at `/signup`. HR has sign-in only.
-The existing portal dashboard is now at `/dashboard`.
+The existing portal dashboard is at `/dashboard`.
 
-## What works in this interface
+There are two ways in:
 
-- Switching Employee and HR workspace choices.
-- Switching employee sign-in and sign-up forms.
-- Employee ID and HR ID fields, with required-field validation. Employee sign-up also uses Employee ID.
-- Password visibility controls, an eight-character minimum for sign-up and confirmation matching.
-- Password-reset guidance with an explicit preview message.
+- **Accounts** (issue #23): real HR and employee sign-in, served by the API when
+  `DATABASE_URL` is set. HR creates every employee account; there is no public sign-up.
+- **Guest access** ("Continue without an account"): the isolated browser workspace
+  described in [Company uploads and live reports](guest-workspace.md). It works the
+  same whether or not accounts are on.
+
+## What the interface does today
+
+- Switching Employee and HR workspace choices, Employee ID / HR ID and password fields,
+  required-field validation and password visibility controls.
 - Employee guest entry into `/employee`, reopening that browser’s active guest.
-- HR guest entry into `/hr`, with company uploads and live guest summaries. The old `/hr-preview` address opens the same workspace.
+- HR guest entry into `/hr`, with company uploads and live guest summaries. The old
+  `/hr-preview` address opens the same workspace.
 - A Sign in link in the existing portal header to return to the account interface.
 
-## Authentication boundary
+The server side of accounts is complete. Connecting the login screens to it is the
+frontend follow-up: until then `src/access/LoginPage.jsx` does not call the account
+API, and its employee sign-up form (`/signup`) has no server counterpart, because HR
+creates employee accounts.
 
-These screens are an interface preview, not account authentication or an access gate.
-Sign-in and sign-up submissions do not call a server, create an account, grant HR
-permissions or save/log credentials. After a valid submission, passwords are cleared
-and a message states that account access is not connected. Password mismatch messages
-allow the employee to correct their input. No password reset email is sent.
+## Roles
 
-The Employee/HR selector does not verify a company role. Temporary HR and employee access uses one isolated browser workspace for uploads, distinct employee conversations and automatic support summaries, with the configured company document search (Vertex AI Search) available to the assistant. Every guest begins with zero activity. The former fictional employee reports were removed.
+| Role       | Created by                                           | Can                                                                                                                                                                     |
+| ---------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hr`       | `npm run hr:create` on the server (no forced change) | Everything an employee can, plus list, read, create and edit employees, reset their passwords and disable or enable them. HR accounts are not editable through the API. |
+| `employee` | HR, with a temporary password                        | Change their own password, read their own profile, and keep saved chats that follow them across browsers.                                                               |
 
-Existing saved chats and private reports remain separate and are not opened by guest APIs. Employee chat has no onboarding report or export control, and its API responses omit aggregate summaries. Existing collection preferences are preserved. Real workforce reports require verified HR permissions and company membership.
+An account created or reset by HR must choose a new password before anything else works.
 
-See [Company uploads and live reports](guest-workspace.md) for the working flow, limits, storage, expiry and deployment boundary.
+## Where the data lives
+
+| Store                                           | Holds                                                                                                          |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL (`DATABASE_URL`)                     | `accounts`, `sessions` and `account_events`: IDs, password hashes, roles, status, sign-in state, audit.        |
+| Firestore `employeeProfiles/{accountId}`        | Each employee's personal profile, written by HR.                                                               |
+| Firestore `conversations`, `supportPreferences` | A signed-in account's saved chats, owned by `account:<accountId>` (see [Chat and memory](chat-and-memory.md)). |
+
+PostgreSQL never holds profile values; Firestore never holds passwords or sessions. Guest
+workspaces keep their own SQLite file, as before.
+
+### PostgreSQL tables (`server/migrations/001_accounts.sql`)
+
+- **accounts**: `id` (uuid), `username` (3–32 of `A-Z a-z 0-9 . _ -`, unique regardless of
+  case), `password_hash`, `role` (`hr` | `employee`), `status` (`active` | `disabled`),
+  `must_change_password`, `failed_attempts`, `locked_until`, `created_at`, `updated_at`,
+  `last_sign_in_at`, `created_by`.
+- **sessions**: `token_hash` (SHA-256 of the cookie token), `account_id`, `created_at`, `expires_at`.
+- **account_events**: `actor_id`, `target_id`, `action`, `created_at`. Actions:
+  `hr_account_created`, `employee_created`, `profile_updated`, `password_reset`,
+  `account_disabled`, `account_enabled`, `password_changed`, `signed_in`, `account_locked`.
+  No secrets or profile values.
+
+Migrations are plain SQL files run by `npm run db:migrate`, in name order, each once, each in
+its own transaction, and recorded in `schema_migrations`. Running it again changes nothing.
+
+### Employee profile (`employeeProfiles/{accountId}`)
+
+Every field is text, stored trimmed, `''` when empty. Only `job.fullName` is required.
+Unknown fields are rejected. Values are single-line (no control characters).
+
+| Group              | Field (maximum characters)                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `job`              | `fullName` (120, required), `preferredName` (80), `jobTitle` (120), `department` (120), `startDate` (`YYYY-MM-DD`, a real date), `manager` (120) |
+| `contact`          | `workEmail` (254, email), `personalEmail` (254, email), `mobileNumber` (32, digits, spaces, `+ - ( ) .`)                                         |
+| `emergencyContact` | `name` (120), `relationship` (60), `phoneNumber` (32, as `mobileNumber`)                                                                         |
+| `homeAddress`      | `line1` (200), `line2` (200), `city` (100), `state` (100), `postcode` (20), `country` (100)                                                      |
+
+The server adds `updatedAt` (ISO 8601) and `updatedBy` (the HR account ID). Log lines
+about profiles name the operation and Firestore status only, never values.
+
+## Security rules
+
+- **Passwords**: Node's built-in scrypt (N=32768, r=8, p=1, 64-byte key) with a random
+  16-byte salt per password, stored as `scrypt$n=…,r=…,p=…$<salt>$<key>`, compared with
+  `timingSafeEqual`. 8–200 characters, not equal to the ID (ignoring case); a new
+  password must differ from the current one. Plaintext is never logged, returned or stored.
+- **Failed sign-ins** all return the same `401 SIGN_IN_FAILED`: unknown ID, wrong password,
+  disabled or locked. Each costs one scrypt check (against a dummy hash when the ID is
+  unknown) and the same database statements.
+- **Lockout**: five consecutive wrong passwords lock the account for 15 minutes; a
+  successful sign-in resets the count, and after a lock ends the count starts again. A
+  wrong current password on the change-password form counts too. While locked, the
+  account's sessions are not usable either. An HR password reset clears a lock.
+- **Sessions**: a 32-byte random token in the `onboardai_account` cookie (HttpOnly,
+  SameSite=Strict, Path `/api`, Secure on HTTPS or with `NODE_ENV=production`). PostgreSQL
+  stores only its SHA-256. A session ends 12 hours after sign-in. Signing in replaces the
+  browser's previous session; changing the password ends every session of the account and
+  issues a new one; a reset or disable ends all of that employee's sessions; signing out
+  deletes the session on the server.
+- **Requests**: every account and HR route checks the browser's `Origin` like the saved-chat
+  routes, is never cached, and sits behind the API's limit of 30 POST requests per minute
+  per IP.
+- **Start-up guard**: with `DATABASE_URL` set the server refuses to start unless
+  `FIRESTORE_DATABASE_ID` and a project are set and, outside Cloud Run (`K_SERVICE` unset),
+  `FIRESTORE_EMULATOR_HOST` is set. Local test personal data therefore never reaches a cloud
+  Firestore database.
+
+## Local setup
+
+The Docker stack in `compose.yaml` runs PostgreSQL (127.0.0.1:5442) and the Firebase
+Firestore emulator (127.0.0.1:8681, project `demo-onboardai`; Emulator UI at
+http://127.0.0.1:4000).
+
+1. Add to `.env` (see `.env.example`):
+
+   ```
+   DATABASE_URL=postgresql://onboardai:onboardai_local@127.0.0.1:5442/onboardai
+   FIRESTORE_EMULATOR_HOST=127.0.0.1:8681
+   FIRESTORE_PROJECT_ID=demo-onboardai
+   FIRESTORE_DATABASE_ID=(default)
+   ```
+
+   `FIRESTORE_PROJECT_ID` keeps `GOOGLE_CLOUD_PROJECT` free for Vertex AI. The emulator keeps
+   data only for `demo-onboardai`.
+
+2. `npm run db:up` starts the stack and waits until it is healthy.
+3. `npm run db:migrate` creates the tables (safe to repeat).
+4. `npm run hr:create` creates the first HR account. In a terminal it asks for the HR ID and
+   the password twice without showing the password. It can be scripted with piped lines
+   (ID, password, and optionally the password again); it never takes the password as an
+   argument:
+
+   ```bash
+   printf '%s\n%s\n%s\n' HR-0001 "$PASSWORD" "$PASSWORD" | npm run hr:create
+   ```
+
+5. `npm run dev`. The start-up log prints `Accounts: on (…)` and where saved chats go.
+
+Without `DATABASE_URL` the app runs exactly as before and every account route answers
+`503 ACCOUNTS_NOT_CONFIGURED`. Database shell: `docker compose exec postgres psql -U onboardai -d onboardai`.
+
+## API contract
+
+JSON in both directions. Errors are `{ "code": "…", "error": "message" }`; `PROFILE_INVALID`
+adds `fields`. Every route below answers `Cache-Control: no-store`.
+
+Answers every route can give:
+
+| Status | Code                          | When                                               |
+| ------ | ----------------------------- | -------------------------------------------------- |
+| 403    | `CROSS_ORIGIN_REJECTED`       | An `Origin` header that is not this site           |
+| 503    | `ACCOUNTS_NOT_CONFIGURED`     | `DATABASE_URL` is not set                          |
+| 503    | `ACCOUNTS_UNAVAILABLE`        | PostgreSQL failed                                  |
+| 503    | `PROFILE_STORAGE_UNAVAILABLE` | Firestore failed (routes that touch profiles)      |
+| 504    | `PROFILE_STORAGE_TIMEOUT`     | Firestore gave no answer within 10 seconds         |
+| 404    | `NOT_FOUND`                   | No such account route                              |
+| 429    | (no code)                     | More than 30 POST requests in a minute from one IP |
+| 500    | `ACCOUNT_REQUEST_FAILED`      | Unexpected failure                                 |
+
+Routes that need a session check, in this order:
+
+| Status | Code                       | When                                                                                                                       |
+| ------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 401    | `AUTH_REQUIRED`            | No `onboardai_account` cookie                                                                                              |
+| 401    | `SESSION_EXPIRED`          | The cookie's session has ended (expiry, sign-out, rotation, reset, disable, lock, forged). The response clears the cookie. |
+| 403    | `PASSWORD_CHANGE_REQUIRED` | The account must choose a new password first                                                                               |
+| 403    | `HR_ROLE_REQUIRED`         | An HR route and the account is not HR                                                                                      |
+
+Shapes:
+
+```text
+SessionAccount  { id, username, role: "hr"|"employee", mustChangePassword: boolean,
+                  sessionExpiresAt: ISO 8601 }
+EmployeeAccount { id, username, role: "employee", status: "active"|"disabled",
+                  mustChangePassword, locked: boolean, lockedUntil: ISO|null,
+                  createdAt: ISO, updatedAt: ISO, lastSignInAt: ISO|null }
+Profile         { job, contact, emergencyContact, homeAddress  (every field a string),
+                  updatedAt: ISO|null, updatedBy: account id|null }
+ProfileInput    { job, contact, emergencyContact, homeAddress }  (updatedAt/updatedBy ignored)
+ProfileSummary  { fullName, preferredName, jobTitle, department, startDate }
+```
+
+| Method and path                       | Session                         | Request body                                             | Success                                                                                                  | Errors (besides the tables above)                                                                                          |
+| ------------------------------------- | ------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/auth/sign-in`              | none                            | `{ username, password }`                                 | 200 `{ account: SessionAccount }` and a new cookie                                                       | 400 `SIGN_IN_INVALID` (missing or non-text fields); 401 `SIGN_IN_FAILED` (any failed sign-in)                              |
+| `GET /api/auth/session`               | optional; forced change allowed | none                                                     | 200 `{ account: SessionAccount }`, or `{ account: null }` without a cookie                               | 401 `SESSION_EXPIRED`                                                                                                      |
+| `POST /api/auth/sign-out`             | optional                        | none                                                     | 204, session deleted, cookie cleared                                                                     | none                                                                                                                       |
+| `POST /api/auth/password`             | any; forced change allowed      | `{ currentPassword, newPassword }`                       | 200 `{ account: SessionAccount }` and a new cookie                                                       | 400 `PASSWORD_CHANGE_INVALID`, `CURRENT_PASSWORD_INCORRECT`, `PASSWORD_REJECTED` (the message says which rule)             |
+| `GET /api/me/profile`                 | any                             | none                                                     | 200 `{ profile: Profile \| null }` (null for HR accounts without a profile)                              |                                                                                                                            |
+| `GET /api/hr/employees`               | HR                              | none                                                     | 200 `{ employees: [{ account: EmployeeAccount, profile: ProfileSummary \| null }] }`, by ID, at most 500 |                                                                                                                            |
+| `POST /api/hr/employees`              | HR                              | `{ username, temporaryPassword, profile: ProfileInput }` | 201 `{ employee: { account: EmployeeAccount, profile: Profile } }`                                       | 400 `EMPLOYEE_INVALID`, `USERNAME_INVALID`, `PASSWORD_REJECTED`, `PROFILE_INVALID`; 409 `USERNAME_TAKEN` (any letter case) |
+| `GET /api/hr/employees/:id`           | HR                              | none                                                     | 200 `{ employee: { account, profile: Profile \| null } }`                                                | 404 `EMPLOYEE_NOT_FOUND` (unknown, not a UUID, or an HR account)                                                           |
+| `PUT /api/hr/employees/:id/profile`   | HR                              | `{ profile: ProfileInput }` (full replacement)           | 200 `{ employee: { account, profile } }`                                                                 | 400 `PROFILE_INVALID`; 404 `EMPLOYEE_NOT_FOUND`                                                                            |
+| `POST /api/hr/employees/:id/password` | HR                              | `{ temporaryPassword }`                                  | 200 `{ account: EmployeeAccount }`: forced change set, lock cleared, sessions ended                      | 400 `PASSWORD_REJECTED`; 404 `EMPLOYEE_NOT_FOUND`                                                                          |
+| `PUT /api/hr/employees/:id/status`    | HR                              | `{ status: "active" \| "disabled" }`                     | 200 `{ account: EmployeeAccount }`; disabling ends the sessions                                          | 400 `STATUS_INVALID`; 404 `EMPLOYEE_NOT_FOUND`                                                                             |
+
+`PROFILE_INVALID` example:
+
+```json
+{
+  "code": "PROFILE_INVALID",
+  "error": "Check the profile: extra is not a profile field; job.startDate must be a date in YYYY-MM-DD form.",
+  "fields": [
+    { "field": "extra", "problem": "unknown" },
+    { "field": "job.startDate", "problem": "invalid_date" }
+  ]
+}
+```
+
+`problem` is one of `required`, `unknown`, `not_object`, `not_text`, `too_long`,
+`invalid_characters`, `invalid_email`, `invalid_date`, `invalid_phone`; `field` is
+`profile` when the profile itself is not an object.
+
+Creating an employee is consistent across both stores: the account is inserted inside a
+PostgreSQL transaction, the Firestore profile is written, then the transaction commits. If
+the profile write fails or times out, nothing is kept and the same ID can be used again.
+
+### Account-owned chats
+
+- `GET /api/config` gains `accounts: true | false`. With a usable account session (signed in,
+  no forced change) it also reports `conversationMemory: true` and `memoryRetentionDays: 30` in
+  every `AI_MODE`; otherwise those are unchanged. With accounts on it answers
+  `Cache-Control: no-store` and `Vary: Cookie`.
+- When the `onboardai_account` cookie is present, the saved-chat routes
+  (`/api/conversations*`, `/api/support-summary/settings`) and `POST /api/chat` belong to the
+  account (`account:<accountId>`), not the anonymous `alya_session` cookie, so the chats
+  follow the employee to any browser. They are saved in every answer mode: document search,
+  sample answers, single-turn Gemini and `gemini-chat`.
+- A signed-in `POST /api/chat` needs `conversationId` and `requestId` in every mode, as
+  `gemini-chat` already does (400 otherwise). The answer has the mode's usual shape plus
+  `conversationId`. Repeating a request ID returns the saved answer; a different question
+  under the same ID is `409 REQUEST_CONFLICT`.
+- An account cookie that is expired or invalid gets `401 SESSION_EXPIRED` on these routes and
+  never falls back to the anonymous cookie; a pending forced change gets
+  `403 PASSWORD_CHANGE_REQUIRED`. Signing out returns the browser to the anonymous behaviour.
+- `/api/employee-support-summary` stays `403 HR_ACCESS_REQUIRED` for everyone, HR accounts
+  included; real workforce reports are not part of this change.
+
+### For the browser
+
+- On load, call `GET /api/auth/session`. `account: null` means signed out.
+- **Forced password change**: `account.mustChangePassword` is `true` after sign-in or in the
+  session, and any other account or chat route answers `403 PASSWORD_CHANGE_REQUIRED`. Show
+  the change-password form, call `POST /api/auth/password`, then fetch `/api/config` again.
+- **Expired session**: any route answering `401 SESSION_EXPIRED` (chat routes included). The
+  server has already cleared the cookie; show the sign-in form again.
+- The cookie is HttpOnly: the browser never reads it. Same-origin `fetch` sends it.
+- Route by `account.role` after sign-in; the Employee/HR selector does not decide the role.
+
+## Guest workspace boundary
+
+The Employee/HR guest selector does not verify a company role. Guest HR and employee access
+uses one isolated browser workspace for uploads, distinct employee conversations and automatic
+support summaries, with the configured company document search (Vertex AI Search) available to
+the assistant. Every guest begins with zero activity. Guest APIs never open account data or
+saved chats, and accounts never open guest data.
+
+Employee chat has no onboarding report or export control, and its API responses omit aggregate
+summaries. Existing collection preferences are preserved.
+
+See [Company uploads and live reports](guest-workspace.md) for the working flow, limits,
+storage, expiry and deployment boundary.
 
 ## Files
 
+- `server/account-settings.mjs`: when accounts are on, and the start-up guard.
+- `server/account-service.mjs`: sign-in, sessions, lockout, password changes and HR actions.
+- `server/account-store.mjs`: PostgreSQL queries and transactions.
+- `server/account-routes.mjs`: `/api/auth`, `/api/me` and `/api/hr` routes and the session cookie.
+- `server/account-errors.mjs`: account error codes and messages.
+- `server/password-hashing.mjs`: scrypt hashing and password rules.
+- `server/employee-profiles.mjs`: profile validation and Firestore storage.
+- `server/database-migrations.mjs`, `server/migrations/*.sql`: the migration runner and SQL.
+- `scripts/migrate-database.mjs`, `scripts/create-hr-account.mjs`: `db:migrate` and `hr:create`.
 - `src/access/LoginPage.jsx`: workspace selection, sign-in and employee sign-up forms.
 - `src/access/HrWorkspace.jsx`: automatic individual employee reports.
 - `src/access/CompanyDocumentLibrary.jsx`: upload and connected document library.
@@ -38,3 +276,5 @@ See [Company uploads and live reports](guest-workspace.md) for the working flow,
 - `src/access/hr-onboarding-summary.css`: responsive HR summary layout.
 - `src/access/account-access.css`: responsive access-screen and preview styling.
 - `src/portal/OnboardingWebsite.jsx`: routes and guest-preview navigation.
+- `tests/server/account-*.test.mjs`, `password-hashing.test.mjs`, `employee-profiles.test.mjs`:
+  account tests, using pg-mem (the real migrations) and an in-memory Firestore fake.

@@ -20,7 +20,7 @@ For example, ask “What should I wear?” and then “What if I wear a tshirt?�
 
 Open `/mira`. Send a question normally. **Saved chats** reopens earlier conversations; refresh or leave and return to continue the selected chat. **New chat** starts separate context. **Delete current chat** removes its visible history and LangGraph checkpoints after the on-screen confirmation.
 
-Memory is tied to an opaque HttpOnly browser cookie, not the website's editable profile name. A different browser/device has separate history. New chats do not automatically reuse personal facts from other chats; reopen the original conversation to continue it. Clearing browser cookies loses access to that browser's history. There is no employee account synchronisation yet.
+Without an account, memory is tied to an opaque HttpOnly browser cookie, not the website's editable profile name. A different browser/device has separate history, and clearing browser cookies loses access to that browser's history. When accounts are on (`DATABASE_URL`, see [Account access](account-access.md)) and the browser is signed in, chats belong to the account instead (owner `account:<accountId>`): they follow the employee to any browser and are saved in every answer mode, including `AI_MODE=document-search`, sample answers and single-turn Gemini. An expired or invalid account session gets `401 SESSION_EXPIRED` and never falls back to the anonymous cookie. New chats do not automatically reuse personal facts from other chats; reopen the original conversation to continue it.
 
 Chats expire 30 days after their last update (an answer, feedback, a help request or a settings change). Expired chats are hidden at once and removed when chat history is next accessed. There are at most 30 saved chats per browser session and 80 questions per chat. Older conversation context is summarised to limit prompt size; summaries can lose detail. Full successful exchanges remain available to read until expiry or deletion. Failed requests are shown in the interface but are not added to saved visible history. Reopening history does not replay its voice.
 
@@ -28,10 +28,13 @@ Chats expire 30 days after their last update (an answer, feedback, a help reques
 
 One store holds everything the server persists: saved chats, each chat's answer-style settings, the support observations behind the summary (answers, feedback, voice starts, help requests), the support-summary recording setting and the LangGraph checkpoints. The browser-local checklist and profile are not part of it.
 
-| Setting                                                       | Store                                                                                                                                           |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FIRESTORE_DATABASE_ID` blank (local default)                 | SQLite file `.cache/chat/conversations.sqlite`, or `CHAT_DATABASE_PATH`. No Google Cloud needed.                                                |
-| `FIRESTORE_DATABASE_ID=(default)` with `GOOGLE_CLOUD_PROJECT` | Firestore (Native mode) with Application Default Credentials: on Cloud Run the api runtime service account, which needs `roles/datastore.user`. |
+| Setting                                                                                 | Store                                                                                                                                           |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FIRESTORE_DATABASE_ID` blank (local default)                                           | SQLite file `.cache/chat/conversations.sqlite`, or `CHAT_DATABASE_PATH`. No Google Cloud needed.                                                |
+| `FIRESTORE_DATABASE_ID=(default)` with `FIRESTORE_PROJECT_ID` or `GOOGLE_CLOUD_PROJECT` | Firestore (Native mode) with Application Default Credentials: on Cloud Run the api runtime service account, which needs `roles/datastore.user`. |
+| The same, plus `FIRESTORE_EMULATOR_HOST`                                                | The local Firestore emulator (`npm run db:up`, project `demo-onboardai`). Required when accounts are on outside Cloud Run.                      |
+
+The Firestore project is `FIRESTORE_PROJECT_ID`, falling back to `GOOGLE_CLOUD_PROJECT`, so a local run can keep `GOOGLE_CLOUD_PROJECT` for Vertex AI while chats and employee profiles use the emulator. Against the emulator the client uses gRPC (its REST transport asks for Google credentials there).
 
 The server prints the store it uses at start-up. Both stores behave the same way: ownership by the opaque owner key, 30 chats per owner, 80 questions per chat, the 30-day expiry, deletion of history and checkpoints, request-ID retries and summaries. The same behaviour tests run against both; the Firestore runs use an in-memory fake, not Google.
 
@@ -64,14 +67,14 @@ With Firestore, an answer leases its chat in the chat document (`turnToken`, `tu
 
 Firestore errors reach the browser only as fixed messages. Every Firestore call has a 10-second limit. The server log records the operation and Firestore's status name, never chat text, document paths or Google's error text.
 
-| Code                     | HTTP | Cause                                                                      |
-| ------------------------ | ---- | -------------------------------------------------------------------------- |
-| `STORAGE_NOT_CONFIGURED` | 503  | `FIRESTORE_DATABASE_ID` set without `GOOGLE_CLOUD_PROJECT`                 |
-| `STORAGE_ACCESS_DENIED`  | 503  | Permission denied or no credentials: grant `roles/datastore.user`          |
-| `STORAGE_NOT_FOUND`      | 503  | The database does not exist: check `FIRESTORE_DATABASE_ID` and the project |
-| `STORAGE_RATE_LIMIT`     | 429  | Firestore quota reached                                                    |
-| `STORAGE_TIMEOUT`        | 504  | No answer within 10 seconds                                                |
-| `STORAGE_UNAVAILABLE`    | 503  | Anything else, such as an outage, contention or a failed precondition      |
+| Code                     | HTTP | Cause                                                                                            |
+| ------------------------ | ---- | ------------------------------------------------------------------------------------------------ |
+| `STORAGE_NOT_CONFIGURED` | 503  | `FIRESTORE_DATABASE_ID` set without a project (`FIRESTORE_PROJECT_ID` or `GOOGLE_CLOUD_PROJECT`) |
+| `STORAGE_ACCESS_DENIED`  | 503  | Permission denied or no credentials: grant `roles/datastore.user`                                |
+| `STORAGE_NOT_FOUND`      | 503  | The database does not exist: check `FIRESTORE_DATABASE_ID` and the project                       |
+| `STORAGE_RATE_LIMIT`     | 429  | Firestore quota reached                                                                          |
+| `STORAGE_TIMEOUT`        | 504  | No answer within 10 seconds                                                                      |
+| `STORAGE_UNAVAILABLE`    | 503  | Anything else, such as an outage, contention or a failed precondition                            |
 
 The 10-second limit stops the request waiting; it does not cancel the Firestore call. A saved answer that misses the limit can still commit, and its commit also ends the turn's lease. The browser then sees `STORAGE_TIMEOUT`, and retrying the question with the same request ID returns the saved answer without another Gemini request. A start-of-answer lease that commits after its limit holds the chat for up to two minutes.
 
@@ -156,7 +159,7 @@ npm run docs:import -- ./company-docs --apply
 
 ## Information boundaries
 
-Only documents approved for the intended employees belong in the data store. Prompt instructions cannot reliably hide PNC information that the model has already received. Exclude restricted HR records, passwords, individual salary/medical details and other material employees should not access. For multiple employee roles, add real employee sign-in and apply document permissions **before retrieval**. The browser-session isolation added here is not employee authentication. Keep this preview local until that is implemented.
+Only documents approved for the intended employees belong in the data store. Prompt instructions cannot reliably hide PNC information that the model has already received. Exclude restricted HR records, passwords, individual salary/medical details and other material employees should not access. Employee sign-in now exists (see [Account access](account-access.md)), but every signed-in employee searches the same company documents: for multiple employee roles, apply document permissions **before retrieval**. The anonymous browser-session isolation is not employee authentication.
 
 Vertex AI Search receives Gemini's rewritten query. Gemini receives the recent conversation, any earlier summary and the selected reference passages to generate answers. Neither receives browser-supplied document IDs or filters. The website does not enable LangSmith tracing. Locally, saved messages and graph state are stored unencrypted in the ignored `.cache/chat/conversations.sqlite`; protect this folder, backups and server account access. `CHAT_DATABASE_PATH` can point to a persistent private database location. In the cloud they are in Firestore, encrypted at rest by Google and readable by anyone with Firestore access to the project, so keep `roles/datastore.*` grants to the api service account and administrators.
 
@@ -176,7 +179,7 @@ The dependency audit currently reports seven advisory entries in the existing Ko
 | `server/firestore-client.mjs`           | Lazy Firestore client, 10-second limit and safe storage error codes              |
 | `server/chat-errors.mjs`                | Chat and storage error messages shared by both stores                            |
 | `server/saved-conversations.mjs`        | SQLite history, ownership checks, retention and deletion (local default)         |
-| `server/api-routes.mjs`                 | Saved-chat endpoints and browser-session cookie                                  |
+| `server/api-routes.mjs`                 | Saved-chat endpoints, browser-session cookie and account-owned chats             |
 | `src/avatar/AlyaChatPage.jsx`           | Reopen/new/delete chats, text answers, references and existing voice integration |
 | `tests/gemini-chat-workflow.test.mjs`   | Context, restart persistence, isolation, retry, source and error tests           |
 | `tests/document-search.test.mjs`        | Search request shape, passages, file names, errors, timeout and sample fallback  |

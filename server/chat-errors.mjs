@@ -40,7 +40,7 @@ export const supportSettingsInvalid = () =>
 const storageFailures = {
   STORAGE_NOT_CONFIGURED: [
     503,
-    'Saved chats are not fully configured. The administrator should set GOOGLE_CLOUD_PROJECT together with FIRESTORE_DATABASE_ID.',
+    'Saved chats are not fully configured. The administrator should set GOOGLE_CLOUD_PROJECT (or FIRESTORE_PROJECT_ID) together with FIRESTORE_DATABASE_ID.',
   ],
   STORAGE_ACCESS_DENIED: [
     503,
