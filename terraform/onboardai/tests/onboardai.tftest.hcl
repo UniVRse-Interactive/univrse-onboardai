@@ -99,12 +99,12 @@ run "wif_trusts_only_main_of_this_repository" {
   }
 
   assert {
-    condition     = strcontains(google_iam_workload_identity_pool_provider.github.attribute_condition, "assertion.repository_owner_id == '281514177'")
+    condition     = strcontains(google_iam_workload_identity_pool_provider.github.attribute_condition, "assertion.repository_owner_id == '283518526'")
     error_message = "The WIF condition must pin the numeric owner ID."
   }
 
   assert {
-    condition     = strcontains(google_iam_workload_identity_pool_provider.github.attribute_condition, "assertion.workflow_ref == 'UniVRse-Interactive/univrse-onboardai/.github/workflows/deploy.yml@refs/heads/main'")
+    condition     = strcontains(google_iam_workload_identity_pool_provider.github.attribute_condition, "assertion.workflow_ref == 'UniVRse-Team/univrse-onboardai/.github/workflows/deploy.yml@refs/heads/main'")
     error_message = "The WIF condition must only accept the deploy workflow."
   }
 
@@ -536,7 +536,7 @@ run "outputs_carry_the_setup_commands" {
   command = apply
 
   assert {
-    condition = toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) --repo UniVRse-Interactive/univrse-onboardai --body '[^']*'$", output.github_variable_commands) : m[0]]) == toset([
+    condition = toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) --repo UniVRse-Team/univrse-onboardai --body '[^']*'$", output.github_variable_commands) : m[0]]) == toset([
       "GCP_PROJECT_ID", "GCP_REGION", "GCP_WIF_PROVIDER", "GCP_DEPLOYER_SA", "AI_MODE", "GEMINI_MODEL",
       "VERTEX_SEARCH_LOCATION", "VERTEX_SEARCH_ENGINE_ID", "FIRESTORE_DATABASE_ID",
     ]) && length(split("\n", output.github_variable_commands)) == 9
@@ -550,12 +550,12 @@ run "outputs_carry_the_setup_commands" {
 
   assert {
     condition = (
-      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_LOCATION --repo UniVRse-Interactive/univrse-onboardai --body 'global'") &&
-      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_ENGINE_ID --repo UniVRse-Interactive/univrse-onboardai --body 'onboardai-search'") &&
-      strcontains(output.github_variable_commands, "gh variable set FIRESTORE_DATABASE_ID --repo UniVRse-Interactive/univrse-onboardai --body '(default)'") &&
-      strcontains(output.github_variable_commands, "gh variable set AI_MODE --repo UniVRse-Interactive/univrse-onboardai --body 'gemini-chat'") &&
-      strcontains(output.github_variable_commands, "gh variable set GEMINI_MODEL --repo UniVRse-Interactive/univrse-onboardai --body 'gemini-3.5-flash-lite'") &&
-      strcontains(output.github_variable_commands, "gh variable set GCP_REGION --repo UniVRse-Interactive/univrse-onboardai --body 'asia-southeast1'")
+      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_LOCATION --repo UniVRse-Team/univrse-onboardai --body 'global'") &&
+      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_ENGINE_ID --repo UniVRse-Team/univrse-onboardai --body 'onboardai-search'") &&
+      strcontains(output.github_variable_commands, "gh variable set FIRESTORE_DATABASE_ID --repo UniVRse-Team/univrse-onboardai --body '(default)'") &&
+      strcontains(output.github_variable_commands, "gh variable set AI_MODE --repo UniVRse-Team/univrse-onboardai --body 'gemini-chat'") &&
+      strcontains(output.github_variable_commands, "gh variable set GEMINI_MODEL --repo UniVRse-Team/univrse-onboardai --body 'gemini-3.5-flash-lite'") &&
+      strcontains(output.github_variable_commands, "gh variable set GCP_REGION --repo UniVRse-Team/univrse-onboardai --body 'asia-southeast1'")
     )
     error_message = "Contract v2 values: global, onboardai-search, (default), gemini-chat, gemini-3.5-flash-lite, asia-southeast1."
   }
@@ -565,7 +565,7 @@ run "rejects_repository_name_as_id" {
   command = plan
 
   variables {
-    github_repository_id = "UniVRse-Interactive/univrse-onboardai"
+    github_repository_id = "UniVRse-Team/univrse-onboardai"
   }
 
   expect_failures = [var.github_repository_id]

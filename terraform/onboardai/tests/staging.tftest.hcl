@@ -169,12 +169,12 @@ run "staging_wif_trusts_only_the_staging_branch" {
   assert {
     condition = google_iam_workload_identity_pool_provider.github.attribute_condition == join(" && ", [
       "assertion.repository_id == '1418194026'",
-      "assertion.repository_owner_id == '281514177'",
+      "assertion.repository_owner_id == '283518526'",
       "assertion.ref == 'refs/heads/staging'",
-      "assertion.workflow_ref == 'UniVRse-Interactive/univrse-onboardai/.github/workflows/deploy.yml@refs/heads/staging'",
+      "assertion.workflow_ref == 'UniVRse-Team/univrse-onboardai/.github/workflows/deploy.yml@refs/heads/staging'",
       "(assertion.event_name == 'push' || assertion.event_name == 'workflow_dispatch')",
     ])
-    error_message = "The staging provider accepts only repository 1418194026 (owner 281514177), ref refs/heads/staging, deploy.yml on staging, push or workflow_dispatch."
+    error_message = "The staging provider accepts only repository 1418194026 (owner 283518526), ref refs/heads/staging, deploy.yml on staging, push or workflow_dispatch."
   }
 
   assert {
@@ -403,7 +403,7 @@ run "staging_outputs_carry_the_setup_commands" {
   command = apply
 
   assert {
-    condition = toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) --env staging --repo UniVRse-Interactive/univrse-onboardai --body '[^']*'$", output.github_variable_commands) : m[0]]) == toset([
+    condition = toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) --env staging --repo UniVRse-Team/univrse-onboardai --body '[^']*'$", output.github_variable_commands) : m[0]]) == toset([
       "GCP_PROJECT_ID", "GCP_REGION", "GCP_WIF_PROVIDER", "GCP_DEPLOYER_SA", "AI_MODE", "GEMINI_MODEL",
       "VERTEX_SEARCH_LOCATION", "VERTEX_SEARCH_ENGINE_ID", "FIRESTORE_DATABASE_ID",
     ]) && length(split("\n", output.github_variable_commands)) == 9
@@ -412,20 +412,20 @@ run "staging_outputs_carry_the_setup_commands" {
 
   assert {
     condition = (
-      strcontains(output.github_variable_commands, "gh variable set GCP_WIF_PROVIDER --env staging --repo UniVRse-Interactive/univrse-onboardai --body 'projects/123456789012/locations/global/workloadIdentityPools/onboardai-github-staging/providers/github-actions-staging'") &&
-      strcontains(output.github_variable_commands, "gh variable set GCP_DEPLOYER_SA --env staging --repo UniVRse-Interactive/univrse-onboardai --body 'onboardai-deployer-staging@onboardai-test-123.iam.gserviceaccount.com'") &&
-      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_ENGINE_ID --env staging --repo UniVRse-Interactive/univrse-onboardai --body 'onboardai-search-staging'") &&
-      strcontains(output.github_variable_commands, "gh variable set FIRESTORE_DATABASE_ID --env staging --repo UniVRse-Interactive/univrse-onboardai --body 'onboardai-staging'") &&
-      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_LOCATION --env staging --repo UniVRse-Interactive/univrse-onboardai --body 'global'") &&
-      strcontains(output.github_variable_commands, "gh variable set GCP_PROJECT_ID --env staging --repo UniVRse-Interactive/univrse-onboardai --body 'onboardai-test-123'")
+      strcontains(output.github_variable_commands, "gh variable set GCP_WIF_PROVIDER --env staging --repo UniVRse-Team/univrse-onboardai --body 'projects/123456789012/locations/global/workloadIdentityPools/onboardai-github-staging/providers/github-actions-staging'") &&
+      strcontains(output.github_variable_commands, "gh variable set GCP_DEPLOYER_SA --env staging --repo UniVRse-Team/univrse-onboardai --body 'onboardai-deployer-staging@onboardai-test-123.iam.gserviceaccount.com'") &&
+      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_ENGINE_ID --env staging --repo UniVRse-Team/univrse-onboardai --body 'onboardai-search-staging'") &&
+      strcontains(output.github_variable_commands, "gh variable set FIRESTORE_DATABASE_ID --env staging --repo UniVRse-Team/univrse-onboardai --body 'onboardai-staging'") &&
+      strcontains(output.github_variable_commands, "gh variable set VERTEX_SEARCH_LOCATION --env staging --repo UniVRse-Team/univrse-onboardai --body 'global'") &&
+      strcontains(output.github_variable_commands, "gh variable set GCP_PROJECT_ID --env staging --repo UniVRse-Team/univrse-onboardai --body 'onboardai-test-123'")
     )
     error_message = "Staging variables name staging's provider, deployer, engine and database."
   }
 
   assert {
     condition = output.github_environment_commands == join("\n", [
-      "gh api -X PUT repos/UniVRse-Interactive/univrse-onboardai/environments/staging -F 'deployment_branch_policy[protected_branches]=false' -F 'deployment_branch_policy[custom_branch_policies]=true'",
-      "gh api -X POST repos/UniVRse-Interactive/univrse-onboardai/environments/staging/deployment-branch-policies -f name=staging -f type=branch",
+      "gh api -X PUT repos/UniVRse-Team/univrse-onboardai/environments/staging -F 'deployment_branch_policy[protected_branches]=false' -F 'deployment_branch_policy[custom_branch_policies]=true'",
+      "gh api -X POST repos/UniVRse-Team/univrse-onboardai/environments/staging/deployment-branch-policies -f name=staging -f type=branch",
     ])
     error_message = "The staging setup creates the staging GitHub environment and lets only the staging branch deploy to it."
   }

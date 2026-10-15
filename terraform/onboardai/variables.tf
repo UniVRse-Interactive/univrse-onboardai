@@ -32,7 +32,7 @@ variable "region" {
 variable "github_repository" {
   description = "owner/name of the repository whose deploy workflow may impersonate the deployer. Also used in the generated gh commands."
   type        = string
-  default     = "UniVRse-Interactive/univrse-onboardai"
+  default     = "UniVRse-Team/univrse-onboardai"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
@@ -54,7 +54,7 @@ variable "github_repository_id" {
 variable "github_repository_owner_id" {
   description = "Numeric GitHub ID of the repository owner (organisation)."
   type        = string
-  default     = "281514177"
+  default     = "283518526"
 
   validation {
     condition     = can(regex("^[0-9]+$", var.github_repository_owner_id))
