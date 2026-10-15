@@ -93,7 +93,7 @@ This makes one small structured-output Gemini request. It reports model/access s
 
 ## Company documents: Vertex AI Search
 
-Company passages come from Vertex AI Search (Discovery Engine). The team uploads files to the documents bucket and imports them into the `onboardai-docs` data store. Import is a manual or REST step, not part of the deploy. The data store uses the layout parser and layout-based chunks of 500 tokens, with ancestor headings included. The API only queries the search engine; it has no access to the bucket.
+Company passages come from Vertex AI Search (Discovery Engine). The team uploads files to the documents bucket and imports them into the `onboardai-docs` data store. Import is a separate step, not part of the deploy: see "Loading company documents" below. The data store uses the layout parser and layout-based chunks of 500 tokens, with ancestor headings included. The API only queries the search engine; it has no access to the bucket.
 
 | Setting                   | Meaning                                                                                               |
 | ------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -131,6 +131,28 @@ Search failures reach the browser only as fixed messages. Google error bodies, t
 **Without `VERTEX_SEARCH_ENGINE_ID`** (the local default), `gemini-chat` and `document-search` use the built-in sample onboarding guide instead and make no search request. Its passages are labelled "Sample onboarding guide (confirm with HR)" and say they are unapproved. The server prints the knowledge source at start-up. `AI_MODE=gemini` (single-turn) and `demo` always use the sample tasks.
 
 To search the real engine locally, set the three settings and sign in with Application Default Credentials. Signing in as the API service account also tests its real permissions: `gcloud auth application-default login --impersonate-service-account=<api service account email>`. If a search with your own user account fails with a quota-project message, use impersonation. `npm run check:search -- "What are the working hours?"` runs one search. It prints file names, sections and character counts, never passage text or tokens.
+
+### Loading company documents
+
+`npm run docs:import` uploads a local folder to the documents bucket with `gcloud storage rsync` and then imports it into the `onboardai-docs` data store through the Discovery Engine REST API. It needs the gcloud CLI signed in (`gcloud auth login`). It never deletes objects in the bucket.
+
+```bash
+# Dry run (default): lists the files and the exact commands, changes nothing
+npm run docs:import -- ./company-docs
+
+# Upload and import
+npm run docs:import -- ./company-docs --apply
+
+# Options: --prefix handbook/  --full  --project ID  --bucket NAME  --data-store ID
+```
+
+- **Supported types:** pdf, docx, pptx, xlsx, html, htm, txt. Other types are uploaded with a warning and may not be indexed. Hidden files (names starting with `.`) are skipped.
+- **INCREMENTAL (default):** adds new documents and updates changed ones. Nothing is removed.
+- **`--full`:** FULL reconciliation. Indexed documents that are no longer in the bucket under the import path are removed from the data store. The tool prints a warning when it is used.
+- **Defaults** can be overridden with flags or with `GOOGLE_CLOUD_PROJECT`, `DOCS_BUCKET` and `VERTEX_SEARCH_DATA_STORE_ID`. Names are validated before any command runs.
+- **Permissions:** `storage.objects.create` on the bucket and `discoveryengine.documents.import` on the data store. Project Owner has both.
+- **Apply mode** polls the import operation until it finishes, prints the success and failure counts and any error samples, and exits non-zero on failure. New documents can take a few minutes to appear in search.
+- **Public exposure:** the web and api services are public until IAP (#10) is in place, so indexed documents can be quoted to anyone who uses the chat. Upload only approved documents.
 
 ## Information boundaries
 

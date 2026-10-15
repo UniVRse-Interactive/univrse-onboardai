@@ -12,6 +12,7 @@
     "check:share": "node scripts/check-shareable-files.mjs",
     "check:gemini": "node scripts/check-gemini-connection.mjs",
     "check:search": "node scripts/check-vertex-ai-search.mjs",
+    "docs:import": "node scripts/import-company-documents.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

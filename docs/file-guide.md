@@ -105,6 +105,7 @@ The persisted/API field named `card` remains compatible with existing chats and 
 - `start-development-server.mjs`: start Node with file watching and Vite live updates.
 - `check-gemini-connection.mjs`: check Gemini with one small live request.
 - `check-vertex-ai-search.mjs`: check Vertex AI Search with one live search (`npm run check:search`).
+- `import-company-documents.mjs`: upload a folder to the documents bucket and import it into Vertex AI Search (`npm run docs:import`, dry run by default).
 - `check-shareable-files.mjs`: inspect the Git file list without printing secrets or publishing files.
 
 Use the `npm` commands in the README rather than remembering these file paths.
