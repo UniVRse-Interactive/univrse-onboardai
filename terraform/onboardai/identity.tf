@@ -1,13 +1,14 @@
 # One service account per identity; none is the default compute account.
-# Every grant below is on a single resource, except one: the API runtime holds
-# roles/aiplatform.user on the project (Vertex AI has no narrower scope for
-# generateContent). It is the only project-level binding; tests enforce that.
+# Every grant below is on a single resource, except the three project-level
+# roles of the API runtime (local.api_project_roles). They are the only
+# project-level bindings in this module; tests enforce that.
 
 # --- Runtime identities ------------------------------------------------------
 
 # onboardai-web-run, onboardai-api-run, onboardai-tts-run. web and tts hold no
-# roles. api calls Gemini on Vertex AI (below) and reads the Drive folder that
-# is shared with its email address (a Drive share, not IAM).
+# roles. api calls Gemini, searches onboardai-search and reads and writes
+# Firestore (below). It has no access to the documents bucket: Vertex AI Search
+# serves the indexed content.
 resource "google_service_account" "runtime" {
   for_each = local.services
 
@@ -18,11 +19,16 @@ resource "google_service_account" "runtime" {
   depends_on = [google_project_service.required]
 }
 
-# Gemini on Vertex AI, authenticated by ADC as onboardai-api-run: no API key.
-# The only project-level binding in this module; web, tts and the deployer get none.
-resource "google_project_iam_member" "api_uses_vertex_ai" {
+# onboardai-api-run authenticates with ADC (no API key) and holds, on the
+# project: roles/aiplatform.user (Gemini generateContent),
+# roles/discoveryengine.viewer (includes discoveryengine.servingConfigs.search)
+# and roles/datastore.user (Firestore). web, tts and the deployer get no
+# project-level role.
+resource "google_project_iam_member" "api_runtime" {
+  for_each = local.api_project_roles
+
   project = var.project_id
-  role    = "roles/aiplatform.user"
+  role    = each.key
   member  = "serviceAccount:${google_service_account.runtime["api"].email}"
 
   depends_on = [google_project_service.required]
@@ -98,4 +104,4 @@ resource "google_service_account_iam_member" "deployer_acts_as_runtime" {
 
 # Cloud Run Developer on each of the three services only (cloud_run.tf). It can
 # update those services but cannot create services, cannot touch any other
-# service in the project (such as finops-digest) and cannot change IAM policy.
+# Cloud Run service in the project and cannot change IAM policy.

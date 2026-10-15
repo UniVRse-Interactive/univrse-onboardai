@@ -51,7 +51,9 @@ jobs:
       GCP_DEPLOYER_SA: ${{ vars.GCP_DEPLOYER_SA }}
       AI_MODE: ${{ vars.AI_MODE }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-      GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
+      VERTEX_SEARCH_LOCATION: ${{ vars.VERTEX_SEARCH_LOCATION }}
+      VERTEX_SEARCH_ENGINE_ID: ${{ vars.VERTEX_SEARCH_ENGINE_ID }}
+      FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
     steps:
       - name: Check repository variables
         run: |
@@ -69,10 +71,9 @@ jobs:
           check GCP_DEPLOYER_SA "$GCP_DEPLOYER_SA" "^onboardai-deployer@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com$"
           check AI_MODE "$AI_MODE" '^(demo|gemini|gemini-chat|document-search)$'
           check GEMINI_MODEL "$GEMINI_MODEL" '^[A-Za-z0-9._-]+$'
-          check GOOGLE_DRIVE_FOLDER_ID "$GOOGLE_DRIVE_FOLDER_ID" '^[A-Za-z0-9_-]*$'
-          if [[ -z "$GOOGLE_DRIVE_FOLDER_ID" && "$AI_MODE" =~ ^(gemini-chat|document-search)$ ]]; then
-            echo "::warning::GOOGLE_DRIVE_FOLDER_ID is not set; the API answers from the sample tasks, not company documents."
-          fi
+          check VERTEX_SEARCH_LOCATION "$VERTEX_SEARCH_LOCATION" '^(global|us|eu)$'
+          check VERTEX_SEARCH_ENGINE_ID "$VERTEX_SEARCH_ENGINE_ID" '^[a-z0-9][a-z0-9_-]{0,62}$'
+          check FIRESTORE_DATABASE_ID "$FIRESTORE_DATABASE_ID" '^(\(default\)|[a-z][a-z0-9-]{2,61}[a-z0-9])$'
           if [[ "$AI_MODE" =~ ^(gemini|gemini-chat)$ ]]; then
             echo "::notice::AI_MODE=$AI_MODE: the API calls Gemini on Vertex AI ($VERTEX_LOCATION) as onboardai-api-run."
           else
@@ -131,7 +132,9 @@ jobs:
       IMAGE_PREFIX: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/onboardai
       AI_MODE: ${{ vars.AI_MODE }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-      GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
+      VERTEX_SEARCH_LOCATION: ${{ vars.VERTEX_SEARCH_LOCATION }}
+      VERTEX_SEARCH_ENGINE_ID: ${{ vars.VERTEX_SEARCH_ENGINE_ID }}
+      FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
       # Must equal output cloud_run_deploy_flags of terraform/onboardai; its
       # terraform test fails otherwise, so a deploy never undoes an apply or the
       # other way round. Image, env vars and traffic belong to this
@@ -204,12 +207,11 @@ jobs:
           deploy tts "NODE_ENV=production"
           tts_url=$DEPLOYED_URL
 
-          # Gemini runs on Vertex AI with the service's own identity (ADC as
-          # onboardai-api-run, roles/aiplatform.user): there is no API key.
-          api_env="NODE_ENV=production,AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,TTS_SERVICE_URL=$tts_url"
-          if [[ -n "$GOOGLE_DRIVE_FOLDER_ID" ]]; then
-            api_env+=",GOOGLE_DRIVE_FOLDER_ID=$GOOGLE_DRIVE_FOLDER_ID"
-          fi
+          # Gemini, Vertex AI Search and Firestore all use the service's own
+          # identity (ADC as onboardai-api-run): there is no API key.
+          # --set-env-vars replaces the whole set, so variables an earlier
+          # revision carried and this list lacks are dropped.
+          api_env="NODE_ENV=production,AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,VERTEX_SEARCH_LOCATION=$VERTEX_SEARCH_LOCATION,VERTEX_SEARCH_ENGINE_ID=$VERTEX_SEARCH_ENGINE_ID,FIRESTORE_DATABASE_ID=$FIRESTORE_DATABASE_ID,TTS_SERVICE_URL=$tts_url"
           # No secrets at all. --clear-secrets drops any reference an earlier
           # revision carried (the retired GEMINI_API_KEY mount).
           deploy api "$api_env" --clear-secrets

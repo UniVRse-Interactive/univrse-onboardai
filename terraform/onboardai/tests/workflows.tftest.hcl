@@ -2,9 +2,36 @@
 # rules of a public repository with id-token: write. Offline: `terraform test`.
 
 mock_provider "google" {}
+mock_provider "google-beta" {}
 
 variables {
-  project_id = "onboardai-test-123"
+  project_id   = "onboardai-test-123"
+  alert_emails = ["alerts-a@example.com"]
+}
+
+# Well-formed stand-ins for the apply run below: the provider validates service
+# account names, and the config job checks the deployer's email.
+override_resource {
+  target = google_service_account.deployer
+  values = {
+    email = "onboardai-deployer@onboardai-test-123.iam.gserviceaccount.com"
+    name  = "projects/onboardai-test-123/serviceAccounts/onboardai-deployer@onboardai-test-123.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
+  target = google_service_account.runtime
+  values = {
+    email = "onboardai-api-run@onboardai-test-123.iam.gserviceaccount.com"
+    name  = "projects/onboardai-test-123/serviceAccounts/onboardai-api-run@onboardai-test-123.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
+  target = google_iam_workload_identity_pool_provider.github
+  values = {
+    name = "projects/123456789012/locations/global/workloadIdentityPools/onboardai-github/providers/github-actions"
+  }
 }
 
 run "deploy_flags_match_terraform" {
@@ -51,10 +78,26 @@ run "deploy_flags_match_terraform" {
   assert {
     condition = (
       strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,") &&
-      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "TTS_SERVICE_URL=$tts_url\"") &&
-      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GOOGLE_DRIVE_FOLDER_ID=$GOOGLE_DRIVE_FOLDER_ID")
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), ",VERTEX_SEARCH_LOCATION=$VERTEX_SEARCH_LOCATION,VERTEX_SEARCH_ENGINE_ID=$VERTEX_SEARCH_ENGINE_ID,FIRESTORE_DATABASE_ID=$FIRESTORE_DATABASE_ID,") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "TTS_SERVICE_URL=$tts_url\"")
     )
-    error_message = "The api env must keep AI_MODE, GEMINI_MODEL, TTS_SERVICE_URL and the optional GOOGLE_DRIVE_FOLDER_ID."
+    error_message = "The api env (contract v2) must carry AI_MODE, GEMINI_MODEL, VERTEX_SEARCH_LOCATION, VERTEX_SEARCH_ENGINE_ID, FIRESTORE_DATABASE_ID and TTS_SERVICE_URL."
+  }
+
+  # The deploy job takes the three contract v2 values from the repository
+  # variables of the same names.
+  assert {
+    condition = alltrue([
+      for name in ["VERTEX_SEARCH_LOCATION", "VERTEX_SEARCH_ENGINE_ID", "FIRESTORE_DATABASE_ID"] :
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env[name] == "$${{ vars.${name} }}" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.config.env[name] == "$${{ vars.${name} }}"
+    ])
+    error_message = "deploy and config must read VERTEX_SEARCH_LOCATION, VERTEX_SEARCH_ENGINE_ID and FIRESTORE_DATABASE_ID from vars of the same name."
+  }
+
+  assert {
+    condition     = alltrue([for f in fileset("${path.module}/../../.github/workflows", "*.{yml,yaml}") : !strcontains(file("${path.module}/../../.github/workflows/${f}"), "GOOGLE_DRIVE_FOLDER_ID")])
+    error_message = "GOOGLE_DRIVE_FOLDER_ID is retired; no workflow may mention it."
   }
 
   assert {
@@ -65,6 +108,39 @@ run "deploy_flags_match_terraform" {
   assert {
     condition     = !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "allow-unauthenticated") && !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "invoker-iam-check")
     error_message = "Public access is Terraform's (allUsers binding). The deployer cannot set IAM, so the workflow must not try."
+  }
+}
+
+# Every repository variable a workflow reads has a gh command in the output, and
+# every gh command sets a variable a workflow reads. The config job checks each
+# one, and every value Terraform knows passes that check.
+run "repository_variables_match_terraform" {
+  command = apply
+
+  assert {
+    condition = toset(flatten([
+      for f in fileset("${path.module}/../../.github/workflows", "*.{yml,yaml}") : [
+        for m in regexall("vars\\.([A-Za-z0-9_]+)", file("${path.module}/../../.github/workflows/${f}")) : m[0]
+      ]
+    ])) == toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) ", output.github_variable_commands) : m[0]])
+    error_message = "The vars.* the workflows read and the gh variable set commands in output github_variable_commands must be the same set."
+  }
+
+  assert {
+    condition = alltrue([
+      for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) ", output.github_variable_commands) :
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), format("          check %s \"$%s\" ", m[0], m[0]))
+    ])
+    error_message = "The config job of deploy.yml must check every repository variable."
+  }
+
+  assert {
+    condition = alltrue([
+      for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) --repo [^ ]+ --body '([^']*)'$", output.github_variable_commands) :
+      can(regex(regex(format("check %s \"\\$%s\" '([^']+)'", m[0], m[0]), file("${path.module}/../../.github/workflows/deploy.yml"))[0], m[1]))
+      if contains(["GCP_PROJECT_ID", "GCP_REGION", "AI_MODE", "GEMINI_MODEL", "VERTEX_SEARCH_LOCATION", "VERTEX_SEARCH_ENGINE_ID", "FIRESTORE_DATABASE_ID"], m[0])
+    ])
+    error_message = "A value Terraform hands out would fail the config job's check in deploy.yml."
   }
 }
 
