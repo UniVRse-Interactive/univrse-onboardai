@@ -112,9 +112,12 @@ resource "google_monitoring_alert_policy" "api_latency" {
         group_by_fields      = ["resource.label.service_name"]
       }
 
-      comparison              = "COMPARISON_GT"
-      threshold_value         = 20000
-      duration                = "0s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = 20000
+      # The API rejects evaluation_missing_data with a zero duration, so this is
+      # the smallest useful window: one 300 s alignment period is already the
+      # smoothing, and 60 s adds no extra wait beyond the first violating point.
+      duration                = "60s"
       evaluation_missing_data = "EVALUATION_MISSING_DATA_INACTIVE"
 
       trigger {
