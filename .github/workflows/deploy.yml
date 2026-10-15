@@ -1,0 +1,303 @@
+# Deploys main to Cloud Run (production): tts, then api, then web.
+# CI runs first on the same commit; nothing is pushed or deployed unless every
+# CI job passes. One-time setup and rollback: terraform/onboardai/README.md.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time and never cancelled halfway. Pushes that arrive during a
+# deploy wait; if several wait, GitHub keeps only the newest.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+
+jobs:
+  ci:
+    name: CI
+    # Workload Identity Federation only trusts refs/heads/main; skip other refs early.
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+    with:
+      # Build all three images in CI, whatever the commit changed.
+      run-all: true
+    permissions:
+      contents: read
+
+  config:
+    name: Check repository variables
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_DEPLOYER_SA: ${{ vars.GCP_DEPLOYER_SA }}
+      AI_MODE: ${{ vars.AI_MODE }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
+    steps:
+      - name: Check repository variables
+        run: |
+          set -euo pipefail
+          failed=0
+          check() {
+            if [[ ! "$2" =~ $3 ]]; then
+              echo "::error::Repository variable $1 is missing or malformed. Set it with the commands from 'terraform output github_variable_commands' (terraform/onboardai/README.md)."
+              failed=1
+            fi
+          }
+          check GCP_PROJECT_ID "$GCP_PROJECT_ID" '^[a-z][a-z0-9-]{4,28}[a-z0-9]$'
+          check GCP_REGION "$GCP_REGION" '^[a-z]+-[a-z]+[0-9]+$'
+          check GCP_WIF_PROVIDER "$GCP_WIF_PROVIDER" '^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$'
+          check GCP_DEPLOYER_SA "$GCP_DEPLOYER_SA" "^onboardai-deployer@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com$"
+          check AI_MODE "$AI_MODE" '^(demo|gemini|gemini-chat|document-search)$'
+          check GEMINI_MODEL "$GEMINI_MODEL" '^[A-Za-z0-9._-]+$'
+          check GOOGLE_DRIVE_FOLDER_ID "$GOOGLE_DRIVE_FOLDER_ID" '^[A-Za-z0-9_-]*$'
+          if [[ -z "$GOOGLE_DRIVE_FOLDER_ID" && "$AI_MODE" =~ ^(gemini-chat|document-search)$ ]]; then
+            echo "::warning::GOOGLE_DRIVE_FOLDER_ID is not set; the API answers from the sample tasks, not company documents."
+          fi
+          if [[ ! "$AI_MODE" =~ ^(gemini|gemini-chat)$ ]]; then
+            echo "::notice::AI_MODE=$AI_MODE: the API gets no Gemini key and answers without calling Gemini (sample content or document search)."
+          fi
+          exit "$failed"
+
+  images:
+    name: Build and push (${{ matrix.service }})
+    needs: [ci, config]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        service: [web, api, tts]
+    env:
+      SERVICE: ${{ matrix.service }}
+      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/onboardai/${{ matrix.service }}:${{ github.sha }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Build before authenticating: the auth step writes a credentials file into
+      # the workspace, and the workspace is the Docker build context.
+      - name: Build image
+        run: docker build --platform linux/amd64 --target "$SERVICE" -t "$IMAGE" .
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Push image
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          docker push "$IMAGE"
+
+  deploy:
+    name: Deploy tts, api, web
+    needs: images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+    env:
+      IMAGE_PREFIX: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/onboardai
+      AI_MODE: ${{ vars.AI_MODE }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      GOOGLE_DRIVE_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_FOLDER_ID }}
+      GEMINI_SECRET: onboardai-gemini-api-key
+      # Must equal output cloud_run_deploy_flags of terraform/onboardai; its
+      # terraform test fails otherwise, so a deploy never undoes an apply or the
+      # other way round. Image, env vars, secrets and traffic belong to this
+      # workflow; Terraform ignores them.
+      WEB_RUN_FLAGS: --cpu=1 --memory=512Mi --concurrency=80 --min-instances=0 --max-instances=3 --timeout=300 --port=8080 --execution-environment=gen2 --ingress=all --cpu-throttling --no-cpu-boost --startup-probe=httpGet.path=/web-health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=12
+      API_RUN_FLAGS: --cpu=1 --memory=1Gi --concurrency=80 --min-instances=0 --max-instances=1 --timeout=300 --port=8080 --execution-environment=gen2 --ingress=all --cpu-throttling --cpu-boost --startup-probe=httpGet.path=/api/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=12
+      TTS_RUN_FLAGS: --cpu=2 --memory=2Gi --concurrency=8 --min-instances=0 --max-instances=2 --timeout=300 --port=8080 --execution-environment=gen2 --ingress=all --cpu-throttling --cpu-boost --startup-probe=httpGet.path=/health,httpGet.port=8080,initialDelaySeconds=0,periodSeconds=5,timeoutSeconds=3,failureThreshold=48
+    outputs:
+      web_url: ${{ steps.deploy.outputs.web_url }}
+      api_url: ${{ steps.deploy.outputs.api_url }}
+      tts_url: ${{ steps.deploy.outputs.tts_url }}
+      previous_web: ${{ steps.previous.outputs.web }}
+      previous_api: ${{ steps.previous.outputs.api }}
+      previous_tts: ${{ steps.previous.outputs.tts }}
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      - name: Record the revisions serving now (rollback targets)
+        id: previous
+        run: |
+          set -euo pipefail
+          for key in web api tts; do
+            if ! rev=$(gcloud run services describe "onboardai-$key" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.traffic[0].revisionName)'); then
+              echo "::error::Cannot read onboardai-$key. Apply terraform/onboardai first; it creates the three services."
+              exit 1
+            fi
+            echo "onboardai-$key serves ${rev:-nothing yet}"
+            echo "$key=$rev" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Deploy
+        id: deploy
+        run: |
+          set -euo pipefail
+          # deploy KEY "ENV_VARS" [extra gcloud flags...]; sets DEPLOYED_URL.
+          deploy() {
+            local key=$1 env_vars=$2 name="onboardai-$1" flags_var url
+            shift 2
+            flags_var="${key^^}_RUN_FLAGS"
+            local -a flags
+            read -r -a flags <<< "${!flags_var}"
+            echo "::group::Deploy $name"
+            gcloud run deploy "$name" \
+              --project="$GCP_PROJECT_ID" \
+              --region="$GCP_REGION" \
+              --image="$IMAGE_PREFIX/$key:$GITHUB_SHA" \
+              --service-account="$name-run@$GCP_PROJECT_ID.iam.gserviceaccount.com" \
+              --set-env-vars="$env_vars" \
+              "${flags[@]}" "$@" \
+              --quiet
+            # A manual rollback pins traffic to an old revision. Send it to the new one.
+            gcloud run services update-traffic "$name" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --to-latest --quiet
+            url=$(gcloud run services describe "$name" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.url)')
+            if [[ ! "$url" =~ ^https://[a-z0-9.-]+$ ]]; then
+              echo "::error::$name returned no usable URL."
+              exit 1
+            fi
+            echo "${key}_url=$url" >> "$GITHUB_OUTPUT"
+            echo "::endgroup::"
+            DEPLOYED_URL=$url
+          }
+
+          deploy tts "NODE_ENV=production"
+          tts_url=$DEPLOYED_URL
+
+          api_env="NODE_ENV=production,AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,TTS_SERVICE_URL=$tts_url"
+          if [[ -n "$GOOGLE_DRIVE_FOLDER_ID" ]]; then
+            api_env+=",GOOGLE_DRIVE_FOLDER_ID=$GOOGLE_DRIVE_FOLDER_ID"
+          fi
+          # Only the modes that call Gemini with an API key read GEMINI_API_KEY
+          # (server/api-routes.mjs, server/gemini-chat-workflow.mjs). The other
+          # modes get no secret at all, and --clear-secrets drops any reference an
+          # earlier revision carried, so a secret without versions cannot block them.
+          if [[ "$AI_MODE" =~ ^(gemini|gemini-chat)$ ]]; then
+            secret_flags=("--set-secrets=GEMINI_API_KEY=$GEMINI_SECRET:latest")
+          else
+            secret_flags=(--clear-secrets)
+          fi
+          deploy api "$api_env" "${secret_flags[@]}"
+          api_url=$DEPLOYED_URL
+
+          deploy web "NODE_ENV=production,API_SERVICE_URL=$api_url"
+
+      - name: Print rollback commands
+        if: failure()
+        env:
+          PREVIOUS_WEB: ${{ steps.previous.outputs.web }}
+          PREVIOUS_API: ${{ steps.previous.outputs.api }}
+          PREVIOUS_TTS: ${{ steps.previous.outputs.tts }}
+        run: |
+          {
+            echo "### Deploy of $GITHUB_SHA failed"
+            echo "A revision that failed to start receives no traffic. To put all three services back on the revisions that served before this run:"
+            echo '```sh'
+            for pair in "web=$PREVIOUS_WEB" "api=$PREVIOUS_API" "tts=$PREVIOUS_TTS"; do
+              if [[ -n "${pair#*=}" ]]; then
+                echo "gcloud run services update-traffic onboardai-${pair%%=*} --project=$GCP_PROJECT_ID --region=$GCP_REGION --to-revisions=${pair#*=}=100"
+              fi
+            done
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    name: Smoke test
+    needs: deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions: {}
+    env:
+      WEB_URL: ${{ needs.deploy.outputs.web_url }}
+      API_URL: ${{ needs.deploy.outputs.api_url }}
+      TTS_URL: ${{ needs.deploy.outputs.tts_url }}
+    steps:
+      - name: Check the deployed services
+        run: |
+          set -euo pipefail
+          # probe LABEL URL ATTEMPTS RETRY_CODES: wants HTTP 200; retries 10 s apart
+          # while the answer matches RETRY_CODES.
+          probe() {
+            local label=$1 url=$2 attempts=$3 retry=$4 code=000 i
+            for ((i = 1; i <= attempts; i++)); do
+              code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url") || code=000
+              if [[ "$code" == 200 ]]; then
+                echo "ok   $label -> 200"
+                return 0
+              fi
+              [[ "$code" =~ ^($retry)$ ]] || break
+              echo "wait $label -> $code (attempt $i of $attempts)"
+              sleep 10
+            done
+            echo "::error::$label -> HTTP $code ($url)"
+            return 1
+          }
+          for url in "$WEB_URL" "$API_URL" "$TTS_URL"; do
+            if [[ ! "$url" =~ ^https:// ]]; then
+              echo "::error::A service URL is missing from the deploy job's outputs."
+              exit 1
+            fi
+          done
+          failed=0
+          # tts answers 503 until Kokoro has loaded on a cold instance.
+          probe "tts GET /health" "$TTS_URL/health" 24 '503|000' || failed=1
+          probe "api GET /api/health" "$API_URL/api/health" 6 '5[0-9][0-9]|000' || failed=1
+          probe "web GET /web-health" "$WEB_URL/web-health" 6 '5[0-9][0-9]|000' || failed=1
+          probe "web GET /api/health (proxied to api)" "$WEB_URL/api/health" 6 '5[0-9][0-9]|000' || failed=1
+          probe "web GET / (frontend)" "$WEB_URL/" 6 '5[0-9][0-9]|000' || failed=1
+          exit "$failed"
+
+      - name: Print rollback commands
+        if: failure()
+        env:
+          PREVIOUS_WEB: ${{ needs.deploy.outputs.previous_web }}
+          PREVIOUS_API: ${{ needs.deploy.outputs.previous_api }}
+          PREVIOUS_TTS: ${{ needs.deploy.outputs.previous_tts }}
+        run: |
+          {
+            echo "### Smoke test of $GITHUB_SHA failed"
+            echo "The new revisions are serving. To put all three services back on the revisions that served before this run:"
+            echo '```sh'
+            for pair in "web=$PREVIOUS_WEB" "api=$PREVIOUS_API" "tts=$PREVIOUS_TTS"; do
+              if [[ -n "${pair#*=}" ]]; then
+                echo "gcloud run services update-traffic onboardai-${pair%%=*} --project=$GCP_PROJECT_ID --region=$GCP_REGION --to-revisions=${pair#*=}=100"
+              fi
+            done
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

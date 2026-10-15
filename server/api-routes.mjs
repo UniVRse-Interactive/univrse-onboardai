@@ -6,6 +6,8 @@ import { tasks, demoAnswer, systemPrompt } from './sample-onboarding-content.mjs
 import { readDriveKnowledge, driveSystemPrompt, driveFailure } from './google-drive-documents.mjs';
 import { searchDocuments } from './document-search.mjs';
 import { createSharedVoice, sharedVoiceName } from './kokoro-voice.mjs';
+import { createRemoteVoice } from './remote-voice.mjs';
+import { parseVoiceRequest, voiceRequestError, voiceFailure } from './voice-request.mjs';
 import { randomBytes } from 'node:crypto';
 import { sessionHash } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
@@ -15,7 +17,10 @@ export function createApp({
   fetchImpl = fetch,
   localVoice = null,
   loadDriveKnowledge = readDriveKnowledge,
-  sharedVoice = createSharedVoice(),
+  sharedVoice = env.TTS_SERVICE_URL
+    ? createRemoteVoice({ url: env.TTS_SERVICE_URL })
+    : createSharedVoice(),
+  trustProxy = false,
   conversationService = null,
 } = {}) {
   const app = express();
@@ -27,6 +32,8 @@ export function createApp({
   app.locals.closeChat = () => conversations?.close();
 
   app.disable('x-powered-by');
+  // With a trusted proxy in front, req.ip and req.host are the browser's IP and host.
+  app.set('trust proxy', trustProxy);
   app.use(express.json({ limit: '24kb' }));
 
   app.use((req, res, next) => {
@@ -109,7 +116,7 @@ export function createApp({
     // Same-origin browser requests only; no permission is granted by a thread ID.
     if (req.get('origin')) {
       try {
-        if (new URL(req.get('origin')).host !== req.get('host'))
+        if (new URL(req.get('origin')).host !== req.host)
           return res.status(403).json({ error: 'Open chat on the website itself.' });
       } catch {
         return res.status(403).json({ error: 'Invalid request origin.' });
@@ -237,18 +244,10 @@ export function createApp({
   // A single server-controlled voice for every visitor. No device voice,
   // cloud TTS billing, client voice override or public audio cache.
   app.post('/api/voice', async (req, res) => {
-    const { text, rate = 1 } = req.body || {};
-    if (
-      typeof text !== 'string' ||
-      !text.trim() ||
-      text.length > 700 ||
-      ![0.85, 0.95, 1, 1.05].includes(rate)
-    )
-      return res
-        .status(400)
-        .json({ error: 'Enter voice text of up to 700 characters with a supported speed.' });
+    const request = parseVoiceRequest(req.body);
+    if (!request) return res.status(400).json({ error: voiceRequestError });
     try {
-      const wav = await sharedVoice.render(text.trim(), rate);
+      const wav = await sharedVoice.render(request.text, request.rate);
       if (res.destroyed) return;
       res.set({
         'Content-Type': 'audio/wav',
@@ -258,12 +257,8 @@ export function createApp({
       res.send(wav);
     } catch (error) {
       if (res.destroyed) return;
-      res.status(503).json({
-        error:
-          error.message === 'VOICE_BUSY'
-            ? 'Alya’s voice is busy. Please try again shortly.'
-            : 'Alya’s shared voice is unavailable. The administrator should run npm run voice:prepare. Your text answer is still available.',
-      });
+      const { status, code, error: message } = voiceFailure(error);
+      res.status(status).json({ code, error: message });
     }
   });
 

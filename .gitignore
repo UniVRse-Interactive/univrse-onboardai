@@ -18,3 +18,17 @@ application_default_credentials.json
 private/
 .DS_Store
 Thumbs.db
+worktrees/
+
+# Terraform state, inputs and plans carry project details and secrets.
+# Applies to every stack (terraform/ and terraform/onboardai/).
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+*.tfplan
+crash.log
+crash.*.log
+# Credentials file google-github-actions/auth writes into the workspace.
+gha-creds-*.json
