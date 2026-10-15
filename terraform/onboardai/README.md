@@ -35,7 +35,7 @@ differ. To change a setting, edit `locals.tf`, copy the new output into
 ## Prerequisites
 
 - Terraform 1.9 or newer, the gcloud CLI, and the GitHub CLI (`gh`) logged in
-  with admin rights on `UniVRse-Interactive/univrse-onboardai`.
+  with admin rights on `UniVRse-Team/univrse-onboardai`.
 - Owner on the project (the module sets project IAM and creates the WIF pool,
   Firestore and Discovery Engine resources).
 - Bootstrap, done once by hand and already done for OnBoard AI:
@@ -139,8 +139,8 @@ retired: delete it from the repository variables if it is still set.
 Merge the pull request (a push to `main` deploys), or run it by hand:
 
 ```sh
-gh workflow run deploy.yml --repo UniVRse-Interactive/univrse-onboardai --ref main
-gh run watch --repo UniVRse-Interactive/univrse-onboardai
+gh workflow run deploy.yml --repo UniVRse-Team/univrse-onboardai --ref main
+gh run watch --repo UniVRse-Team/univrse-onboardai
 ```
 
 The workflow runs CI on the commit, builds and pushes the three images tagged
@@ -261,11 +261,15 @@ show "Memory limit exceeded".
 ## Security
 
 - GitHub Actions has no key. The provider accepts a GitHub OIDC token only when
-  the repository ID is `1418194026`, the owner ID is `281514177`, the ref is
+  the repository ID is `1418194026`, the owner ID is `283518526`, the ref is
   `refs/heads/main`, the workflow is `.github/workflows/deploy.yml` on `main`,
   and the event is `push` or `workflow_dispatch`. Pull requests, forks, other
   branches and other workflows cannot get a token. Staging has its own pool and
   provider with the same rule for `refs/heads/staging`.
+- The repository moved to the `UniVRse-Team` organisation. The repository
+  ID stays the same but the owner ID changes on transfer. Re-derive both with
+  `gh api repos/OWNER/NAME --jq '.id, .owner.id'` and update
+  `github_repository`, `github_repository_id` and `github_repository_owner_id`.
 - The deploy jobs name a GitHub environment (`production` for `main`, `staging`
   for `staging`), which changes the OIDC token's `sub` claim. Neither provider
   reads `sub`: the conditions use `repository_id`, `repository_owner_id`,
@@ -403,7 +407,7 @@ Push to `staging` (merging a pull request into it does that), or run it by
 hand:
 
 ```sh
-gh workflow run deploy.yml --repo UniVRse-Interactive/univrse-onboardai --ref staging
+gh workflow run deploy.yml --repo UniVRse-Team/univrse-onboardai --ref staging
 ```
 
 The run checks that the staging deployer, provider, engine and database all
