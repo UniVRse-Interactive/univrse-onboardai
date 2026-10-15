@@ -1,5 +1,5 @@
 variable "project_id" {
-  description = "GCP project ID that hosts the OnboardAi Cloud Run services."
+  description = "GCP project ID of the OnBoard AI project, which hosts the whole OnboardAi stack."
   type        = string
 
   validation {
@@ -79,14 +79,17 @@ variable "gemini_model" {
   }
 }
 
-variable "google_drive_folder_id" {
-  description = "GOOGLE_DRIVE_FOLDER_ID of the API service. Empty leaves its gh command out (the API then answers from the sample tasks)."
-  type        = string
-  default     = ""
+# ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+
+variable "alert_emails" {
+  description = "Addresses that receive the OnboardAi alerts (monitoring.tf). One Cloud Monitoring email channel each."
+  type        = list(string)
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9_-]*$", var.google_drive_folder_id))
-    error_message = "google_drive_folder_id may only contain letters, digits, underscores and hyphens."
+    condition     = length(var.alert_emails) > 0 && alltrue([for e in var.alert_emails : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", e))])
+    error_message = "alert_emails needs at least one address, and every entry must be an email address."
   }
 }
 

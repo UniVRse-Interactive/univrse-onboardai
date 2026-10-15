@@ -1,19 +1,24 @@
 # OnboardAi on Cloud Run: infrastructure and deploy setup
 
-This Terraform root module prepares Google Cloud for the GitHub Actions deploy in
-`.github/workflows/deploy.yml`. It is separate from the FinOps digest stack in
-`terraform/` (own state, own labels `app = "onboardai"`), although both live in
-the same project.
+This Terraform root module builds the OnboardAi MVP in the **OnBoard AI**
+project (`project-65a9b676-abdb-4393-bc1`, number `48074397808`, region
+`asia-southeast1`) and prepares it for the GitHub Actions deploy in
+`.github/workflows/deploy.yml`. It is the only stack in that project; its state
+is in Cloud Storage (see [State](#state)).
 
-| Creates                                | Name                                                                               |
-| -------------------------------------- | ---------------------------------------------------------------------------------- |
-| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, drive  |
-| Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image        |
-| Cloud Run services (placeholder image) | `onboardai-web`, `onboardai-api`, `onboardai-tts`, all public (`allUsers` invoker) |
-| Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                      |
-| Deployer service account (no key)      | `onboardai-deployer`                                                               |
-| Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                 |
-| Vertex AI access (project-level role)  | `roles/aiplatform.user` for `onboardai-api-run`, the only project-level binding    |
+| Creates                                | Name                                                                                                                        |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, discoveryengine, firestore, storage, monitoring |
+| Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image                                                 |
+| Cloud Run services (placeholder image) | `onboardai-web`, `onboardai-api`, `onboardai-tts`, all public (`allUsers` invoker)                                          |
+| Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                                                               |
+| Deployer service account (no key)      | `onboardai-deployer`                                                                                                        |
+| Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                                                          |
+| Project roles of `onboardai-api-run`   | `roles/aiplatform.user`, `roles/discoveryengine.viewer`, `roles/datastore.user`: the only project-level bindings            |
+| Documents bucket                       | `<project>-onboardai-docs`: uniform access, public access prevention, versioning                                            |
+| Vertex AI Search (`global`)            | data store `onboardai-docs` (layout parser, 500-token chunks), Enterprise engine `onboardai-search`                         |
+| Firestore                              | `(default)`, Native mode, `asia-southeast1`, delete protection on                                                           |
+| Cloud Monitoring                       | one email channel per `alert_emails` entry; alerts on 5xx (api, tts) and api p95 latency                                    |
 
 **Who owns what.** Terraform owns each service's shape: identity, CPU, memory,
 scaling, concurrency, timeout, startup probe, ingress and public access. The
@@ -28,15 +33,25 @@ differ. To change a setting, edit `locals.tf`, copy the new output into
 
 - Terraform 1.9 or newer, the gcloud CLI, and the GitHub CLI (`gh`) logged in
   with admin rights on `UniVRse-Interactive/univrse-onboardai`.
-- Owner (or equivalent IAM, IAM Workload Identity Pool, Cloud Run, Artifact
-  Registry and project IAM admin roles) on the project. The project-level
-  Vertex AI grant needs permission to set the project IAM policy.
-- `cloudresourcemanager.googleapis.com` and `serviceusage.googleapis.com` enabled
-  (the FinOps stack already did this in the shared project).
+- Owner on the project (the module sets project IAM and creates the WIF pool,
+  Firestore and Discovery Engine resources).
+- Bootstrap, done once by hand and already done for OnBoard AI:
+  `cloudresourcemanager.googleapis.com` and `serviceusage.googleapis.com`
+  enabled, and the state bucket `gs://project-65a9b676-abdb-4393-bc1-tfstate`
+  created (asia-southeast1, uniform access, public access prevention,
+  versioning).
 
-Do steps 1 to 3 **before** the pull request that adds `deploy.yml` is merged.
-The merge pushes to `main`, and that push starts a deploy. Without the
+Do steps 1 to 3 **before** the pull request that changes `deploy.yml` is
+merged. The merge pushes to `main`, and that push starts a deploy. Without the
 repository variables that deploy stops at its first check.
+
+## State
+
+`versions.tf` keeps the state in `gs://project-65a9b676-abdb-4393-bc1-tfstate`
+under the prefix `onboardai`. The GCS backend locks the state during a plan or
+apply, and bucket versioning keeps every earlier state. The module does not
+manage that bucket: a module must not own the bucket its own state is in.
+Nothing but `.terraform/` is kept locally.
 
 ## One-time setup
 
@@ -45,26 +60,38 @@ repository variables that deploy stops at its first check.
 ```sh
 cd terraform/onboardai
 gcloud auth application-default login     # credentials Terraform uses
+# without ADC: export GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token)
 cat > terraform.tfvars <<'EOF'            # gitignored; never commit it
-project_id             = "YOUR_PROJECT_ID"
-google_drive_folder_id = "YOUR_DRIVE_FOLDER_ID"  # optional
+project_id   = "project-65a9b676-abdb-4393-bc1"
+alert_emails = ["someone@example.com"]
 EOF
-terraform init
+terraform init        # connects to the GCS backend
 terraform plan        # review: everything is "to add"
 terraform apply
 ```
 
-State is local (`terraform.tfstate` here, gitignored). Keep it safe, and
-move it to a GCS backend before anyone else applies this module.
+### 2. Upload and import the documents
 
-### 2. Share the Google Drive folder
+Upload the onboarding documents (PDF, DOCX, HTML, TXT and similar) to the top
+level of the documents bucket, then import them into the data store:
 
 ```sh
-terraform output -raw api_runtime_service_account_email
+gcloud storage cp ./company-docs/* "gs://$(terraform output -raw docs_bucket_name)/"
+terraform output -raw import_documents_command    # review, then run it
 ```
 
-In Google Drive, share the company documents folder with that address as
-**Viewer**. Skip this when `AI_MODE` does not use Drive.
+The import is a REST call, not Terraform. Discovery Engine reads
+`gs://<bucket>/*` as its service agent, which holds `roles/storage.objectViewer`
+on that bucket only. `INCREMENTAL` adds new documents and updates changed ones;
+it never deletes. The call returns a long-running operation. Poll it with the
+same two headers on `https://discoveryengine.googleapis.com/v1/<operation name>`.
+Run the import again after every upload. To remove a document, delete it from
+the data store as well as from the bucket.
+
+The API searches the serving config in output `vertex_search_serving_config`:
+`projects/48074397808/locations/global/collections/default_collection/engines/onboardai-search/servingConfigs/default_search`.
+The app shows the file name and section of a result, never a signed URL, and
+the API holds no bucket role.
 
 ### 3. Set the GitHub repository variables
 
@@ -75,18 +102,22 @@ terraform output -raw github_variable_commands
 Review the printed `gh variable set ...` lines, then run them. The workflows
 read these variables (none of them is a secret):
 
-| Repository variable      | Source                                                        |
-| ------------------------ | ------------------------------------------------------------- |
-| `GCP_PROJECT_ID`         | `project_id`                                                  |
-| `GCP_REGION`             | `region` (default `asia-southeast1`)                          |
-| `GCP_WIF_PROVIDER`       | output `workload_identity_provider`                           |
-| `GCP_DEPLOYER_SA`        | output `deployer_service_account_email`                       |
-| `AI_MODE`                | `ai_mode` (default `gemini-chat`)                             |
-| `GEMINI_MODEL`           | `gemini_model` (default `gemini-3.5-flash-lite`)              |
-| `GOOGLE_DRIVE_FOLDER_ID` | `google_drive_folder_id` (optional; empty means sample tasks) |
+| Repository variable       | Source                                                      |
+| ------------------------- | ----------------------------------------------------------- |
+| `GCP_PROJECT_ID`          | `project_id`                                                |
+| `GCP_REGION`              | `region` (default `asia-southeast1`)                        |
+| `GCP_WIF_PROVIDER`        | output `workload_identity_provider` (known after apply)     |
+| `GCP_DEPLOYER_SA`         | output `deployer_service_account_email` (known after apply) |
+| `AI_MODE`                 | `ai_mode` (default `gemini-chat`)                           |
+| `GEMINI_MODEL`            | `gemini_model` (default `gemini-3.5-flash-lite`)            |
+| `VERTEX_SEARCH_LOCATION`  | the engine's location: `global`                             |
+| `VERTEX_SEARCH_ENGINE_ID` | the engine ID: `onboardai-search`                           |
+| `FIRESTORE_DATABASE_ID`   | the Firestore database: `(default)`                         |
 
-To change `AI_MODE`, `GEMINI_MODEL` or `GOOGLE_DRIVE_FOLDER_ID` later, set the
-variable in GitHub and run the deploy again.
+`terraform test` fails if a workflow reads a variable that has no command here,
+or the other way round. To change `AI_MODE` or `GEMINI_MODEL` later, set the
+variable in GitHub and run the deploy again. `GOOGLE_DRIVE_FOLDER_ID` is
+retired: delete it from the repository variables if it is still set.
 
 ### 4. Trigger the first deploy
 
@@ -124,17 +155,35 @@ terraform plan                  # expect: No changes
 service, the deploy flags and `locals.tf` have drifted apart; fix them before
 you apply.
 
-## Gemini on Vertex AI
+## Gemini, Vertex AI Search and Firestore
 
-The API has no Gemini API key. In `AI_MODE` `gemini` or `gemini-chat` it calls
-Gemini on Vertex AI as `onboardai-api-run`, using Application Default
-Credentials, with `roles/aiplatform.user` granted by this module. The deploy
-sets `GOOGLE_CLOUD_PROJECT` (the project ID) and `GOOGLE_CLOUD_LOCATION=global`.
-Use `global`: `gemini-3.5-flash-lite` answers there, and returns 404 on
-`asia-southeast1`. The module manages `aiplatform.googleapis.com` (already on
-in the project; the first apply adopts it) and never disables it. The deploy
-always passes `--clear-secrets` to the API, which drops the old
-`GEMINI_API_KEY` secret mount from earlier revisions.
+The API has no API key. It calls Gemini on Vertex AI, searches
+`onboardai-search` and reads and writes Firestore as `onboardai-api-run`, with
+Application Default Credentials. The deploy sets `GOOGLE_CLOUD_PROJECT`,
+`GOOGLE_CLOUD_LOCATION=global` (`gemini-3.5-flash-lite` answers on `global` and
+returns 404 on `asia-southeast1`), `VERTEX_SEARCH_LOCATION`,
+`VERTEX_SEARCH_ENGINE_ID` and `FIRESTORE_DATABASE_ID`. It always passes
+`--clear-secrets` to the API, which drops the old `GEMINI_API_KEY` secret mount.
+
+The data store's document processing (layout parser; layout-based chunks of at
+most 500 tokens that carry their ancestor headings) cannot change after
+creation. Different chunking means a new data store and a fresh import.
+
+## Alerts
+
+Cloud Monitoring emails every address in `alert_emails` (one email channel
+each) when:
+
+- **5xx responses** (`run.googleapis.com/request_count` with
+  `response_code_class = 5xx`) on `onboardai-api` or `onboardai-tts` keep coming
+  for 5 minutes: every 1-minute window holds at least one. One incident per
+  service. `onboardai-web` is left out because it proxies the API.
+- **Latency**: the p95 of `onboardai-api` (`run.googleapis.com/request_latencies`)
+  over 5 minutes is above 20 s. A streamed answer counts until the stream ends.
+
+A service scaled to zero sends no data, and missing data never fires an alert;
+an open incident closes after 30 minutes without data. Two conditions keep the
+alerting cost low. To change the addresses, edit `alert_emails` and apply.
 
 ## Roll back
 
@@ -171,9 +220,9 @@ while serving), scale to zero, and listen on port 8080.
 - **web**: static files and a streaming proxy. Measured locally: 21 MiB idle,
   53 MiB peak. 512Mi is the gen2 minimum. The 300 s timeout is above the proxy's
   290 s upstream timeout, so the proxy answers a slow API with its own 504.
-- **api**: one instance, because conversations are SQLite on local disk.
-  Measured locally: 61 MiB idle (demo mode). 1Gi leaves room for the Drive
-  document cache and the SQLite file, which Cloud Run keeps in memory.
+- **api**: one instance, because conversations are SQLite on local disk
+  (until they move to Firestore). Measured locally: 61 MiB idle (demo mode).
+  1Gi leaves room for the SQLite file, which Cloud Run keeps in memory.
 - **tts**: Kokoro q8 (82M) runs a whole answer, up to the model's 512 tokens, in
   one ONNX pass. Measured on linux/arm64 (container cgroup peak): 340 MiB after
   the model loads in about 0.6 s; 508 MiB for 100 characters, 591 for 150, 652
@@ -202,11 +251,12 @@ show "Memory limit exceeded".
   repository, Service Account User on the three runtime accounts, and nothing
   else. It cannot create services, change IAM policies, or touch any other
   Cloud Run service in the project.
-- There is no Gemini API key and no Secret Manager secret. The API calls
-  Gemini on Vertex AI as `onboardai-api-run` (Application Default Credentials),
-  which holds `roles/aiplatform.user` on the project. That is the only
-  project-level binding in this module; the web and tts accounts and the
-  deployer hold none.
+- There is no API key and no Secret Manager secret. `onboardai-api-run` holds
+  `roles/aiplatform.user`, `roles/discoveryengine.viewer` (includes
+  `discoveryengine.servingConfigs.search`) and `roles/datastore.user` on the
+  project. Those are the only project-level bindings in this module; the web
+  and tts accounts and the deployer hold none. The API has no access to the
+  documents bucket.
 - The repository is public, so its Actions logs are public too, and they show
   the project ID and the service URLs. Neither is a credential. To hide the
   project ID, make `GCP_PROJECT_ID` a repository secret instead and change
@@ -214,7 +264,17 @@ show "Memory limit exceeded".
 
 ## Tear down
 
-The services have `deletion_protection = true`. Set it to
-`false` in `cloud_run.tf`, run `terraform apply`, then run `terraform destroy`. Destroy leaves the
-APIs on. A deleted workload identity pool keeps its ID reserved for 30 days;
-to recreate it within that time, undelete the pool instead.
+Destroy is blocked on purpose:
+
+- The Cloud Run services have `deletion_protection = true`. Set it to `false`
+  in `cloud_run.tf` and apply first.
+- The data store and the engine have `deletion_policy = "PREVENT"`. Set it to
+  `"DELETE"` in `vertex_ai_search.tf` and apply first. Deleting the data store
+  deletes the imported documents.
+- Firestore has delete protection on and `deletion_policy = "ABANDON"`:
+  `terraform destroy` only drops it from state, and the data stays.
+- The documents bucket is not force-destroyed: empty it first.
+
+Destroy leaves the APIs on. A deleted workload identity pool keeps its ID
+reserved for 30 days; to recreate it within that time, undelete the pool
+instead.

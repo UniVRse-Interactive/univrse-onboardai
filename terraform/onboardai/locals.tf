@@ -11,12 +11,51 @@ locals {
     "iam.googleapis.com",
     "iamcredentials.googleapis.com", # GitHub Actions impersonates the deployer
     "sts.googleapis.com",            # exchanges the GitHub OIDC token
+    # Platform service of the architecture; no secret exists yet (the API
+    # authenticates to Google APIs with its service account).
     "secretmanager.googleapis.com",
-    "aiplatform.googleapis.com", # the API calls Gemini on Vertex AI
-    # The API service reads company documents through the Drive API with its own
-    # service account; the API must be on in the account's project.
-    "drive.googleapis.com",
+    "aiplatform.googleapis.com",      # the API calls Gemini on Vertex AI
+    "discoveryengine.googleapis.com", # Vertex AI Search over the documents
+    "firestore.googleapis.com",
+    "storage.googleapis.com",    # documents bucket
+    "monitoring.googleapis.com", # alert policies and email channels
   ]
+
+  # Project-level roles of onboardai-api-run, the only project-level bindings in
+  # this module (tests/onboardai.tftest.hcl enforces it). None of these services
+  # offers a narrower predefined grant the API could use.
+  api_project_roles = {
+    "roles/aiplatform.user"        = "Gemini generateContent on Vertex AI"
+    "roles/discoveryengine.viewer" = "Vertex AI Search: discoveryengine.servingConfigs.search"
+    "roles/datastore.user"         = "Firestore (default) database: read and write documents"
+  }
+
+  # ---------------------------------------------------------------------------
+  # Vertex AI Search, Firestore and the documents bucket (contract v2).
+  # ---------------------------------------------------------------------------
+  search_location      = "global"
+  search_collection_id = "default_collection" # the only collection data stores are created in
+  data_store_id        = "onboardai-docs"
+  search_engine_id     = "onboardai-search"
+  docs_bucket_name     = "${var.project_id}-onboardai-docs"
+
+  # Service agent that Discovery Engine reads Cloud Storage imports as.
+  discovery_engine_service_agent = "service-${data.google_project.this.number}@gcp-sa-discoveryengine.iam.gserviceaccount.com"
+
+  # Full names use the project number, like the API returns them.
+  data_store_name     = "projects/${data.google_project.this.number}/locations/${google_discovery_engine_data_store.docs.location}/collections/${local.search_collection_id}/dataStores/${google_discovery_engine_data_store.docs.data_store_id}"
+  serving_config_name = "projects/${data.google_project.this.number}/locations/${google_discovery_engine_search_engine.docs.location}/collections/${google_discovery_engine_search_engine.docs.collection_id}/engines/${google_discovery_engine_search_engine.docs.engine_id}/servingConfigs/default_search"
+
+  # Imports every file in the documents bucket into onboardai-docs. INCREMENTAL
+  # adds and updates documents and never deletes; dataSchema content means
+  # unstructured files (PDF, DOCX, HTML, TXT and so on) parsed by the layout parser.
+  import_request = jsonencode({
+    gcsSource = {
+      inputUris  = ["gs://${google_storage_bucket.docs.name}/*"]
+      dataSchema = "content"
+    }
+    reconciliationMode = "INCREMENTAL"
+  })
 
   # Service contract v1: Artifact Registry repository and image path.
   repository_id = "onboardai"
@@ -44,7 +83,7 @@ locals {
   # Cloud Run services (service contract v1). Terraform creates them with a
   # placeholder image; .github/workflows/deploy.yml deploys the real images with
   # exactly these settings (its WEB_/API_/TTS_RUN_FLAGS lines). The test in
-  # tests/onboardai.tftest.hcl fails if the two disagree, so neither undoes the
+  # tests/workflows.tftest.hcl fails if the two disagree, so neither undoes the
   # other on the next apply or deploy.
   # ---------------------------------------------------------------------------
   placeholder_image     = "us-docker.pkg.dev/cloudrun/container/hello"
@@ -71,10 +110,10 @@ locals {
 
     api = {
       name        = "onboardai-api"
-      description = "OnboardAi API: /api/* routes, Gemini chat and Drive retrieval."
+      description = "OnboardAi API: /api/* routes, Gemini chat and Vertex AI Search retrieval."
       cpu         = "1"
-      # Drive document cache and the SQLite conversation file (written to the
-      # in-memory filesystem) live in this limit.
+      # The SQLite conversation file (written to the in-memory filesystem) lives
+      # in this limit until conversations move to Firestore.
       memory      = "1Gi"
       concurrency = 80
       # Contract: exactly one instance, because conversations are SQLite on local disk.
@@ -132,16 +171,17 @@ locals {
     ])
   }
 
-  # Repository variables the workflows read. Values come from this module.
-  github_variables = merge(
-    {
-      GCP_PROJECT_ID   = var.project_id
-      GCP_REGION       = var.region
-      GCP_WIF_PROVIDER = google_iam_workload_identity_pool_provider.github.name
-      GCP_DEPLOYER_SA  = google_service_account.deployer.email
-      AI_MODE          = var.ai_mode
-      GEMINI_MODEL     = var.gemini_model
-    },
-    var.google_drive_folder_id == "" ? {} : { GOOGLE_DRIVE_FOLDER_ID = var.google_drive_folder_id },
-  )
+  # Every repository variable the workflows read (tests/workflows.tftest.hcl
+  # checks both directions). Values come from this module.
+  github_variables = {
+    GCP_PROJECT_ID          = var.project_id
+    GCP_REGION              = var.region
+    GCP_WIF_PROVIDER        = google_iam_workload_identity_pool_provider.github.name
+    GCP_DEPLOYER_SA         = google_service_account.deployer.email
+    AI_MODE                 = var.ai_mode
+    GEMINI_MODEL            = var.gemini_model
+    VERTEX_SEARCH_LOCATION  = google_discovery_engine_search_engine.docs.location
+    VERTEX_SEARCH_ENGINE_ID = google_discovery_engine_search_engine.docs.engine_id
+    FIRESTORE_DATABASE_ID   = google_firestore_database.default.name
+  }
 }
