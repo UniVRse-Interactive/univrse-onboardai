@@ -474,6 +474,21 @@ run "alerts_are_quiet_and_reach_every_address" {
     error_message = "Missing data must count as no violation."
   }
 
+  # The Monitoring API rejects evaluation_missing_data on a zero duration.
+  assert {
+    condition = alltrue([
+      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency] :
+      alltrue([
+        for c in p.conditions :
+        alltrue([
+          for t in c.condition_threshold :
+          t.evaluation_missing_data == null || t.evaluation_missing_data == "" || !contains(["0s", "0"], t.duration)
+        ])
+      ])
+    ])
+    error_message = "A condition that sets evaluation_missing_data needs a non-zero duration (the API returns 400 for 0s)."
+  }
+
   assert {
     condition = (
       strcontains(google_monitoring_alert_policy.server_errors.conditions[0].condition_threshold[0].filter, "metric.type = \"run.googleapis.com/request_count\"") &&
