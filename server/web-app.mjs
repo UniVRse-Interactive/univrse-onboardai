@@ -15,6 +15,7 @@ export function createWebApp({ apiUrl, distDir = resolve('dist'), trustProxy = f
   app.get('/web-health', (req, res) => res.json({ ok: true }));
   app.use('/api', createApiProxy({ apiUrl, ...proxy }));
   app.get('/avatars/alya/alya.glb', avatarRoute(distDir));
+  app.get('/avatars/alya/digital-human.glb', avatarRoute(distDir, 'digital-human.glb.gz'));
   app.use(express.static(distDir));
   app.get('/{*path}', (req, res) => res.sendFile(resolve(distDir, 'index.html')));
   return app;

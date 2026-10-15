@@ -318,7 +318,7 @@ export function createConversationService({
       ];
       const result = await graph.invoke(
         { messages, plan: null, passages: [], result: null, learning: row.learning, timingsMs: {} },
-        { configurable: { thread_id: id }, signal, recursionLimit: 14 },
+        { configurable: { thread_id: id, owner }, signal, recursionLimit: 14 },
       );
       signal?.throwIfAborted();
       const delivered = {

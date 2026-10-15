@@ -6,8 +6,8 @@ import { resolve } from 'node:path';
 // its transfer size. Browsers decode gzip before passing the GLB to Three.js.
 // The file is streamed without Content-Length: Cloud Run caps HTTP/1 responses
 // at 32 MiB unless they use chunked transfer encoding, and this one is ~52 MiB.
-export function avatarRoute(assetRoot) {
-  const file = resolve(assetRoot, 'avatars/alya/alya.glb.gz');
+export function avatarRoute(assetRoot, assetName = 'alya.glb.gz') {
+  const file = resolve(assetRoot, 'avatars/alya', assetName);
   return async (req, res, next) => {
     try {
       const { mtime } = await stat(file);

@@ -1,4 +1,5 @@
 import { GoogleAuth } from 'google-auth-library';
+import { PublicDriveError, readPublicDriveKnowledge } from './public-drive-documents.mjs';
 
 const auth = new GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/drive.readonly'],
@@ -19,10 +20,22 @@ export class DriveKnowledgeError extends Error {
 // Never forward raw Google errors, request headers, credentials or document
 // contents to the browser. Only these known, actionable messages are public.
 export function driveFailure(error) {
-  if (error instanceof DriveKnowledgeError) {
+  if (error instanceof DriveKnowledgeError || error instanceof PublicDriveError) {
     return { error: error.message, code: error.code };
   }
   const status = error?.response?.status;
+  if (
+    typeof error?.message === 'string' &&
+    error.message.startsWith('Could not load the default credentials.')
+  ) {
+    return {
+      code: 'DRIVE_AUTH_REQUIRED',
+      error:
+        'Google Drive is not signed in on this server. The administrator must configure ' +
+        'GOOGLE_APPLICATION_CREDENTIALS with a Google credential JSON file or sign in using ' +
+        'Application Default Credentials with Drive read access. The Gemini API key and folder ID alone are not enough.',
+    };
+  }
   if (status === 401 || error?.code === 'ENOENT') {
     return {
       code: 'DRIVE_AUTH_REQUIRED',
@@ -64,6 +77,9 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
       'Set a valid Google Drive knowledge folder ID before asking a company question.',
     );
   }
+
+  if (!suppliedClient && process.env.GOOGLE_DRIVE_ACCESS === 'public')
+    return readPublicDriveKnowledge(folderId);
 
   const client = suppliedClient || (await auth.getClient());
 

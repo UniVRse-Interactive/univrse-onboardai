@@ -100,7 +100,7 @@ export function createKnowledgeRetriever(loadDocuments, folderId) {
   return async function retrieve(query, config) {
     // The loader checks Drive every turn and reuses exports only when the
     // document revision and current download access are confirmed unchanged.
-    const documents = await loadDocuments(folderId);
+    const documents = await loadDocuments(folderId, config?.configurable?.owner);
     const hash = createHash('sha256').update(JSON.stringify(documents)).digest('hex');
     if (hash !== cachedHash) {
       const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1800, chunkOverlap: 250 });

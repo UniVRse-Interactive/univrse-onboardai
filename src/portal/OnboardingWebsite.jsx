@@ -3,6 +3,8 @@ import Icon from './Icon';
 import DecorativeWebsiteIllustration from './DecorativeWebsiteIllustration';
 import { navigation, stages, stageIntros, tasks, supportTeams } from './website-content';
 import './website.css';
+import './workspace.css';
+import { AccessScreen, HrWorkspace, workspaceRequest } from './WorkspaceAccess';
 
 const AlyaChatPage = React.lazy(() => import('../avatar/AlyaChatPage'));
 
@@ -12,9 +14,9 @@ const emptyState = {
   completed: [],
   notes: [],
 };
-function readState() {
+function readState(key = storageKey) {
   try {
-    const value = JSON.parse(localStorage.getItem(storageKey));
+    const value = JSON.parse(localStorage.getItem(key));
     if (!value || typeof value !== 'object') return emptyState;
     return {
       profile: {
@@ -82,10 +84,8 @@ function Brand() {
         </svg>
       </span>
       <span>
-        UNIVRSE
-        <small>
-          ONBOARD<span>Ai</span>
-        </small>
+        OnboardAi
+        <small>Employee onboarding</small>
       </span>
     </div>
   );
@@ -701,7 +701,7 @@ function Support({ state, onNote, onDelete, notify, initialTeam }) {
   );
 }
 
-function AssistantPage({ navigate }) {
+function AssistantPage({ navigate, employeeId }) {
   return (
     <React.Suspense
       fallback={
@@ -711,7 +711,7 @@ function AssistantPage({ navigate }) {
         </div>
       }
     >
-      <AlyaChatPage navigate={navigate} />
+      <AlyaChatPage navigate={navigate} employeeId={employeeId} />
     </React.Suspense>
   );
 }
@@ -838,9 +838,15 @@ function SearchModal({ onClose, navigate, onTask }) {
   );
 }
 
-export default function OnboardingWebsite() {
+function EmployeeWebsite({ access, onLeave }) {
   const [path, setPath] = useState(window.location.pathname),
-    [state, setState] = useState(readState),
+    [state, setState] = useState(() => {
+      const value = readState(storageKey + access.employee.id);
+      return {
+        ...value,
+        profile: { ...value.profile, name: value.profile.name || access.employee.name },
+      };
+    }),
     [dialog, setDialog] = useState(null),
     [mobile, setMobile] = useState(false),
     [toast, setToast] = useState(''),
@@ -871,7 +877,7 @@ export default function OnboardingWebsite() {
     };
   }, []);
   useEffect(() => {
-    document.title = (active?.label || 'Page not found') + ' · UniVRse OnboardAi';
+    document.title = (active?.label || 'Page not found') + ' · OnboardAi';
   }, [path]);
   useEffect(() => {
     const keys = (event) => {
@@ -892,7 +898,7 @@ export default function OnboardingWebsite() {
   function update(next) {
     setState(next);
     try {
-      localStorage.setItem(storageKey, JSON.stringify(next));
+      localStorage.setItem(storageKey + access.employee.id, JSON.stringify(next));
     } catch {
       notify('Your changes are visible, but this browser could not save them.');
     }
@@ -942,8 +948,11 @@ export default function OnboardingWebsite() {
           <div className="uv-header-actions">
             <span className="uv-preview-label">
               <span className="uv-small-dot mint" />
-              LOCAL PREVIEW
+              EMPLOYEE PREVIEW
             </span>
+            <button className="uv-button secondary" onClick={onLeave}>
+              Switch access
+            </button>
             <button
               className="uv-icon-button"
               aria-label="Search your workspace"
@@ -1017,7 +1026,7 @@ export default function OnboardingWebsite() {
             notify={notify}
           />
         ) : path === '/mira' ? (
-          <AssistantPage navigate={navigate} />
+          <AssistantPage navigate={navigate} employeeId={access.employee.id} />
         ) : (
           <div className="uv-empty">
             <Label>404 / UNEXPLORED SPACE</Label>
@@ -1030,7 +1039,7 @@ export default function OnboardingWebsite() {
         <footer className="uv-footer">
           <Brand />
           <span>YOUR NEXT CHAPTER STARTS WITH YOU.</span>
-          <span>UNIVRSE ONBOARDAI / LOCAL PREVIEW</span>
+          <span>OnboardAi / local preview</span>
         </footer>
       </main>
       {path !== '/mira' && (
@@ -1119,5 +1128,64 @@ export default function OnboardingWebsite() {
         </Modal>
       )}
     </div>
+  );
+}
+
+export default function OnboardingWebsite() {
+  const [access, setAccess] = useState(null),
+    [error, setError] = useState('');
+  async function load() {
+    try {
+      setAccess(await workspaceRequest('/api/access'));
+      setError('');
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  useEffect(() => {
+    load();
+  }, []);
+  async function leave() {
+    try {
+      await workspaceRequest('/api/access', { method: 'DELETE' });
+      window.history.replaceState({}, '', '/');
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+  function enter(next) {
+    window.history.replaceState({}, '', next.role === 'hr' ? '/hr' : '/');
+    setAccess(next);
+  }
+  if (!access)
+    return (
+      <main className="oa-access">
+        <section className="oa-card">
+          <h1>OnboardAi</h1>
+          <p role={error ? 'alert' : 'status'}>{error || 'Opening your preview workspace…'}</p>
+          {error && (
+            <button className="uv-button primary" onClick={load}>
+              Try again
+            </button>
+          )}
+        </section>
+      </main>
+    );
+  return (
+    <>
+      {error && (
+        <p className="oa-error" role="alert">
+          {error}
+        </p>
+      )}
+      {!access.role ? (
+        <AccessScreen onAccess={enter} employees={access.employees} />
+      ) : access.role === 'hr' ? (
+        <HrWorkspace onLeave={leave} />
+      ) : (
+        <EmployeeWebsite key={access.employee.id} access={access} onLeave={leave} />
+      )}
+    </>
   );
 }

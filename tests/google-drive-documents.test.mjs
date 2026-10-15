@@ -55,6 +55,16 @@ test('raw Google errors and credentials are never exposed in Drive failure messa
   assert.equal(driveFailure(new Error('private-key-data')).code, 'DRIVE_UNAVAILABLE');
 });
 
+test('missing Google login explains the required Drive authentication without leaking provider details', () => {
+  const failure = driveFailure(
+    new Error('Could not load the default credentials. private-provider-details'),
+  );
+  assert.equal(failure.code, 'DRIVE_AUTH_REQUIRED');
+  assert.match(failure.error, /GOOGLE_APPLICATION_CREDENTIALS/);
+  assert.match(failure.error, /Gemini API key and folder ID alone are not enough/);
+  assert.ok(!JSON.stringify(failure).includes('private-provider-details'));
+});
+
 async function withServer(options, callback) {
   const server = createApp(options).listen(0, '127.0.0.1');
   await once(server, 'listening');

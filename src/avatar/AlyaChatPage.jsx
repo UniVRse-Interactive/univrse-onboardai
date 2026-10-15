@@ -4,11 +4,10 @@ import Icon from '../portal/Icon';
 import { createServerSpeech } from './answer-audio-player';
 import AnswerStyleSettings, { learningFormats } from './AnswerStyleSettings';
 import VisualAnswerPanel from './VisualAnswerPanel';
-import EmployeeSupportSummary from './EmployeeSupportSummary';
 import './alya-chat.css';
 
 const preferenceKey = 'univrse-alya-voice-v1';
-const activeChatKey = 'univrse-alya-active-chat-v1';
+const activeChatPrefix = 'univrse-alya-active-chat-v1';
 function readPreferences() {
   try {
     const value = JSON.parse(localStorage.getItem(preferenceKey));
@@ -220,7 +219,16 @@ function Message({
   );
 }
 
-export default function AlyaChatPage({ navigate }) {
+export default function AlyaChatPage({ navigate, employeeId }) {
+  const activeChatKey = employeeId ? activeChatPrefix + '-' + employeeId : activeChatPrefix;
+  const jsonRequest = (url, options = {}) =>
+    requestJson(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        ...(employeeId ? { 'X-OnboardAi-Employee': employeeId } : {}),
+      },
+    });
   const [preferences, setPreferences] = useState(readPreferences),
     [speechState, setSpeechState] = useState({ state: 'idle', error: '' }),
     [config, setConfig] = useState(null),
@@ -239,12 +247,11 @@ export default function AlyaChatPage({ navigate }) {
   const [learning, setLearning] = useState(null),
     [learningOpen, setLearningOpen] = useState(false),
     [learningBusy, setLearningBusy] = useState(false);
-  const [supportSummary, setSupportSummary] = useState(null),
-    [supportBusy, setSupportBusy] = useState(false),
+  const [supportBusy, setSupportBusy] = useState(false),
     [supportError, setSupportError] = useState('');
-  const supportAbort = useRef(null),
-    visualWorkspace = useRef(null);
+  const visualWorkspace = useRef(null);
   const [selectedAnswerId, setSelectedAnswerId] = useState('');
+  const [view, setView] = useState('chat');
   const speechRef = useRef(null),
     preferencesRef = useRef(preferences),
     request = useRef(null),
@@ -272,7 +279,6 @@ export default function AlyaChatPage({ navigate }) {
       configAbort.current?.abort();
       historyAbort.current?.abort();
       learningAbort.current?.abort();
-      supportAbort.current?.abort();
       clearTimeout(copyTimer.current);
       speech.dispose();
       window.removeEventListener('pagehide', cancelOnLeave);
@@ -307,13 +313,6 @@ export default function AlyaChatPage({ navigate }) {
         applyChat(chat);
         setConversations(selected ? list.conversations : [chat]);
       }
-      if (data.supportSummary) {
-        const snapshot = await jsonRequest('/api/employee-support-summary', {
-          signal: abort.signal,
-        });
-        abort.signal.throwIfAborted();
-        acceptSummary(snapshot);
-      }
       setConfig(data);
     } catch (error) {
       if (error.name !== 'AbortError')
@@ -325,15 +324,6 @@ export default function AlyaChatPage({ navigate }) {
   useEffect(() => {
     connect();
   }, []);
-  const lastMessageId = messages.at(-1)?.id;
-  useEffect(() => {
-    const log = chatLog.current;
-    if (!log) return;
-    const latest = log.querySelector('.alya-message:last-of-type');
-    if (!busy && messages.at(-1)?.role === 'assistant' && latest)
-      log.scrollTop += latest.getBoundingClientRect().top - log.getBoundingClientRect().top - 12;
-    else log.scrollTop = log.scrollHeight;
-  }, [lastMessageId, busy, conversationId]);
   function stopVoice() {
     speechRef.current?.stop();
   }
@@ -348,7 +338,7 @@ export default function AlyaChatPage({ navigate }) {
     setBusy(false);
     stopVoice();
   }
-  async function jsonRequest(url, options = {}) {
+  async function requestJson(url, options = {}) {
     const response = await fetch(url, {
       ...options,
       headers: { 'Content-Type': 'application/json', ...options.headers },
@@ -403,7 +393,6 @@ export default function AlyaChatPage({ navigate }) {
       if (token !== sequence.current) return;
       applyChat(chat);
       setConversations(list.conversations);
-      await refreshSupport();
       setHistoryOpen(false);
       inputRef.current?.focus();
     } catch (error) {
@@ -438,7 +427,6 @@ export default function AlyaChatPage({ navigate }) {
       });
       if (token === sequence.current) {
         setLearning(result.learning);
-        acceptSummary(result.supportSummary);
       }
       return true;
     } catch (error) {
@@ -483,7 +471,10 @@ export default function AlyaChatPage({ navigate }) {
       // Shared Kokoro audio is requested separately; no Google TTS is called.
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(employeeId ? { 'X-OnboardAi-Employee': employeeId } : {}),
+        },
         signal: abort.signal,
         body: JSON.stringify({
           question: trimmed,
@@ -504,7 +495,6 @@ export default function AlyaChatPage({ navigate }) {
         { id: requestId + '-a', role: 'assistant', ...answer, referenceQuestion: trimmed },
       ]);
       setSelectedAnswerId(requestId + '-a');
-      acceptSummary(result.supportSummary);
       if (result.learning) setLearning(result.learning);
       if (config.conversationMemory)
         setConversations((previous) => [
@@ -545,41 +535,6 @@ export default function AlyaChatPage({ navigate }) {
       if (sequence.current === token) setBusy(false);
     }
   }
-  function acceptSummary(next) {
-    if (next)
-      setSupportSummary((previous) =>
-        !previous || next.version >= previous.version ? next : previous,
-      );
-  }
-  async function refreshSupport() {
-    supportAbort.current?.abort();
-    const abort = new AbortController();
-    supportAbort.current = abort;
-    try {
-      const value = await jsonRequest('/api/employee-support-summary', { signal: abort.signal });
-      acceptSummary(value);
-      setSupportError('');
-    } catch (error) {
-      if (error.name !== 'AbortError') setSupportError(error.message);
-    }
-  }
-  async function updateRecording(recording) {
-    if (supportBusy) return;
-    setSupportBusy(true);
-    setSupportError('');
-    try {
-      acceptSummary(
-        await jsonRequest('/api/support-summary/settings', {
-          method: 'POST',
-          body: JSON.stringify({ recording }),
-        }),
-      );
-    } catch (error) {
-      setSupportError(error.message);
-    } finally {
-      setSupportBusy(false);
-    }
-  }
   async function feedback(message, rating) {
     if (busy || supportBusy || historyBusy) return;
     setSupportBusy(true);
@@ -595,7 +550,6 @@ export default function AlyaChatPage({ navigate }) {
       setMessages((previous) =>
         previous.map((m) => (m.id === message.id ? { ...m, feedback: result.rating } : m)),
       );
-      acceptSummary(result.supportSummary);
     } catch (error) {
       setSupportError(error.message);
     } finally {
@@ -616,7 +570,6 @@ export default function AlyaChatPage({ navigate }) {
       setMessages((previous) =>
         previous.map((m) => (m.id === message.id ? { ...m, humanHelpRequested: true } : m)),
       );
-      acceptSummary(result.supportSummary);
     } catch (error) {
       setSupportError(error.message);
     } finally {
@@ -629,7 +582,7 @@ export default function AlyaChatPage({ navigate }) {
     const requestText = {
       steps: 'Please explain this step by step',
       example: 'Please give me a worked example',
-      brief: 'Please keep the answer brief',
+      brief: 'Please keep it short',
     }[format];
     ask(
       requestText +
@@ -638,14 +591,7 @@ export default function AlyaChatPage({ navigate }) {
   }
   function viewVisual(id) {
     setSelectedAnswerId(id);
-    visualWorkspace.current?.scrollIntoView({
-      block: 'start',
-      behavior:
-        preferences.reducedMotion || window.matchMedia('(prefers-reduced-motion: reduce)').matches
-          ? 'instant'
-          : 'smooth',
-    });
-    visualWorkspace.current?.focus({ preventScroll: true });
+    setView('visual');
   }
   async function copy(text) {
     try {
@@ -693,317 +639,329 @@ export default function AlyaChatPage({ navigate }) {
           thinking={busy}
           reducedMotion={preferences.reducedMotion}
         />
-        <section className="alya-chat-panel" aria-label="Chat with Alya">
-          <header className="alya-chat-heading">
-            <div>
-              <Icon name="chat" size={19} />
-              <h2>Let’s talk.</h2>
-            </div>
-            <button
-              className="alya-new-chat"
-              disabled={!config || historyBusy || learningBusy || supportBusy}
-              onClick={newChat}
-            >
-              <Icon name="spark" size={14} />
-              New chat
+        <div className="oa-answer-column">
+          <div className="oa-switch" role="group" aria-label="Answer view">
+            <button aria-pressed={view === 'chat'} onClick={() => setView('chat')}>
+              Chat
             </button>
-          </header>
-          <div className="alya-connection">
-            <span className={'uv-small-dot ' + (config ? 'mint' : '')} />
-            <span>
-              {connectionError
-                ? 'Connection unavailable'
-                : config
-                  ? modeLabel
-                  : 'Connecting to your assistant…'}
-            </span>
-            {config?.aiMode === 'document-search' && (
-              <span className="alya-no-ai-bill">SEARCH PREVIEW</span>
-            )}
+            <button aria-pressed={view === 'visual'} onClick={() => setView('visual')}>
+              Visual guide
+            </button>
           </div>
-          {config?.conversationMemory && (
-            <div className="alya-memory-control">
-              <div className="alya-memory-bar">
-                <button
-                  onClick={() => {
-                    setHistoryOpen(!historyOpen);
-                    setLearningOpen(false);
-                    setDeleteConfirm(false);
+          <div className="alya-voice-toolbar">
+            <button
+              className={'alya-voice-toggle ' + (preferences.enabled ? 'on' : '')}
+              aria-pressed={preferences.enabled}
+              onClick={mute}
+            >
+              <Icon name={preferences.enabled ? 'volume' : 'mute'} size={16} />
+              {preferences.enabled ? 'Voice on' : 'Voice off'}
+            </button>
+            {speechState.state === 'starting' && (
+              <span className="alya-voice-preparing">Preparing voice…</span>
+            )}
+            {voicing && (
+              <button className="alya-stop-voice" onClick={stopVoice}>
+                <Icon name="stop" size={13} />
+                Stop voice
+              </button>
+            )}
+            <button
+              className="alya-voice-settings"
+              aria-label="Voice settings"
+              aria-expanded={settings}
+              aria-controls="alya-voice-options"
+              onClick={() => setSettings(!settings)}
+            >
+              <Icon name="settings" size={16} />
+            </button>
+          </div>
+          {settings && (
+            <div className="alya-voice-options" id="alya-voice-options">
+              <div className="alya-shared-voice-label">
+                <strong>Alya · Heart</strong>
+                <p>English female voice · the same voice for every visitor.</p>
+              </div>
+              <label>
+                Speaking speed
+                <select
+                  value={preferences.rate}
+                  onChange={(event) => {
+                    stopVoice();
+                    setPreferences({ ...preferences, rate: Number(event.target.value) });
                   }}
-                  aria-expanded={historyOpen}
-                  aria-controls="alya-saved-chats"
                 >
-                  <Icon name="clock" size={13} />
-                  Saved chats <span>{conversations.length}</span>
-                  <Icon name="down" size={12} />
-                </button>
-                {config.adaptiveLearning ? (
+                  <option value={0.85}>Slower</option>
+                  <option value={0.95}>Natural</option>
+                  <option value={1.05}>Faster</option>
+                </select>
+              </label>
+              <label className="alya-motion-option">
+                <input
+                  type="checkbox"
+                  checked={preferences.reducedMotion}
+                  onChange={(e) =>
+                    setPreferences({ ...preferences, reducedMotion: e.target.checked })
+                  }
+                />
+                Reduce avatar movement
+              </label>
+              <p>
+                Voice generated by the server with Kokoro. Speed changes apply to the next answer.
+                Mouth timing is approximate.
+              </p>
+            </div>
+          )}
+          {view === 'visual' && (
+            <VisualAnswerPanel
+              messages={messages}
+              selectedId={selectedAnswerId}
+              onSelect={setSelectedAnswerId}
+              workspaceRef={visualWorkspace}
+              busy={busy}
+            />
+          )}
+          <section className="alya-chat-panel" aria-label="Chat with Alya" hidden={view !== 'chat'}>
+            <header className="alya-chat-heading">
+              <div>
+                <Icon name="chat" size={19} />
+                <h2>Let’s talk.</h2>
+              </div>
+              <button
+                className="alya-new-chat"
+                disabled={!config || historyBusy || learningBusy || supportBusy}
+                onClick={newChat}
+              >
+                <Icon name="spark" size={14} />
+                New chat
+              </button>
+            </header>
+            <div className="alya-connection">
+              <span className={'uv-small-dot ' + (config ? 'mint' : '')} />
+              <span>
+                {connectionError
+                  ? 'Connection unavailable'
+                  : config
+                    ? modeLabel
+                    : 'Connecting to your assistant…'}
+              </span>
+              {config?.aiMode === 'document-search' && (
+                <span className="alya-no-ai-bill">SEARCH PREVIEW</span>
+              )}
+            </div>
+            {config?.conversationMemory && (
+              <div className="alya-memory-control">
+                <div className="alya-memory-bar">
                   <button
-                    className="alya-learning-toggle"
-                    aria-expanded={learningOpen}
-                    aria-controls="alya-learning-options"
                     onClick={() => {
-                      setLearningOpen(!learningOpen);
-                      setHistoryOpen(false);
+                      setHistoryOpen(!historyOpen);
+                      setLearningOpen(false);
+                      setDeleteConfirm(false);
                     }}
+                    aria-expanded={historyOpen}
+                    aria-controls="alya-saved-chats"
                   >
-                    <Icon name="book" size={13} />
-                    {learningBusy ? 'Saving…' : 'Answer style'}
+                    <Icon name="clock" size={13} />
+                    Saved chats <span>{conversations.length}</span>
                     <Icon name="down" size={12} />
                   </button>
-                ) : (
-                  <span>
-                    {historyBusy ? 'Loading conversation…' : 'Remembers this conversation'}
-                  </span>
+                  {config.adaptiveLearning ? (
+                    <button
+                      className="alya-learning-toggle"
+                      aria-expanded={learningOpen}
+                      aria-controls="alya-learning-options"
+                      onClick={() => {
+                        setLearningOpen(!learningOpen);
+                        setHistoryOpen(false);
+                      }}
+                    >
+                      <Icon name="book" size={13} />
+                      {learningBusy ? 'Saving…' : 'Answer style'}
+                      <Icon name="down" size={12} />
+                    </button>
+                  ) : (
+                    <span>
+                      {historyBusy ? 'Loading conversation…' : 'Remembers this conversation'}
+                    </span>
+                  )}
+                </div>
+                {learningOpen && (
+                  <AnswerStyleSettings
+                    learning={learning}
+                    disabled={busy || historyBusy || learningBusy || supportBusy}
+                    onSettings={changeLearning}
+                    onClose={() => setLearningOpen(false)}
+                  />
+                )}
+                {historyOpen && (
+                  <div className="alya-saved-chats" id="alya-saved-chats">
+                    <p>
+                      Reopen a chat to continue where you left off. Chats expire after 30 days
+                      without activity.
+                    </p>
+                    <div className="alya-chat-list">
+                      {conversations.map((chat) => (
+                        <button
+                          key={chat.id}
+                          className={chat.id === conversationId ? 'selected' : ''}
+                          disabled={historyBusy}
+                          onClick={() => changeChat(chat.id)}
+                        >
+                          <Icon name="chat" size={13} />
+                          <span>{chat.title}</span>
+                          <small>
+                            {chat.id === conversationId
+                              ? 'Current'
+                              : new Date(chat.updated).toLocaleDateString()}
+                          </small>
+                        </button>
+                      ))}
+                    </div>
+                    {deleteConfirm ? (
+                      <div className="alya-delete-confirm">
+                        <p>Delete this chat and its saved memory?</p>
+                        <button disabled={historyBusy} onClick={() => changeChat(null, true)}>
+                          Delete chat
+                        </button>
+                        <button onClick={() => setDeleteConfirm(false)}>Keep chat</button>
+                      </div>
+                    ) : (
+                      <button
+                        className="alya-delete-chat"
+                        disabled={busy || historyBusy}
+                        onClick={() => setDeleteConfirm(true)}
+                      >
+                        Delete current chat
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
-              {learningOpen && (
-                <AnswerStyleSettings
-                  learning={learning}
+            )}
+            {supportError && (
+              <p role="alert" className="alya-inline-error">
+                {supportError}
+              </p>
+            )}
+            {historyError && (
+              <div className="alya-inline-error" role="alert">
+                <p>{historyError}</p>
+                <button onClick={() => setHistoryError('')}>Dismiss</button>
+              </div>
+            )}
+            <div
+              className="alya-chat-log"
+              ref={chatLog}
+              role="log"
+              aria-label="Conversation with Alya"
+              aria-live="polite"
+              aria-relevant="additions text"
+            >
+              {messages.map((message) => (
+                <Message
+                  message={message}
+                  key={message.id}
+                  onRetry={(item) => ask(item.question, item.id, item.requestId)}
+                  onCopy={copy}
+                  onFeedback={feedback}
+                  onSupport={requestSupport}
+                  onViewVisual={viewVisual}
+                  onHumanHelp={humanHelp}
+                  onOpenSupport={() => navigate('/support')}
                   disabled={busy || historyBusy || learningBusy || supportBusy}
-                  onSettings={changeLearning}
-                  onClose={() => setLearningOpen(false)}
+                  memoryEnabled={config?.conversationMemory}
                 />
+              ))}
+              {busy && (
+                <div className="alya-chat-thinking" role="status">
+                  <span className="alya-message-mark">A</span>
+                  <span>Alya is finding your answer</span>
+                  <i />
+                  <i />
+                  <i />
+                </div>
               )}
-              {historyOpen && (
-                <div className="alya-saved-chats" id="alya-saved-chats">
-                  <p>
-                    Reopen a chat to continue where you left off. Chats expire after 30 days without
-                    activity.
-                  </p>
-                  <div className="alya-chat-list">
-                    {conversations.map((chat) => (
-                      <button
-                        key={chat.id}
-                        className={chat.id === conversationId ? 'selected' : ''}
-                        disabled={historyBusy}
-                        onClick={() => changeChat(chat.id)}
-                      >
-                        <Icon name="chat" size={13} />
-                        <span>{chat.title}</span>
-                        <small>
-                          {chat.id === conversationId
-                            ? 'Current'
-                            : new Date(chat.updated).toLocaleDateString()}
-                        </small>
-                      </button>
-                    ))}
-                  </div>
-                  {deleteConfirm ? (
-                    <div className="alya-delete-confirm">
-                      <p>Delete this chat and its saved memory?</p>
-                      <button disabled={historyBusy} onClick={() => changeChat(null, true)}>
-                        Delete chat
-                      </button>
-                      <button onClick={() => setDeleteConfirm(false)}>Keep chat</button>
-                    </div>
+            </div>
+            {connectionError && (
+              <div className="alya-inline-error" role="alert">
+                <p>{connectionError}</p>
+                <button onClick={connect}>Reconnect</button>
+              </div>
+            )}
+            {speechState.error && preferences.enabled && (
+              <p className="alya-voice-error" role="status">
+                <Icon name="info" size={14} />
+                {speechState.error}
+              </p>
+            )}
+            <div className="alya-composer-area">
+              <form
+                className="alya-composer"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  ask(question);
+                }}
+              >
+                <label className="alya-question-label" htmlFor="alya-question">
+                  Your question
+                </label>
+                <textarea
+                  id="alya-question"
+                  ref={inputRef}
+                  value={question}
+                  onChange={(event) => setQuestion(event.target.value)}
+                  rows={2}
+                  maxLength={1600}
+                  placeholder="Ask about UniVRse or any onboarding task…"
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      ask(question);
+                    }
+                  }}
+                />
+                <div className="alya-composer-bottom">
+                  <span>
+                    {question.length
+                      ? `${question.length} / 1600`
+                      : 'Enter to send · Shift + Enter for a new line'}
+                  </span>
+                  {busy ? (
+                    <button
+                      type="button"
+                      className="alya-send cancel"
+                      aria-label="Cancel answer"
+                      onClick={cancelRequest}
+                    >
+                      <Icon name="stop" size={17} />
+                    </button>
                   ) : (
                     <button
-                      className="alya-delete-chat"
-                      disabled={busy || historyBusy}
-                      onClick={() => setDeleteConfirm(true)}
+                      className="alya-send"
+                      aria-label="Send question"
+                      disabled={
+                        !question.trim() || !config || historyBusy || learningBusy || supportBusy
+                      }
                     >
-                      Delete current chat
+                      <Icon name="arrow" size={21} />
                     </button>
                   )}
                 </div>
-              )}
-            </div>
-          )}
-          {historyError && (
-            <div className="alya-inline-error" role="alert">
-              <p>{historyError}</p>
-              <button onClick={() => setHistoryError('')}>Dismiss</button>
-            </div>
-          )}
-          <div
-            className="alya-chat-log"
-            ref={chatLog}
-            role="log"
-            aria-label="Conversation with Alya"
-            aria-live="polite"
-            aria-relevant="additions text"
-          >
-            {messages.map((message) => (
-              <Message
-                message={message}
-                key={message.id}
-                onRetry={(item) => ask(item.question, item.id, item.requestId)}
-                onCopy={copy}
-                onFeedback={feedback}
-                onSupport={requestSupport}
-                onViewVisual={viewVisual}
-                onHumanHelp={humanHelp}
-                onOpenSupport={() => navigate('/support')}
-                disabled={busy || historyBusy || learningBusy || supportBusy}
-                memoryEnabled={config?.conversationMemory}
-              />
-            ))}
-            {busy && (
-              <div className="alya-chat-thinking" role="status">
-                <span className="alya-message-mark">A</span>
-                <span>Alya is finding your answer</span>
-                <i />
-                <i />
-                <i />
-              </div>
-            )}
-          </div>
-          {connectionError && (
-            <div className="alya-inline-error" role="alert">
-              <p>{connectionError}</p>
-              <button onClick={connect}>Reconnect</button>
-            </div>
-          )}
-          {speechState.error && preferences.enabled && (
-            <p className="alya-voice-error" role="status">
-              <Icon name="info" size={14} />
-              {speechState.error}
-            </p>
-          )}
-          <div className="alya-composer-area">
-            <form
-              className="alya-composer"
-              onSubmit={(event) => {
-                event.preventDefault();
-                ask(question);
-              }}
-            >
-              <label className="alya-question-label" htmlFor="alya-question">
-                Your question
-              </label>
-              <textarea
-                id="alya-question"
-                ref={inputRef}
-                value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-                rows={2}
-                maxLength={1600}
-                placeholder="Ask about UniVRse or any onboarding task…"
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    ask(question);
-                  }
-                }}
-              />
-              <div className="alya-composer-bottom">
-                <span>
-                  {question.length
-                    ? `${question.length} / 1600`
-                    : 'Enter to send · Shift + Enter for a new line'}
-                </span>
-                {busy ? (
-                  <button
-                    type="button"
-                    className="alya-send cancel"
-                    aria-label="Cancel answer"
-                    onClick={cancelRequest}
-                  >
-                    <Icon name="stop" size={17} />
-                  </button>
-                ) : (
-                  <button
-                    className="alya-send"
-                    aria-label="Send question"
-                    disabled={
-                      !question.trim() || !config || historyBusy || learningBusy || supportBusy
-                    }
-                  >
-                    <Icon name="arrow" size={21} />
-                  </button>
+              </form>
+              <p className="alya-chat-caption">
+                Keep passwords and private employee details out of chat.
+                {config?.conversationMemory && (
+                  <> Saved to this browser session on the server for up to 30 days.</>
                 )}
-              </div>
-            </form>
-            <div className="alya-voice-toolbar">
-              <button
-                className={'alya-voice-toggle ' + (preferences.enabled ? 'on' : '')}
-                aria-pressed={preferences.enabled}
-                onClick={mute}
-              >
-                <Icon name={preferences.enabled ? 'volume' : 'mute'} size={16} />
-                {preferences.enabled ? 'Voice on' : 'Voice off'}
-              </button>
-              {speechState.state === 'starting' && (
-                <span className="alya-voice-preparing">Preparing voice…</span>
-              )}
-              {voicing && (
-                <button className="alya-stop-voice" onClick={stopVoice}>
-                  <Icon name="stop" size={13} />
-                  Stop voice
-                </button>
-              )}
-              <button
-                className="alya-voice-settings"
-                aria-label="Voice settings"
-                aria-expanded={settings}
-                aria-controls="alya-voice-options"
-                onClick={() => setSettings(!settings)}
-              >
-                <Icon name="settings" size={16} />
-              </button>
+              </p>
             </div>
-            {settings && (
-              <div className="alya-voice-options" id="alya-voice-options">
-                <div className="alya-shared-voice-label">
-                  <strong>Alya · Heart</strong>
-                  <p>English female voice · the same voice for every visitor.</p>
-                </div>
-                <label>
-                  Speaking speed
-                  <select
-                    value={preferences.rate}
-                    onChange={(event) => {
-                      stopVoice();
-                      setPreferences({ ...preferences, rate: Number(event.target.value) });
-                    }}
-                  >
-                    <option value={0.85}>Slower</option>
-                    <option value={0.95}>Natural</option>
-                    <option value={1.05}>Faster</option>
-                  </select>
-                </label>
-                <label className="alya-motion-option">
-                  <input
-                    type="checkbox"
-                    checked={preferences.reducedMotion}
-                    onChange={(e) =>
-                      setPreferences({ ...preferences, reducedMotion: e.target.checked })
-                    }
-                  />
-                  Reduce avatar movement
-                </label>
-                <p>
-                  Voice generated by the server with Kokoro. Speed changes apply to the next answer.
-                  Mouth timing is approximate.
-                </p>
-              </div>
-            )}
-            <p className="alya-chat-caption">
-              Keep passwords and private employee details out of chat.
-              {config?.conversationMemory && (
-                <> Saved to this browser session on the server for up to 30 days.</>
-              )}
-            </p>
-          </div>
-        </section>
+          </section>
+        </div>
       </div>
-      <VisualAnswerPanel
-        messages={messages}
-        selectedId={selectedAnswerId}
-        onSelect={setSelectedAnswerId}
-        workspaceRef={visualWorkspace}
-        busy={busy}
-      />
-      {config?.supportSummary && (
-        <EmployeeSupportSummary
-          summary={supportSummary}
-          disabled={busy || historyBusy || learningBusy || supportBusy}
-          error={supportError}
-          onRecording={updateRecording}
-          onRefresh={refreshSupport}
-        />
-      )}
       <div className="alya-page-footnote">
         <span>
           <Icon name="shield" size={14} />

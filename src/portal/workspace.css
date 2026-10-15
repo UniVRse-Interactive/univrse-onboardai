@@ -1,0 +1,763 @@
+:root {
+  --bg: #f7fafd;
+  --panel: #ffffff;
+  --panel-2: #e3f3f4;
+  --line: #cadce5;
+  --muted: #52677b;
+  --pink: #256a91;
+  --mint: #256a91;
+  --violet: #2d4365;
+  --white: #2d4365;
+  color: #2d4365;
+  background: #f7fafd;
+  color-scheme: light;
+}
+body {
+  background: #f7fafd;
+  color: #2d4365;
+}
+[hidden] {
+  display: none !important;
+}
+.uv-portal {
+  background: #f7fafd;
+}
+.uv-button.primary {
+  background: #256a91;
+  color: #fff;
+}
+.uv-button.primary:hover {
+  background: #2d4365;
+}
+.uv-button.secondary {
+  border-color: #a6c4d3;
+  color: #2d4365;
+}
+.uv-button.secondary:hover {
+  background: #e3f3f4;
+}
+.uv-header-caption,
+.uv-preview-label,
+.uv-dashboard-meta,
+.uv-hero-copy > p,
+.uv-hero-footnote,
+.uv-index-note,
+.uv-scene-caption,
+.uv-scene-label,
+.uv-icon-button {
+  color: #52677b;
+}
+.uv-header {
+  background: #f7fafd;
+}
+.uv-header-actions {
+  flex-wrap: wrap;
+}
+.uv-header-actions .uv-button {
+  font-size: 12px;
+  padding: 8px 12px;
+}
+.uv-hero-copy > .uv-eyebrow {
+  color: #256a91;
+}
+.uv-dialog {
+  background: #f7fafd;
+  color: #2d4365;
+}
+.uv-dialog input,
+.uv-dialog select,
+.uv-dialog textarea {
+  background: white;
+  color: #2d4365;
+  border-color: #a6c4d3;
+}
+.oa-access,
+.oa-hr {
+  width: min(1220px, calc(100% - 40px));
+  margin: 40px auto;
+}
+.oa-access {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: start;
+  padding-top: 6vh;
+}
+.oa-access-intro {
+  padding: 30px 0;
+}
+.oa-access h1 {
+  font-size: clamp(32px, 4vw, 55px);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+  margin: 20px 0;
+}
+.oa-access p,
+.oa-hr p {
+  line-height: 1.7;
+}
+.oa-card {
+  background: white;
+  border: 1px solid #cadce5;
+  border-radius: 14px;
+  padding: clamp(18px, 3vw, 32px);
+  min-width: 0;
+}
+.oa-card h2 {
+  font-size: 24px;
+  margin-bottom: 16px;
+}
+.oa-card h3 {
+  margin: 20px 0 10px;
+}
+.oa-card p {
+  margin-bottom: 16px;
+}
+.oa-card form {
+  display: grid;
+  gap: 16px;
+  margin: 22px 0;
+}
+.oa-card label {
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+}
+.oa-card input,
+.oa-card select {
+  min-width: 0;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #a6c4d3;
+  border-radius: 6px;
+  background: #f7fafd;
+  color: #2d4365;
+}
+.oa-notice {
+  background: #e3f3f4;
+  border-radius: 8px;
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.oa-error {
+  padding: 16px;
+  background: #fff0eb;
+  color: #872f24;
+  border: 1px solid #d6a59c;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.oa-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.oa-switch button {
+  padding: 12px 18px;
+  border: 1px solid #a6c4d3;
+  border-radius: 6px;
+  color: #2d4365;
+  background: #fff;
+  min-height: 44px;
+}
+.oa-switch button[aria-pressed='true'] {
+  background: #256a91;
+  color: white;
+  border-color: #256a91;
+}
+.oa-workspace-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 20px 0;
+}
+.oa-workspace-header h1 {
+  font-size: clamp(28px, 4vw, 42px);
+  margin-top: 12px;
+}
+.oa-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin: 24px 0;
+}
+.oa-metrics p {
+  padding: 20px;
+  background: #e3f3f4;
+  border-radius: 10px;
+}
+.oa-metrics strong {
+  display: block;
+  font-size: 30px;
+}
+.oa-hr-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.oa-items {
+  list-style: none;
+  padding: 0;
+}
+.oa-items li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-top: 1px solid #cadce5;
+  padding: 14px 0;
+  overflow-wrap: anywhere;
+}
+.oa-items small {
+  display: block;
+  color: #52677b;
+  margin-top: 6px;
+}
+.oa-person {
+  text-align: left;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.oa-person[aria-pressed='true'] {
+  background: #e3f3f4;
+  border-color: #256a91;
+}
+.oa-report {
+  margin-top: 24px;
+}
+.oa-report-counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+.oa-report-counts div {
+  background: #f7fafd;
+  padding: 16px;
+}
+.oa-report-counts dd {
+  margin: 8px 0 0;
+  font-size: 26px;
+}
+.oa-report li {
+  margin: 10px 0;
+  line-height: 1.6;
+}
+/* Preserve the existing avatar's dark presentation and inherited stage colours. */
+.uv-portal .alya-avatar-stage {
+  --white: #f2f0ed;
+  --mint: #c9f28a;
+  --pink: #f34ba8;
+  --muted: #a2a2af;
+  color: #f2f0ed;
+  color-scheme: dark;
+  position: sticky;
+  top: 16px;
+  height: clamp(440px, 75dvh, 790px);
+}
+.uv-portal .alya-conversation-shell {
+  height: auto;
+  min-height: 0;
+  align-items: start;
+  background: #f7fafd;
+  border-color: #cadce5;
+}
+.oa-answer-column {
+  min-width: 0;
+  background: white;
+}
+.oa-answer-column > .oa-switch {
+  padding: 12px 20px;
+  margin: 0;
+  border-bottom: 1px solid #cadce5;
+}
+.uv-portal .alya-chat-panel {
+  background: white;
+  color: #2d4365;
+  height: auto;
+  overflow: visible;
+}
+.uv-portal .alya-chat-log {
+  overflow: visible;
+  max-height: none;
+}
+.uv-portal .alya-chat-panel :is(input, textarea, select) {
+  background: #f7fafd;
+  color: #2d4365;
+  border-color: #a6c4d3;
+}
+.uv-portal
+  .alya-chat-panel
+  :is(
+    .alya-connection,
+    .alya-message.user,
+    .alya-memory-bar,
+    .alya-history,
+    .alya-voice-options,
+    .alya-composer
+  ) {
+  background: #e3f3f4;
+  border-color: #cadce5;
+  color: #2d4365;
+}
+.uv-portal .alya-chat-panel :is(p, small, span, button, label) {
+  color: inherit;
+}
+.uv-portal .alya-chat-panel .alya-send {
+  background: #256a91;
+  color: white;
+}
+.uv-portal .alya-chat-panel .alya-message-mark {
+  background: #e3f3f4;
+  color: #256a91;
+  border-color: #a6c4d3;
+}
+.uv-portal .alya-chat-panel :is(.alya-chat-heading, .alya-chat-input-area, .alya-message-actions) {
+  border-color: #cadce5;
+}
+.uv-portal .alya-visual-workspace {
+  background: white;
+  color: #2d4365;
+  margin: 0;
+  overflow: visible;
+}
+.uv-portal .alya-visual-workspace header,
+.uv-portal .av-controls,
+.uv-portal .av-source-footer {
+  background: #e3f3f4;
+  color: #2d4365;
+  border-color: #cadce5;
+}
+.uv-portal .av-learning-board {
+  display: block;
+}
+.uv-portal .av-picture-space,
+.uv-portal .av-reading,
+.uv-portal .av-all-details {
+  background: #f7fafd;
+  border-color: #cadce5;
+}
+.uv-portal .av-picture-list button {
+  background: #e3f3f4;
+  border-color: #a6c4d3;
+}
+.uv-portal .av-picture-list button.selected {
+  background: #d3e9ef;
+  border-color: #256a91;
+}
+.uv-portal .av-reading :is(p, h3, span),
+.uv-portal .av-controls p {
+  color: #2d4365;
+}
+.uv-portal .av-reading {
+  overflow: visible;
+  max-height: none;
+}
+.uv-portal .av-navigation button {
+  background: #256a91;
+  color: white;
+  min-height: 44px;
+}
+@media (max-width: 800px) {
+  .oa-access,
+  .oa-hr-grid {
+    grid-template-columns: 1fr;
+  }
+  .oa-access {
+    gap: 12px;
+    padding-top: 0;
+  }
+  .oa-metrics {
+    grid-template-columns: 1fr;
+  }
+  .uv-portal .alya-conversation-shell {
+    grid-template-columns: 1fr;
+  }
+  .uv-portal .alya-avatar-stage {
+    height: clamp(150px, 27dvh, 240px);
+    top: 0;
+    z-index: 5;
+  }
+  .oa-workspace-header .uv-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oa-access *,
+  .oa-hr * {
+    scroll-behavior: auto;
+  }
+}
+
+.uv-portal .oa-answer-column .alya-conversation-shell {
+  border: 1px solid #cadce5;
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-avatar-stage {
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-portrait-orbit {
+  border: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-stage-top {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-avatar-name small {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-presence {
+  color: #2d4365;
+  border: 1px solid #cadce5;
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-presence.speaking {
+  border-color: #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-model-state {
+  background: #e3f3f4;
+  border: 1px solid #cadce5;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-loader {
+  border: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-chat-panel {
+  border-left: 1px solid #cadce5;
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-chat-heading {
+  border-bottom: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-new-chat {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-connection {
+  color: #2d4365;
+  background: #e3f3f4;
+  border-bottom: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-no-ai-bill {
+  border: 1px solid #cadce5;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-message.user {
+  background: #e3f3f4;
+  border: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-message.user > span {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-message-mark {
+  background: #e3f3f4;
+  border: 1px solid #cadce5;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-message-author small {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-answer-body > p,
+.uv-portal .oa-answer-column .alya-passage > p {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-answer-footer > span {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-answer-footer > button {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-passage details {
+  border-top: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-passage summary {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-passage details > div {
+  background: #e3f3f4;
+  border-left: 2px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-passage details > div > span {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-passage details p {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-chat-thinking {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-chat-thinking i {
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-suggestions button {
+  border: 1px solid #cadce5;
+  color: #2d4365;
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-suggestions button:hover {
+  border-color: #cadce5;
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-inline-error {
+  color: #2d4365;
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-inline-error button {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-message.error .alya-answer-body > p {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-retry {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-voice-error {
+  background: #e3f3f4;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-composer-area {
+  border-top: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-composer {
+  border: 1px solid #cadce5;
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-composer:focus-within {
+  border-color: #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-composer textarea::placeholder {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-composer-bottom > span {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-send {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-send:not(:disabled):hover {
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-send.cancel {
+  background: #e3f3f4;
+  color: #2d4365;
+  border: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-voice-toggle {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-stop-voice {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-voice-settings {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-chat-caption {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-voice-options {
+  background: #e3f3f4;
+  border: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-voice-options select {
+  background: #e3f3f4;
+  border-color: #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-voice-options p {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-page-footnote > span {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-page-footnote > button {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-copy-toast {
+  background: #e3f3f4;
+  border: 1px solid #cadce5;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-shared-voice-label {
+  border-bottom: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-shared-voice-label strong {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-voice-preparing {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-chat-panel {
+  border-top: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-memory-bar {
+  border-bottom: 1px solid #cadce5;
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-memory-bar > button {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-memory-bar > span {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-saved-chats {
+  background: #e3f3f4;
+  border-bottom: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-saved-chats > p {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-chat-list > button {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-chat-list > button > small {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-chat-list > button.selected {
+  border-color: #cadce5;
+  background: #e3f3f4;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-chat-list > button:hover {
+  background: #e3f3f4;
+}
+
+.uv-portal .oa-answer-column .alya-delete-chat {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-delete-confirm {
+  border-top: 1px solid #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-delete-confirm p {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-delete-confirm button {
+  border: 1px solid #cadce5;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-delete-confirm button:last-child {
+  color: #2d4365;
+  border-color: #cadce5;
+}
+
+.uv-portal .oa-answer-column .alya-learning-panel {
+  background: #e3f3f4;
+  border: 1px solid #cadce5;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-learning-panel header > button {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-learning-panel > p {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-learning-panel > select {
+  background: #e3f3f4;
+  border: 1px solid #cadce5;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-learning-reason {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-learning-reset {
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column .alya-answer-format {
+  border: 1px solid #cadce5;
+  color: #2d4365;
+}
+
+.uv-portal .oa-answer-column > .alya-voice-toolbar {
+  padding: 12px 20px;
+  flex-wrap: wrap;
+}
+.uv-portal .oa-answer-column > .alya-voice-options {
+  position: static;
+  margin: 0 20px 16px;
+  width: auto;
+  box-shadow: none;
+}
+.uv-portal .oa-answer-column .alya-send {
+  background: #256a91;
+  color: white;
+}
+.uv-portal .oa-answer-column .alya-voice-toggle.on {
+  color: #256a91;
+}

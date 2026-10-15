@@ -1,86 +1,71 @@
-# UniVRse OnboardAi
+# OnboardAi
 
-An employee onboarding assistant with Alya, the original 3D avatar. Answers can include text, the same server-generated voice for everyone, and a separate illustrated visual panel. Gemini uses approved company documents and saved conversation context.
+Employee onboarding with ALYA, the existing animated 3D companion. The application combines a dashboard, company-grounded chat, illustrated guidance, and an HR preview workspace. The avatar model, face, clothing, materials and animation implementation are preserved from the local project.
 
 ## Run locally
 
-Use Node.js 22 or later; development has been checked with Node.js 24.
+Use Node.js 22 or later. Keep your existing `.env`.
 
-For a fresh copy of the project, run these commands in its folder:
-
-```powershell
-npm.cmd ci
-Copy-Item .env.example .env
-npm.cmd run voice:prepare
-npm.cmd run dev
+```sh
+npm ci
+# For a fresh installation only: cp .env.example .env
+npm run voice:prepare
+npm run dev
 ```
 
-**Keep your existing `.env` if this project is already configured.** The example contains no credentials and starts with sample answers. The first voice setup downloads the Kokoro model into the ignored `.cache` folder.
+Open http://localhost:3000. On Windows use `npm.cmd` and `Copy-Item .env.example .env` for a fresh setup. To serve a production build: `npm run build` then `npm start`.
 
-Open [the website](http://localhost:3000/) or [Alya's chat](http://localhost:3000/mira).
+## Access and pages
 
-To serve a production build locally:
+Choose Employee or HR preview. Employee access accepts an existing profile ID, creates a profile without a password, or opens a new guest profile. Guests first reach the dashboard and can choose Ask Alya.
 
-```powershell
-npm.cmd run build
-npm.cmd start
+| Route         | Contents                                                            |
+| ------------- | ------------------------------------------------------------------- |
+| `/`           | Employee dashboard and next actions                                 |
+| `/onboarding` | Suggested checklist; completion is manually recorded                |
+| `/support`    | Support directory and personal notes                                |
+| `/mira`       | ALYA, manual Chat / Visual guide switch and shared voice controls   |
+| `/hr`         | HR preview: guidance uploads and factual employee support summaries |
+
+**This is browser-scoped preview access, not authentication.** Anyone using the same browser workspace can choose HR preview. Employee IDs are labels, not secrets. There is no verified HR role, password login, cross-device account synchronisation or company-wide employee directory. Production requires server-verified identity, roles and guidance permissions before exposing private company material.
+
+An opaque HttpOnly cookie owns the preview workspace. Every employee has a stable internal UUID; removing or renumbering employees never reassigns their histories. Removing an employee erases their server chats and support events. Dashboard state is separately keyed by employee UUID in local storage. Existing legacy browser chats and dashboard state are retained, but are not automatically assigned to new employees. Clearing cookies loses access to the workspace. Switching profiles in another tab requires reopening the employee workspace before sending more requests.
+
+## Company answers and documents
+
+The existing configured provider is preserved. `AI_MODE=gemini-chat` enables Gemini with saved context and source-supported answers. The blank `.env.example` defaults to labelled sample answers. No provider fallback is introduced. Keep credentials in server `.env`, never in `VITE_` variables or browser code.
+
+In Gemini chat, HR's uploaded UTF-8 `.txt` and `.md` guidance is retrieved together with the configured Google Drive guidance. Uploads are limited to 100 KB each, 10 files, and 120,000 uploaded characters; combined Drive and uploaded text must also fit 120,000 characters. PDF/Word processing is not added. Errors are visible; no old document snapshot is substituted after a failed Drive read. Removal affects subsequent retrieval, not historical answers already saved in conversations.
+
+Drive reads at most five Google Docs directly inside the configured folder. For deliberately public guidance, use `GOOGLE_DRIVE_ACCESS=public`; both folder and documents must allow anonymous viewing/export. This uses Google's public folder HTML and text exports, so markup changes may require maintenance. Private folders retain the authenticated Drive API reader. Never make confidential material public merely to connect this preview.
+
+The existing `document-search` mode remains a lexical Drive-only preview without conversation memory or support recording. Demo mode uses labelled sample answers. Uploaded guidance and recorded HR support currently require `gemini-chat` for answering. Gemini receives recent conversation context and selected company passages. Missing evidence leads to clarification or a referral to HR; source validation is not a guarantee that every generated sentence is correct.
+
+## Reading, voice and reports
+
+Chat and Visual guide are separate manually selected views; answering does not switch views or scroll the page. The avatar remains alongside the reading area on desktop and sticky above it on narrow screens. Questions can only be entered in Chat. Visual guides retain written guidance, numbered steps where supported, illustrations, Back/Next and Full answer. Viewing a guide does not complete a task or measure understanding.
+
+Kokoro Heart remains the shared server voice. Mute, stop, speed and reduced movement controls remain available in both reading views. Audio failure does not prevent reading text; speech mouth timing remains approximate. The existing compressed digital-human model is about 21 MB and can take time to load on slower devices; chat works independently.
+
+HR reports start empty and show only recorded answers, explicitly requested formats, helpful/still unclear feedback and requests for human help, with deterministic check-in suggestions. They contain no transcripts, document passages, diagnoses or ability/performance judgments. Reports are shown in HR, not in employee chat. Human help records a request and directs the employee to support; it does not send a notification. The shared browser preview cannot enforce real-world HR confidentiality.
+
+Chats and support events follow existing 30-day conversation retention. Profiles/uploads remain until removed. SQLite lives in ignored `.cache/chat/conversations.sqlite` (or `CHAT_DATABASE_PATH`); it is not encrypted. Protect local storage and backups. Multi-instance deployment needs shared persistence and locking.
+
+## Checks and implementation notes
+
+```sh
+npm test
+npm run build
+npm run check:share
+npm run check:drive
+npm run check:gemini
 ```
 
-## Pages
+The last two commands contact configured services; the Gemini check incurs normal API usage. Tests use synthetic company documents and injected model responses. There is no separate type-check or lint script; JavaScript tests, Vite build and Prettier are available. See [verification notes](docs/workspace-verification.md) for checks actually performed and review limitations.
 
-| Address       | Contents                                                    |
-| ------------- | ----------------------------------------------------------- |
-| `/`           | Welcome, next steps and progress                            |
-| `/onboarding` | Suggested tasks, filters and a local checklist              |
-| `/support`    | Support directory and personal notes                        |
-| `/mira`       | Alya, chat, visual answers and the employee support summary |
+- [File guide](docs/file-guide.md)
+- [Chat and memory](docs/chat-and-memory.md)
+- [Visual guides and HR summaries](docs/visual-guides-and-hr-summary.md)
+- [Avatar provenance](public/avatars/alya/PROVENANCE.md)
 
-Inside UniVRse, Launchpad and the handbook page have already been removed. Their old addresses lead to Alya. Suggested checklist items and support roles are editable templates, not verified company instructions.
-
-## Understand and edit the code
-
-Start with the [file guide](docs/file-guide.md). The project uses JavaScript, React and CSS. File names describe their purpose; conventional entry points such as `src/main.jsx` and `server/index.mjs` are retained.
-
-- [Chat and memory](docs/chat-and-memory.md): Gemini, LangChain, LangGraph, Drive retrieval and saved conversations.
-- [Answer styles](docs/answer-styles.md): automatic support, short explanations, steps, examples and brief answers.
-- [Visual guides and HR summary](docs/visual-guides-and-hr-summary.md): illustrated answers, feedback and reviewed report export.
-- [Avatar provenance](public/avatars/alya/PROVENANCE.md): original asset and rendering/voice dependencies.
-
-The current voice is Kokoro Heart (`af_heart`). It runs on the Node server. The website does not use device-specific browser voices. Playback and estimated mouth movement start automatically with new answers when voice is on; mute, stop, speed and reduced movement controls remain available.
-
-The original avatar is kept as lossless gzip. Its transfer is about 52.4 MiB; its decoded model is much larger, so loading may take time on slower devices. Chat works independently of the 3D model.
-
-## Useful commands
-
-| Command                     | Purpose                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------ |
-| `npm.cmd run dev`           | Start the local development server                                                         |
-| `npm.cmd test`              | Check chat, memory, visual answers, audio and assets                                       |
-| `npm.cmd run build`         | Build the browser website                                                                  |
-| `npm.cmd run format`        | Apply consistent, readable formatting                                                      |
-| `npm.cmd run format:check`  | Check formatting without changing files                                                    |
-| `npm.cmd run check:share`   | Check the current Git file list for private files, recognised secrets and large assets     |
-| `npm.cmd run check:drive`   | Check access to the configured Drive folder                                                |
-| `npm.cmd run check:search`  | Check document retrieval                                                                   |
-| `npm.cmd run check:gemini`  | Make one small Gemini request to check model access; Google usage limits and billing apply |
-| `npm.cmd run voice:prepare` | Download the voice model and generate a local sample                                       |
-
-## Local settings and data
-
-The existing `.env`, saved chats and voice cache remain local. Git and Docker exclude `.env`, credentials, chat databases, private files, generated builds, dependencies and test artifacts. `check:share` is a helpful pattern check, not a guarantee that every confidential value has been identified.
-
-Company chat reads Google Docs directly inside the configured Drive folder. Enable it with `AI_MODE=gemini-chat` and the server-only settings in `.env`. Never put API keys in browser code or variables beginning with `VITE_`.
-
-Successful chats are saved in SQLite and belong to an opaque browser-session cookie. The selected chat and voice preferences survive normal refreshes. The editable profile is not employee sign-in. Support summaries describe recorded requests and feedback; they do not diagnose disability or score ability. Employees review their summary before downloading it for HR.
-
-## GitHub and hosting later
-
-The files are prepared locally. No repository has been uploaded and no website has been deployed. GitHub setup and sharing can be done in the next step when requested.
-
-A running version needs a Node server with enough memory for Kokoro and persistent private storage for SQLite. A static GitHub Pages site alone cannot run these backend features. The existing Dockerfile provides a starting point; its container has not been verified here.
-
-The company assistant currently has no employee sign-in. Its private Drive knowledge needs access protection before an unrestricted online rollout. The current dependency audit also reports seven entries in the Kokoro/Transformers voice dependency tree without an automatic fix; review them during hosting preparation.
-
-## Verification after cleanup
-
-All 52 tests, the production build, formatting check and shareable-file check passed. The running chat page was checked with its original avatar, existing saved conversation, visual panel and employee support summary; no browser errors were reported. This cleanup did not make a live Gemini request or build the Docker container.
+`.env`, credentials, databases, caches, dependencies and generated builds stay ignored. Run `check:share` and inspect the staged diff before sharing. A Node server and persistent private storage are required; a static hosting service alone cannot run chat or voice. This change is for feature-branch review, not deployment.

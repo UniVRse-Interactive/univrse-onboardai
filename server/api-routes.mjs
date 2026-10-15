@@ -3,7 +3,12 @@ import { GoogleAuth } from 'google-auth-library';
 
 import { tasks, demoAnswer, systemPrompt } from './sample-onboarding-content.mjs';
 
-import { readDriveKnowledge, driveSystemPrompt, driveFailure } from './google-drive-documents.mjs';
+import {
+  readDriveKnowledge,
+  driveSystemPrompt,
+  driveFailure,
+  DriveKnowledgeError,
+} from './google-drive-documents.mjs';
 import { searchDocuments } from './document-search.mjs';
 import { createSharedVoice, sharedVoiceName } from './kokoro-voice.mjs';
 import { createRemoteVoice } from './remote-voice.mjs';
@@ -11,6 +16,11 @@ import { parseVoiceRequest, voiceRequestError, voiceFailure } from './voice-requ
 import { randomBytes } from 'node:crypto';
 import { sessionHash } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
+import {
+  createPreviewWorkspace,
+  attachWorkspaceRoutes,
+  employeeOwner,
+} from './preview-workspace.mjs';
 
 export function createApp({
   env = process.env,
@@ -22,18 +32,39 @@ export function createApp({
     : createSharedVoice(),
   trustProxy = false,
   conversationService = null,
+  models = null,
 } = {}) {
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
   const memoryChat = env.AI_MODE === 'gemini-chat';
   let conversations = conversationService;
   const chatService = () =>
-    (conversations ||= createConversationService({ env, loadDocuments: loadDriveKnowledge }));
+    (conversations ||= createConversationService({
+      env,
+      loadDocuments: loadCompanyDocuments,
+      ...(models ? { models } : {}),
+    }));
+  let preview;
+  const workspace = () =>
+    (preview ||= createPreviewWorkspace(chatService().memory.checkpointer.db));
+  async function loadCompanyDocuments(folder, owner) {
+    const uploads = workspace().documentsForOwner(owner);
+    const drive =
+      folder || loadDriveKnowledge !== readDriveKnowledge ? await loadDriveKnowledge(folder) : [];
+    const documents = [...drive, ...uploads];
+    if (documents.reduce((total, doc) => total + doc.text.length, 0) > 120000)
+      throw new DriveKnowledgeError(
+        'GUIDANCE_TOO_LARGE',
+        'Combined Drive and uploaded guidance exceeds 120,000 characters. Ask HR to reduce the guidance and try again.',
+      );
+    return documents;
+  }
   app.locals.closeChat = () => conversations?.close();
 
   app.disable('x-powered-by');
   // With a trusted proxy in front, req.ip and req.host are the browser's IP and host.
   app.set('trust proxy', trustProxy);
+  app.use('/api/hr/documents', express.json({ limit: '160kb' }));
   app.use(express.json({ limit: '24kb' }));
 
   app.use((req, res, next) => {
@@ -111,8 +142,7 @@ export function createApp({
     res.json({ ok: true });
   });
 
-  function chatOwner(req, res, next) {
-    if (!memoryChat) return res.status(404).json({ error: 'Saved conversations are not enabled.' });
+  function browserSession(req, res, next) {
     // Same-origin browser requests only; no permission is granted by a thread ID.
     if (req.get('origin')) {
       try {
@@ -139,9 +169,41 @@ export function createApp({
       maxAge: 30 * 86400000,
       path: '/api',
     });
-    req.chatOwner = sessionHash(token);
+    req.workspaceOwner = sessionHash(token);
+    req.chatOwner = req.workspaceOwner;
     next();
   }
+  function chatOwner(req, res, next) {
+    if (!memoryChat) return res.status(404).json({ error: 'Saved conversations are not enabled.' });
+    browserSession(req, res, () => {
+      try {
+        const access = chatService().memory.checkpointer
+          ? workspace().current(req.workspaceOwner)
+          : {};
+        if (
+          req.get('X-OnboardAi-Employee') &&
+          req.get('X-OnboardAi-Employee') !== access.employee?.id
+        )
+          return res.status(409).json({
+            error: 'The active employee profile changed. Reopen employee access before continuing.',
+          });
+        if (access.role === 'hr')
+          return res
+            .status(403)
+            .json({ error: 'Choose employee preview access before opening a conversation.' });
+        if (access.employee) req.chatOwner = employeeOwner(access.employee.id);
+        next();
+      } catch (error) {
+        chatFailure(res, error);
+      }
+    });
+  }
+  attachWorkspaceRoutes(app, {
+    session: browserSession,
+    workspace,
+    memory: () => chatService().memory,
+    onError: chatFailure,
+  });
   function chatFailure(res, error) {
     const failure = conversationFailure(error);
     res.status(failure.status).json({ code: failure.code, error: failure.error });

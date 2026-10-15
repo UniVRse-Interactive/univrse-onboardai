@@ -26,6 +26,10 @@ app.get(
   '/avatars/alya/alya.glb',
   avatarRoute(process.argv.includes('--production') ? 'dist' : 'public'),
 );
+app.get(
+  '/avatars/alya/digital-human.glb',
+  avatarRoute(process.argv.includes('--production') ? 'dist' : 'public', 'digital-human.glb.gz'),
+);
 const server = createHttpServer(app);
 let vite;
 if (process.argv.includes('--production')) {

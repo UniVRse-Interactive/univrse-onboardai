@@ -11,7 +11,7 @@ The project stays in JavaScript and React. `.jsx` files contain React screens; `
 | `server/`              | API routes, Gemini workflow, document search, saved chats and voice generation |
 | `scripts/`             | Development, connection checks, avatar import and voice setup                  |
 | `tests/`               | Regression checks using temporary data and synthetic company documents         |
-| `public/avatars/alya/` | The original avatar, loading poster and asset information                      |
+| `public/avatars/alya/` | The preserved digital-human avatar and asset information                       |
 | `docs/`                | Architecture and behaviour explanations                                        |
 
 `node_modules`, `dist`, `.cache` and `artifacts` are generated or private working folders. They are excluded from sharing. `.env` holds this installation's private settings; `.env.example` is the blank setup template.
@@ -20,7 +20,7 @@ The project stays in JavaScript and React. `.jsx` files contain React screens; `
 
 1. `src/main.jsx` starts React and redirects old page addresses.
 2. `src/portal/OnboardingWebsite.jsx` selects a page and renders the website shell.
-3. `src/avatar/AlyaChatPage.jsx` submits questions and displays chat, the avatar, visual answers and the employee summary.
+3. `src/avatar/AlyaChatPage.jsx` submits questions and displays chat, the avatar, manual chat/visual views and voice.
 4. `server/index.mjs` starts the HTTP server and serves the website and compressed avatar.
 5. `server/api-routes.mjs` handles browser requests and calls the appropriate chat or voice service.
 
@@ -110,3 +110,9 @@ Use the `npm` commands in the README rather than remembering these file paths.
 Ambiguous names such as `Portal`, `AvatarStage`, `conversation` and `drive-knowledge` were replaced with names that describe their role. The architecture notes are grouped in `docs/`. Compressed source formatting is expanded consistently with Prettier. Tests and imports follow the new names.
 
 The existing removed pages and old standalone avatar demos stay removed. The unused device-voice controller and its obsolete tests were replaced with checks for the active audio player. The original avatar, live settings, saved conversations and voice cache are preserved.
+
+## Preview workspace additions
+
+`src/portal/WorkspaceAccess.jsx` implements employee/HR choices and the HR library/reports. `src/portal/workspace.css` applies the slate/aqua theme and responsive reading layout without changing the avatar model. `server/preview-workspace.mjs` stores stable employee IDs, access selections and bounded plain-text guidance in the existing SQLite database. `tests/preview-workspace.test.mjs` exercises these routes with synthetic data.
+
+This browser-scoped preview is not real authentication. See README for upload, privacy and access limits.
