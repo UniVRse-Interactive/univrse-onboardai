@@ -3,8 +3,9 @@ import { GoogleAuth } from 'google-auth-library';
 
 import { tasks, demoAnswer, systemPrompt } from './sample-onboarding-content.mjs';
 
-import { readDriveKnowledge, driveSystemPrompt, driveFailure } from './google-drive-documents.mjs';
-import { searchDocuments } from './document-search.mjs';
+import { createCompanyRetriever, knowledgeMode } from './company-document-retriever.mjs';
+import { searchFailure } from './vertex-ai-search.mjs';
+import { quoteSearchResults } from './document-search.mjs';
 import { createSharedVoice, sharedVoiceName } from './kokoro-voice.mjs';
 import { createRemoteVoice } from './remote-voice.mjs';
 import { parseVoiceRequest, voiceRequestError, voiceFailure } from './voice-request.mjs';
@@ -17,7 +18,6 @@ export function createApp({
   env = process.env,
   fetchImpl = fetch,
   localVoice = null,
-  loadDriveKnowledge = readDriveKnowledge,
   sharedVoice = env.TTS_SERVICE_URL
     ? createRemoteVoice({ url: env.TTS_SERVICE_URL })
     : createSharedVoice(),
@@ -28,9 +28,12 @@ export function createApp({
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
   const memoryChat = env.AI_MODE === 'gemini-chat';
+  const vertexToken = getAccessToken || createAccessTokenProvider();
+  // Company passages for gemini-chat and document-search: Vertex AI Search, or
+  // the sample guide when VERTEX_SEARCH_ENGINE_ID is unset.
+  const retrieve = createCompanyRetriever({ env, fetchImpl, getAccessToken: vertexToken });
   let conversations = conversationService;
-  const chatService = () =>
-    (conversations ||= createConversationService({ env, loadDocuments: loadDriveKnowledge }));
+  const chatService = () => (conversations ||= createConversationService({ env, retrieve }));
   app.locals.closeChat = () => conversations?.close();
 
   app.disable('x-powered-by');
@@ -45,7 +48,6 @@ export function createApp({
 
   // Legacy billed Cloud Text-to-Speech is opt-in; GOOGLE_CLOUD_PROJECT alone only means Vertex AI.
   const cloudTts = env.GOOGLE_CLOUD_TTS === 'enabled' && Boolean(env.GOOGLE_CLOUD_PROJECT);
-  const vertexToken = getAccessToken || createAccessTokenProvider();
 
   const googleVoiceAuth = new GoogleAuth({
     scopes: ['https://www.googleapis.com/auth/cloud-platform'],
@@ -105,7 +107,7 @@ export function createApp({
 
       model: env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
 
-      knowledgeMode: env.GOOGLE_DRIVE_FOLDER_ID ? 'google-drive' : 'sample-tasks',
+      knowledgeMode: memoryChat || documentSearch ? knowledgeMode(env) : 'sample-tasks',
     });
   });
 
@@ -337,16 +339,18 @@ export function createApp({
 
     if (documentSearch) {
       const start = performance.now();
+      let passages;
       try {
-        const documents = await loadDriveKnowledge(env.GOOGLE_DRIVE_FOLDER_ID);
-        return deliver({
-          ...searchDocuments(question, documents),
-          taskId,
-          latencyMs: Math.round(performance.now() - start),
-        });
+        passages = await retrieve(question.trim());
       } catch (error) {
-        return res.status(503).json(driveFailure(error));
+        const failure = searchFailure(error);
+        return res.status(failure.status).json({ code: failure.code, error: failure.error });
       }
+      return deliver({
+        ...quoteSearchResults(passages),
+        taskId,
+        latencyMs: Math.round(performance.now() - start),
+      });
     }
 
     // Without Vertex AI configured, return a labelled sample answer.
@@ -357,21 +361,10 @@ export function createApp({
 
     const start = performance.now();
 
-    let instruction = systemPrompt(task, style);
-    let source = task.sourceStatus;
-
-    // Read the selected Drive folder for each question.
-    if (env.GOOGLE_DRIVE_FOLDER_ID) {
-      try {
-        const documents = await loadDriveKnowledge(env.GOOGLE_DRIVE_FOLDER_ID);
-
-        instruction = driveSystemPrompt(documents, style);
-
-        source = 'Google Drive: ' + documents.map((document) => document.title).join(', ');
-      } catch (error) {
-        return res.status(503).json(driveFailure(error));
-      }
-    }
+    // Single-turn Gemini mode answers from the sample task only. Company
+    // documents are searched in gemini-chat and document-search modes.
+    const instruction = systemPrompt(task, style);
+    const source = task.sourceStatus;
 
     try {
       const token = await vertexToken();

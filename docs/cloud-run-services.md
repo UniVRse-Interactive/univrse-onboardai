@@ -2,25 +2,25 @@
 
 In the cloud, OnboardAi runs as three separate Cloud Run services built from one `Dockerfile`. Each has its own Docker target and starts from its own file in `server/`. Every service listens on `HOST` (default `0.0.0.0`) and `PORT` (default `8080`) and stops cleanly on SIGTERM.
 
-| Service | Entry file               | Docker target | Health path   | What it does                                                                                        |
-| ------- | ------------------------ | ------------- | ------------- | --------------------------------------------------------------------------------------------------- |
-| `web`   | `server/web-service.mjs` | `web`         | `/web-health` | Serves `dist/` and the avatar, and proxies `/api/*` to the api service. Holds no secrets.           |
-| `api`   | `server/api-service.mjs` | `api`         | `/api/health` | Serves every `/api/*` route: chat, saved conversations, support summary, Drive search, `/api/voice` |
-| `tts`   | `server/tts-service.mjs` | `tts`         | `/health`     | `POST /voice` renders speech with Kokoro. `/health` returns 503 until the model has loaded.         |
+| Service | Entry file               | Docker target | Health path   | What it does                                                                                           |
+| ------- | ------------------------ | ------------- | ------------- | ------------------------------------------------------------------------------------------------------ |
+| `web`   | `server/web-service.mjs` | `web`         | `/web-health` | Serves `dist/` and the avatar, and proxies `/api/*` to the api service. Holds no secrets.              |
+| `api`   | `server/api-service.mjs` | `api`         | `/api/health` | Serves every `/api/*` route: chat, saved conversations, support summary, document search, `/api/voice` |
+| `tts`   | `server/tts-service.mjs` | `tts`         | `/health`     | `POST /voice` renders speech with Kokoro. `/health` returns 503 until the model has loaded.            |
 
 The `tts` image carries the Kokoro model (downloaded at build time by `npm run voice:prepare`). The `web` image carries `dist/`. The `api` image carries neither.
 
 ## Settings each service reads
 
-| Service | Variable                                                                                                                                       | Meaning                                                                                              |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| all     | `HOST`, `PORT`                                                                                                                                 | Where to listen. Defaults `0.0.0.0` and `8080`.                                                      |
-| web     | `API_SERVICE_URL`                                                                                                                              | Required. Base URL of the api service. The web service refuses to start without a valid http(s) URL. |
-| web     | `TRUST_PROXY`                                                                                                                                  | Trusted proxy hops. Default `1`.                                                                     |
-| api     | `TTS_SERVICE_URL`                                                                                                                              | Base URL of the tts service. If unset, the api loads Kokoro in its own process instead.              |
-| api     | `TRUST_PROXY`                                                                                                                                  | Trusted proxy hops. Default `2`.                                                                     |
-| api     | `AI_MODE`, `GEMINI_MODEL`, `GOOGLE_DRIVE_FOLDER_ID`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `CHAT_DATABASE_PATH`, `KNOWLEDGE_WARMUP` | Same meaning as in `.env.example`.                                                                   |
-| tts     | `KOKORO_CACHE_DIR`                                                                                                                             | Where the baked-in model lives. Default `.cache/kokoro`. Nothing is downloaded at start-up.          |
+| Service | Variable                                                                                                                                              | Meaning                                                                                              |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| all     | `HOST`, `PORT`                                                                                                                                        | Where to listen. Defaults `0.0.0.0` and `8080`.                                                      |
+| web     | `API_SERVICE_URL`                                                                                                                                     | Required. Base URL of the api service. The web service refuses to start without a valid http(s) URL. |
+| web     | `TRUST_PROXY`                                                                                                                                         | Trusted proxy hops. Default `1`.                                                                     |
+| api     | `TTS_SERVICE_URL`                                                                                                                                     | Base URL of the tts service. If unset, the api loads Kokoro in its own process instead.              |
+| api     | `TRUST_PROXY`                                                                                                                                         | Trusted proxy hops. Default `2`.                                                                     |
+| api     | `AI_MODE`, `GEMINI_MODEL`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `VERTEX_SEARCH_LOCATION`, `VERTEX_SEARCH_ENGINE_ID`, `CHAT_DATABASE_PATH` | Same meaning as in `.env.example`. Vertex AI Search: see [chat and memory](chat-and-memory.md).      |
+| tts     | `KOKORO_CACHE_DIR`                                                                                                                                    | Where the baked-in model lives. Default `.cache/kokoro`. Nothing is downloaded at start-up.          |
 
 `GOOGLE_CLOUD_TTS=enabled` turns on the legacy billed Cloud Text-to-Speech route; it is off by default and for local use only.
 

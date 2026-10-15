@@ -2,7 +2,7 @@
 
 ## Open company and onboarding chat
 
-Employees can ask their own questions about UniVRse and onboarding tasks. There is no fixed topic menu, lesson stage, practice quiz or chat completion checklist. Gemini interprets each current question and follow-up, then retrieves evidence from the existing connected Drive documents. A new subject takes priority over an older lesson in the saved transcript.
+Employees can ask their own questions about UniVRse and onboarding tasks. There is no fixed topic menu, lesson stage, practice quiz or chat completion checklist. Gemini interprets each current question and follow-up, then searches the approved company documents with Vertex AI Search. A new subject takes priority over an older lesson in the saved transcript.
 
 Company answers must cite retrieved passages. If the documents do not establish an answer, Alya explains the gap and suggests confirming with HR. Open questions do not give the model permission to invent company policies or reveal private employee records.
 

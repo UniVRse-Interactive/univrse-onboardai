@@ -12,15 +12,55 @@ import {
   conversationFailure,
   createGeminiModels,
 } from '../server/gemini-chat-workflow.mjs';
-import { createKnowledgeRetriever } from '../server/company-document-retriever.mjs';
+import {
+  createCompanyRetriever,
+  sampleSourceTitle,
+} from '../server/company-document-retriever.mjs';
+import { createVertexSearch, vertexSearchConfig } from '../server/vertex-ai-search.mjs';
 import { createApp } from '../server/api-routes.mjs';
 
-const docs = [
-  {
-    title: 'Test handbook',
-    text: 'Dress Code\nBusiness casual clothing is required. Plain T-shirts are permitted on Fridays only.\nWorking Hours\nOffice hours are 10 AM to 6 PM Monday to Friday.',
-  },
-];
+// Synthetic Vertex AI Search configuration and chunk response; requests go to a fake fetch.
+const searchEnv = {
+  GOOGLE_CLOUD_PROJECT: 'test-project',
+  VERTEX_SEARCH_LOCATION: 'global',
+  VERTEX_SEARCH_ENGINE_ID: 'test-engine',
+};
+const token = async () => 'test-access-token';
+const searchResponse = {
+  results: [
+    {
+      id: 'doc-handbook',
+      chunk: {
+        id: 'c2',
+        content:
+          '## Dress Code\nBusiness casual clothing is required. Plain T-shirts are permitted on Fridays only.',
+        documentMetadata: { uri: 'gs://test-bucket/policies/Test%20handbook.pdf' },
+        pageSpan: { pageStart: 2, pageEnd: 2 },
+        chunkMetadata: {
+          nextChunks: [
+            {
+              id: 'c3',
+              content: '## Working Hours\nOffice hours are 10 AM to 6 PM Monday to Friday.',
+            },
+          ],
+        },
+      },
+    },
+  ],
+};
+function fakeSearch(respond = () => Response.json(searchResponse)) {
+  const queries = [];
+  const retrieve = createCompanyRetriever({
+    env: searchEnv,
+    getAccessToken: token,
+    log: () => {},
+    fetchImpl: async (url, options) => {
+      queries.push(JSON.parse(options.body).query);
+      return respond();
+    },
+  });
+  return { queries, retrieve };
+}
 const content = (messages) => messages.map((m) => m.content).join('\n');
 function models() {
   return {
@@ -62,12 +102,8 @@ function models() {
   };
 }
 
-test('contextual retrieval understands T-shirt phrasing and keeps the source conditions', async () => {
-  const retrieve = createKnowledgeRetriever(async () => docs, 'approved-folder');
-  const found = await retrieve('if i wear the tshirt');
-  assert.match(found[0].pageContent, /Fridays only/);
-  assert.equal(found[0].metadata.heading, 'Dress Code');
-  assert.deepEqual(await retrieve('quantum banana teleporter'), []);
+test("Gemini's contextual rewrite is the Vertex AI Search query and answers keep the source conditions", async () => {
+  const { queries, retrieve } = fakeSearch();
   const service = createConversationService({
     env: {},
     models: models(),
@@ -78,8 +114,24 @@ test('contextual retrieval understands T-shirt phrasing and keeps the source con
     const chat = service.memory.create('person-a');
     await service.ask('person-a', chat.id, 'What should I wear?', randomUUID());
     const result = await service.ask('person-a', chat.id, 'if i wear the tshirt', randomUUID());
+    assert.deepEqual(queries, [
+      'dress code clothing attire',
+      'T-shirt clothing dress code permission',
+    ]);
     assert.match(result.answer, /Fridays only/);
-    assert.equal(result.passages[0].title, 'Test handbook');
+    assert.deepEqual(result.passages, [
+      {
+        id: 1,
+        title: 'Test handbook.pdf',
+        heading: 'Dress Code · page 2',
+        text:
+          searchResponse.results[0].chunk.content +
+          '\n\n' +
+          searchResponse.results[0].chunk.chunkMetadata.nextChunks[0].content,
+      },
+    ]);
+    assert.equal(result.source, 'Test handbook.pdf');
+    assert.ok(!JSON.stringify(result).includes('gs://'));
     assert.equal(service.memory.read('person-a', chat.id).messages.length, 4);
   } finally {
     service.close();
@@ -178,16 +230,20 @@ test('missing evidence withholds unsupported company answers and invalid citatio
     answerCalls++;
     return { answer: 'An invented policy.', citations: [] };
   };
+  const empty = fakeSearch(() => Response.json({ totalSize: 0 }));
   const service = createConversationService({
     env: {},
     models: fake,
     memory: createChatMemory(':memory:'),
-    retrieve: async () => [],
+    retrieve: empty.retrieve,
   });
   try {
     const chat = service.memory.create('person');
     const result = await service.ask('person', chat.id, 'What should I wear?', randomUUID());
-    assert.match(result.answer, /couldn’t find/);
+    assert.match(result.answer, /couldn’t find.*add a little detail.*check with HR/);
+    assert.equal(result.source, 'No confirmed company source');
+    assert.deepEqual(result.passages, []);
+    assert.equal(empty.queries.length, 1);
     assert.equal(answerCalls, 0);
   } finally {
     service.close();
@@ -198,7 +254,7 @@ test('missing evidence withholds unsupported company answers and invalid citatio
     env: {},
     models: invalid,
     memory: createChatMemory(':memory:'),
-    loadDocuments: async () => docs,
+    retrieve: fakeSearch().retrieve,
   });
   try {
     const chat = service2.memory.create('person');
@@ -383,7 +439,6 @@ test('chat without GOOGLE_CLOUD_PROJECT returns 503 GEMINI_NOT_CONFIGURED', asyn
   const dir = mkdtempSync(join(tmpdir(), 'vertex-unconfigured-'));
   const service = createConversationService({
     env: { CHAT_DATABASE_PATH: join(dir, 'chat.sqlite') },
-    loadDocuments: async () => docs,
   });
   try {
     await assert.rejects(service.ask('owner', randomUUID(), 'hello', randomUUID()), (error) => {
@@ -397,5 +452,137 @@ test('chat without GOOGLE_CLOUD_PROJECT returns 503 GEMINI_NOT_CONFIGURED', asyn
   } finally {
     await service.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('search failures during a chat turn return safe errors and leave the saved chat unchanged', async () => {
+  const slow = createVertexSearch({
+    config: vertexSearchConfig(searchEnv),
+    getAccessToken: token,
+    log: () => {},
+    timeoutMs: 20,
+    fetchImpl: (url, { signal }) =>
+      new Promise((resolve, reject) =>
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
+      ),
+  });
+  for (const [retrieve, code, status] of [
+    [
+      fakeSearch(() => new Response('private provider details', { status: 403 })).retrieve,
+      'SEARCH_ACCESS_DENIED',
+      503,
+    ],
+    [
+      fakeSearch(() => new Response('private provider details', { status: 429 })).retrieve,
+      'SEARCH_RATE_LIMIT',
+      429,
+    ],
+    [
+      fakeSearch(() => new Response('private provider details', { status: 500 })).retrieve,
+      'SEARCH_UNAVAILABLE',
+      503,
+    ],
+    [(query, config) => slow(query, { signal: config?.signal }), 'SEARCH_TIMEOUT', 504],
+  ]) {
+    const service = createConversationService({
+      env: {},
+      models: models(),
+      memory: createChatMemory(':memory:'),
+      retrieve,
+    });
+    try {
+      const chat = service.memory.create('person');
+      await assert.rejects(
+        service.ask('person', chat.id, 'What should I wear?', randomUUID()),
+        (error) => {
+          const failure = conversationFailure(error);
+          assert.equal(failure.code, code);
+          assert.equal(failure.status, status);
+          assert.ok(!JSON.stringify(failure).includes('private provider'));
+          assert.ok(!JSON.stringify(failure).includes('test-access-token'));
+          return true;
+        },
+      );
+      assert.equal(service.memory.read('person', chat.id).messages.length, 0);
+    } finally {
+      service.close();
+    }
+  }
+});
+
+test('chat answers over HTTP name the source file and section, never a gs:// URI', async () => {
+  const service = createConversationService({
+    env: {},
+    models: models(),
+    memory: createChatMemory(':memory:'),
+    retrieve: fakeSearch().retrieve,
+  });
+  const app = createApp({ env: { AI_MODE: 'gemini-chat' }, conversationService: service });
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const url = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const created = await fetch(url + '/api/conversations', { method: 'POST' });
+    const cookie = created.headers.get('set-cookie').split(';')[0],
+      chat = await created.json();
+    const response = await fetch(url + '/api/chat', {
+      method: 'POST',
+      headers: { cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question: 'What should I wear?',
+        taskId: 'company-resources',
+        conversationId: chat.id,
+        requestId: randomUUID(),
+      }),
+    });
+    const text = await response.text(),
+      result = JSON.parse(text);
+    assert.equal(response.status, 200);
+    assert.equal(result.mode, 'gemini-memory');
+    assert.equal(result.source, 'Test handbook.pdf');
+    assert.equal(result.passages[0].title, 'Test handbook.pdf');
+    assert.equal(result.passages[0].heading, 'Dress Code · page 2');
+    assert.ok(!text.includes('gs://'));
+    assert.ok(!text.includes('test-bucket'));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    service.close();
+  }
+});
+
+test('without a search engine, gemini-chat answers from the labelled sample guide', async () => {
+  let reference;
+  const fake = models();
+  fake.plan.invoke = async () => ({
+    kind: 'company',
+    query: 'finish onboarding quiz part 1 next step',
+    clarification: '',
+  });
+  fake.answer.invoke = async (messages) => {
+    reference = messages[0].content;
+    return {
+      answer: 'Sample guide: inform HR after Part 1. Please confirm with HR.',
+      citations: [1],
+    };
+  };
+  const service = createConversationService({
+    env: { GOOGLE_CLOUD_PROJECT: 'test-project' },
+    models: fake,
+    memory: createChatMemory(':memory:'),
+  });
+  try {
+    const chat = service.memory.create('person');
+    const result = await service.ask(
+      'person',
+      chat.id,
+      'I finished the quiz. Now what?',
+      randomUUID(),
+    );
+    assert.match(reference, /Unapproved sample guidance/);
+    assert.equal(result.passages.length, 1);
+    assert.equal(result.passages[0].title, sampleSourceTitle);
+    assert.equal(result.source, sampleSourceTitle);
+  } finally {
+    service.close();
   }
 });
