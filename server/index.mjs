@@ -4,6 +4,7 @@ import express from 'express';
 import { createServer as createHttpServer } from 'node:http';
 import { createApp } from './api-routes.mjs';
 import { createWindowsVoice } from './optional-windows-voice.mjs';
+import { createSharedVoice } from './kokoro-voice.mjs';
 import { readDriveKnowledge, driveFailure } from './google-drive-documents.mjs';
 if (existsSync('.env')) process.loadEnvFile('.env');
 let localVoice = null;
@@ -15,7 +16,8 @@ if (!process.env.GOOGLE_CLOUD_PROJECT) {
     console.warn(`Local voice unavailable: ${error.message}`);
   }
 }
-const app = createApp({ localVoice });
+const sharedVoice = createSharedVoice();
+const app = createApp({ localVoice, sharedVoice });
 process.on('exit', () => {
   localVoice?.close();
   app.locals.closeChat();
@@ -46,6 +48,14 @@ if (process.argv.includes('--production')) {
 const port = Number(process.env.PORT) || 3000;
 server.listen(port, process.env.HOST || '127.0.0.1', () => {
   console.log(`OnboardAi ready at http://localhost:${port}`);
+  if (process.env.VOICE_WARMUP !== 'false') {
+    sharedVoice
+      .prepare()
+      .then(() => console.info('Alya’s shared voice is ready.'))
+      .catch(() =>
+        console.warn('Voice warmup unavailable. Run npm run voice:prepare to install the model.'),
+      );
+  }
   // Prepare company text while the page/avatar loads. Every question still
   // checks current Drive revisions and access; startup failure never blocks the website.
   if (

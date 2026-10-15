@@ -82,3 +82,7 @@ A small live check with company sources took about 8.5 seconds for a cold first 
 Run `npm test` and `npm run build` to check the project. Conversation tests use synthetic documents and injected model responses; they verify routing and persistence, not every real Gemini answer. Regression tests confirm old lesson state cannot restrict new questions, and chat history is preserved. See [Answer styles](answer-styles.md) for the current presentation controls and limits.
 
 Visual answers and support summaries: see [Visual guides and HR summary](visual-guides-and-hr-summary.md). The separate visual panel reuses delivered answer text. Support statistics update without an additional Gemini request and remain scoped to the current browser session.
+
+## Uploaded guidance in the guest workspace
+
+The HR workspace can upload PDF, DOCX, TXT and Markdown guidance. Guests reuse the existing LangGraph workflow with a retriever scoped to that browser’s uploaded documents. Each guest has a separate memory owner. Document search is an explicit alternative, with saved history and feedback but no generated formats or conversational interpretation. Guest records are stored separately from the Drive chat and expire after 24 hours of workspace inactivity. See [Workspace details](account-access.md).

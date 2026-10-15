@@ -1,0 +1,524 @@
+/* Slate & Aqua: quiet page frames, distinct reading surfaces, purposeful accents. */
+:root {
+  --brand-slate: #2d4365;
+  --brand-blue: #256a91;
+  --brand-aqua: #e3f3f4;
+  --workspace-ground: #203249;
+  --workspace-surface: #293f5b;
+  --reading-ground: #e5edf1;
+  --reading-surface: #eef3f6;
+  --reading-ink: #2d4365;
+}
+
+.uv-portal {
+  background: var(--workspace-ground);
+  --bg: var(--workspace-ground);
+  --panel: #293f5b;
+  --panel-2: #334d68;
+  --line: #4b637e;
+  --muted: #b8cad6;
+  --white: #edf3f7;
+  --pink: #bddfe5;
+  --mint: #bddfe5;
+}
+.uv-portal .uv-header-top {
+  padding-block: 25px;
+}
+.uv-portal .uv-navigation {
+  border-color: #486078;
+}
+.uv-portal .uv-nav-item {
+  border-color: #486078;
+}
+.uv-portal .uv-nav-item.active {
+  background: #2a405b;
+}
+.uv-portal .uv-nav-item.active:after {
+  background: #add7df;
+  height: 3px;
+}
+.uv-portal .uv-hero-copy h1 {
+  letter-spacing: -0.055em;
+  line-height: 1.06;
+}
+.uv-portal .uv-hero-copy > p {
+  color: #c3d2dd;
+}
+.uv-portal .uv-button.primary {
+  border-radius: 7px;
+  background: #bddfe5;
+  color: #203249;
+  box-shadow: 0 3px 0 #15273b;
+}
+.uv-portal .uv-button.primary:hover {
+  background: #d0e9ed;
+}
+.uv-portal .uv-button.secondary {
+  border-radius: 7px;
+}
+.uv-portal .uv-progress-strip {
+  background: #d4e7eb;
+  color: #2d4365;
+  border: 1px solid #bbd4dd;
+  border-radius: 10px;
+}
+.uv-portal .uv-progress-strip .uv-mini-label,
+.uv-portal .uv-progress-strip strong span {
+  color: #486578;
+}
+.uv-portal .uv-strip-track span {
+  background: #b5cbd5;
+  transform: none;
+  border-radius: 2px;
+}
+.uv-portal .uv-strip-track .complete {
+  background: #256a91;
+}
+.uv-portal .uv-progress-strip > a:hover {
+  color: #174c6c;
+}
+.uv-portal .uv-task-row {
+  border-color: #486078;
+}
+.uv-portal .uv-task-row:hover {
+  background: #293f5b;
+}
+.uv-portal .uv-explore-panel {
+  padding: 25px;
+  background: #293f5b;
+  border: 1px solid #486078;
+  border-radius: 10px;
+}
+.uv-portal .uv-stage-overview {
+  border-color: #486078;
+}
+.uv-portal .uv-stage-overview > a {
+  border-color: #486078;
+}
+.uv-portal .uv-stage-overview > a:hover {
+  background: #293f5b;
+}
+.uv-portal .uv-floating-assistant {
+  border-radius: 10px;
+  border-color: #67869d;
+  background: #2d4365;
+}
+
+/* HR: slate overview above an easy-to-read report and document library. */
+.hr-preview-page {
+  background: var(--workspace-ground);
+  color: #edf3f7;
+}
+.hr-preview-page .hr-preview-header {
+  background: var(--workspace-ground);
+  border-bottom: 1px solid #486078;
+  padding-block: 23px;
+}
+.hr-preview-page .hr-experience-heading h1 {
+  font-size: clamp(34px, 3.2vw, 48px);
+}
+.hr-preview-page .hr-experience-heading .access-eyebrow {
+  color: #acd6df;
+}
+.hr-preview-page .hr-experience-heading p {
+  color: #bfceda;
+}
+.hr-preview-page .hr-company-overview {
+  background: #2d4365;
+  border: 1px solid #4c6582;
+  border-radius: 12px;
+  padding: 27px 30px;
+}
+.hr-preview-page .hr-company-heading h2,
+.hr-preview-page .hr-company-stats dd {
+  color: #edf3f7;
+}
+.hr-preview-page .hr-company-heading .access-eyebrow,
+.hr-preview-page .hr-company-stats dt,
+.hr-preview-page .hr-company-description,
+.hr-preview-page .hr-refreshed-at {
+  color: #c3d2de;
+}
+.hr-preview-page .hr-company-stats > div {
+  border-color: #66829a;
+}
+.hr-preview-page .hr-company-stats > div:first-child {
+  border-color: #a6d6df;
+}
+.hr-preview-page .hr-company-stats dd {
+  font-size: 42px;
+}
+.hr-preview-page .hr-overview-icon {
+  background: #3b5975;
+  color: #c2e5eb;
+}
+.hr-preview-page .hr-refresh {
+  color: #d6ebf0;
+}
+.hr-preview-page .hr-employee-list {
+  color: #edf3f7;
+}
+.hr-preview-page .hr-employee-list .access-eyebrow,
+.hr-preview-page .hr-employee-list h2 > span,
+.hr-preview-page .hr-employee-list > p {
+  color: #b8cbd8;
+}
+.hr-preview-page .hr-employee-list > .hr-employee-row {
+  border-color: #4b6580;
+  background: #293f5b;
+  border-radius: 9px;
+}
+.hr-preview-page .hr-employee-row > button {
+  color: #edf3f7;
+}
+.hr-preview-page .hr-employee-row > button small {
+  color: #c0d1dd;
+}
+.hr-preview-page .hr-employee-row > button[aria-pressed='true'] {
+  background: #344f6b;
+  box-shadow: inset 3px 0 #b8e0e6;
+}
+.hr-preview-page .hr-employee-initial {
+  background: #c7e3e9;
+  color: #2d4365;
+}
+.hr-preview-page .hr-employee-menu > summary {
+  color: #c7e3e9;
+}
+.hr-preview-page .hr-employee-row > button > svg,
+.hr-preview-page .hr-add-guest > svg {
+  color: #c7e3e9;
+}
+.hr-preview-page .hr-employee-menu > button {
+  background: #eef3f6;
+}
+.hr-preview-page .hr-add-guest {
+  color: #d3e9ef;
+  border-color: #7a97ac;
+  border-radius: 8px;
+}
+.hr-preview-page .hr-individual-summary {
+  background: var(--reading-surface);
+  color: var(--reading-ink);
+  border: 1px solid #bbccd8;
+  border-radius: 12px;
+  padding: 29px;
+  box-shadow: 0 7px 22px #101c2d24;
+}
+.hr-preview-page .hr-individual-summary > header {
+  padding-bottom: 24px;
+}
+.hr-preview-page .hr-interaction-description {
+  background: #dcebee;
+  border-left: 3px solid #256a91;
+  border-radius: 0 8px 8px 0;
+}
+.hr-preview-page .hr-individual-stats {
+  margin: 23px 0;
+}
+.hr-preview-page .hr-next-check-in {
+  background: #e2ebf1;
+  border-left-color: #718da6;
+}
+.hr-preview-page .hr-knowledge {
+  background: var(--reading-surface);
+  color: var(--reading-ink);
+  border: 1px solid #bbccd8;
+  border-radius: 12px;
+}
+.hr-preview-page .hr-knowledge-intro {
+  background: #d8e8ed;
+}
+.hr-preview-page .hr-upload-field {
+  background: #eaf1f4;
+  border-color: #7a9fb3;
+}
+.hr-preview-page .hr-file-type {
+  background: #e0edf1;
+  border-color: #b1c8d5;
+}
+.hr-preview-page .hr-icon-action {
+  background: #e0edf1;
+  border-color: #b1c8d5;
+}
+.hr-preview-page .hr-access-note {
+  color: #b9ccd9;
+}
+.hr-preview-page .hr-removal-notice {
+  color: #c1e2d6;
+}
+.hr-preview-page :focus-visible {
+  outline-color: #9fcfd9;
+}
+.hr-preview-page .hr-individual-summary :focus-visible,
+.hr-preview-page .hr-knowledge :focus-visible {
+  outline-color: #256a91;
+}
+
+/* Alya keeps a dark frame; the illustrated answer is a muted reading sheet. */
+.uv-portal .alya-answer-space {
+  background: #293f5b;
+  border-color: #506d87;
+}
+.uv-portal .alya-view-heading {
+  background: #2d4365;
+  border-color: #506d87;
+}
+.uv-portal .alya-view-tabs {
+  background: #203249;
+  border-color: #506d87;
+}
+.uv-portal .alya-view-tabs button[aria-selected='true'] {
+  background: #bddfe5;
+  color: #203249;
+}
+.uv-portal .alya-message.user {
+  background: #36536e;
+  border-color: #58758e;
+  border-radius: 8px;
+}
+.uv-portal .alya-composer-area {
+  background: #243a53;
+  border-color: #506d87;
+}
+.uv-portal .alya-composer {
+  background: #1f324a;
+  border-color: #7893a9;
+  border-radius: 8px;
+}
+.uv-portal .alya-composer textarea {
+  color: #edf3f7;
+}
+.uv-portal .alya-composer textarea::placeholder {
+  color: #b8cad8;
+}
+.uv-portal .alya-visual-workspace {
+  background: #e5edf1;
+}
+.uv-portal .alya-visual-workspace > header {
+  background: #dbe8ee;
+  color: #2d4365;
+}
+.uv-portal .av-answer-picker select {
+  background: #eef3f6;
+  color: #2d4365;
+}
+.uv-portal .av-outline-button[aria-selected='true'] {
+  background: #cee4e9;
+}
+
+/* Account access uses the same materials as the two workspaces. */
+.access-page {
+  background: #203249;
+  --access-paper: #e5edf1;
+}
+.access-page .access-introduction {
+  background: #2d4365;
+}
+.access-page .access-form-panel {
+  background: #e5edf1;
+}
+.access-page .access-submit {
+  background: #256a91;
+  color: #f7fafd;
+  border-radius: 7px;
+}
+.access-page .access-submit:hover {
+  background: #1e587a;
+}
+.access-page .access-field input {
+  background: #eef3f6;
+  border-color: #aabfcd;
+}
+
+/* Fit account access to the viewport by reducing decoration and spacing first. */
+@media (min-width: 761px) and (min-height: 600px) {
+  .access-page {
+    height: 100svh;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .access-page .access-introduction {
+    min-height: 0;
+    padding-block: 24px 18px;
+  }
+  .access-page .access-intro-copy {
+    margin-top: clamp(20px, 4vh, 48px);
+  }
+  .access-page .access-intro-copy h2 {
+    font-size: clamp(38px, 6.4vh, 68px);
+    margin-top: 12px;
+  }
+  .access-page .access-intro-copy p {
+    margin-top: 14px;
+  }
+  .access-page .access-alya-scene {
+    min-height: 0;
+    margin-top: 20px;
+  }
+  .access-page .access-avatar-frame {
+    height: min(100%, 34vh);
+    max-height: 330px;
+  }
+  .access-page .access-scene-note {
+    margin-bottom: 35px;
+  }
+  .access-page .access-intro-footer {
+    margin-top: 18px;
+    padding-top: 15px;
+  }
+  .access-page .access-form-side {
+    min-height: 0;
+    padding: 18px 35px 14px;
+  }
+  .access-page .access-form-container {
+    padding: 12px 0;
+  }
+  .access-page .access-role-options {
+    margin-bottom: 18px;
+  }
+  .access-page .access-role-options label {
+    padding-block: 10px;
+  }
+  .access-page .access-form-heading h1 {
+    margin: 8px 0;
+    font-size: clamp(30px, 4.6vh, 42px);
+  }
+  .access-page .access-form {
+    margin-top: 18px;
+    gap: 12px;
+  }
+  .access-page .access-field {
+    gap: 6px;
+  }
+  .access-page .access-field input {
+    height: 46px;
+  }
+  .access-page .access-password button {
+    top: 2px;
+  }
+  .access-page .access-submit,
+  .access-page .access-guest {
+    min-height: 46px;
+    padding-block: 10px;
+  }
+  .access-page .access-switch-mode,
+  .access-page .access-hr-note {
+    margin-top: 13px;
+  }
+  .access-page .access-guest-divider {
+    margin: 15px 0 11px;
+  }
+  .access-page .access-preview-note {
+    margin-top: 10px;
+    font-size: 10px;
+  }
+  .access-page .access-form-footer {
+    margin-top: 4px;
+  }
+  .access-page.is-signup .access-top-note,
+  .access-page.is-signup .access-form-footer {
+    display: none;
+  }
+  .access-page.is-signup .access-form {
+    gap: 9px;
+    margin-top: 14px;
+  }
+  .access-page.is-signup .access-role-options {
+    margin-bottom: 12px;
+  }
+  .access-page.is-signup .access-form-heading p {
+    font-size: 13px;
+  }
+  .access-page.is-signup .access-field input {
+    height: 42px;
+  }
+  .access-page.is-signup .access-password button {
+    height: 38px;
+  }
+  .access-page.is-signup .access-password-hint {
+    margin-top: -4px;
+  }
+}
+@media (max-width: 760px) {
+  .access-page {
+    min-height: 100svh;
+    grid-template-rows: auto 1fr;
+  }
+  .access-page .access-introduction {
+    padding: 15px 24px;
+  }
+  .access-page .access-intro-copy {
+    display: none;
+  }
+  .access-page .access-form-side {
+    padding: 18px 24px;
+    justify-content: center;
+  }
+  .access-page .access-form-container {
+    margin: 0;
+    padding: 0;
+  }
+  .access-page .access-role-options {
+    margin-bottom: 16px;
+  }
+  .access-page .access-role-options label {
+    padding-block: 10px;
+  }
+  .access-page .access-form-heading h1 {
+    font-size: 31px;
+    margin-block: 8px;
+  }
+  .access-page .access-form {
+    margin-top: 18px;
+    gap: 12px;
+  }
+  .access-page .access-field input {
+    height: 46px;
+  }
+  .access-page .access-password button {
+    top: 2px;
+  }
+  .access-page .access-submit,
+  .access-page .access-guest {
+    min-height: 46px;
+    padding-block: 10px;
+  }
+  .access-page .access-switch-mode,
+  .access-page .access-hr-note {
+    margin-top: 12px;
+  }
+  .access-page .access-guest-divider {
+    margin: 16px 0 12px;
+  }
+  .access-page .access-form-footer {
+    margin-top: 16px;
+  }
+  .access-page.is-signup .access-form-footer {
+    display: none;
+  }
+  .access-page.is-signup .access-form {
+    gap: 9px;
+    margin-top: 12px;
+  }
+  .access-page.is-signup .access-field input {
+    height: 42px;
+  }
+  .access-page.is-signup .access-password button {
+    height: 38px;
+  }
+}
+
+@media (max-width: 650px) {
+  .hr-preview-page .hr-company-overview {
+    padding: 22px 18px;
+  }
+  .hr-preview-page .hr-individual-summary {
+    padding: 22px 18px;
+  }
+  .hr-preview-page .hr-company-stats dd {
+    font-size: 34px;
+  }
+  .uv-portal .uv-explore-panel {
+    padding: 20px;
+  }
+}

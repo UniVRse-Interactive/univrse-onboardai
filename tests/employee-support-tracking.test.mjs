@@ -179,7 +179,7 @@ test('feedback corrections and voice starts are idempotent, recording can pause,
   }
 });
 
-test('summary and feedback endpoints enforce session ownership, same-origin mutations and bounded settings', async () => {
+test('employee APIs retain feedback ownership but do not expose reports to employee or HR guest sessions', async () => {
   const engine = service(),
     app = createApp({ env: { AI_MODE: 'gemini-chat' }, conversationService: engine });
   const server = app.listen(0, '127.0.0.1');
@@ -198,7 +198,7 @@ test('summary and feedback endpoints enforce session ownership, same-origin muta
       }),
       chat = await created.json();
     const id = randomUUID();
-    await fetch(base + '/api/chat', {
+    const answerResponse = await fetch(base + '/api/chat', {
       method: 'POST',
       headers: { cookie, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -209,6 +209,8 @@ test('summary and feedback endpoints enforce session ownership, same-origin muta
         speechEnabled: false,
       }),
     });
+    assert.equal(answerResponse.status, 200);
+    assert.ok(!('supportSummary' in (await answerResponse.json())));
     const post = (path, body, identity = cookie, origin) =>
       fetch(base + path, {
         method: 'POST',
@@ -250,19 +252,25 @@ test('summary and feedback endpoints enforce session ownership, same-origin muta
         .status,
       400,
     );
-    const summaryResponse = await fetch(base + '/api/employee-support-summary', {
-      headers: { cookie },
+    const rated = await post(feedbackPath, { messageId: id + '-a', rating: 'helpful' });
+    assert.deepEqual(await rated.json(), { rating: 'helpful' });
+    const helped = await post('/api/conversations/' + chat.id + '/human-help', {
+      messageId: id + '-a',
     });
-    assert.equal(summaryResponse.headers.get('cache-control'), 'no-store');
-    assert.equal((await summaryResponse.json()).turns, 1);
-    assert.equal(
-      (
-        await (
-          await fetch(base + '/api/employee-support-summary', { headers: { cookie: other } })
-        ).json()
-      ).turns,
-      0,
-    );
+    assert.deepEqual(await helped.json(), { saved: true });
+    const settings = await post('/api/support-summary/settings', { recording: false });
+    assert.deepEqual(await settings.json(), { recording: false });
+    for (const identity of [cookie, other]) {
+      const response = await fetch(base + '/api/employee-support-summary', {
+        headers: { cookie: identity, 'X-Role': 'hr' },
+      });
+      assert.equal(response.status, 403);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(await response.json(), {
+        code: 'HR_ACCESS_REQUIRED',
+        error: 'Reports require verified HR access.',
+      });
+    }
   } finally {
     await new Promise((resolve) => server.close(resolve));
     engine.close();

@@ -9,6 +9,7 @@ import { createSharedVoice, sharedVoiceName } from './kokoro-voice.mjs';
 import { randomBytes } from 'node:crypto';
 import { sessionHash } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
+import { mountGuestWorkspaceRoutes } from './guest-workspace-routes.mjs';
 
 export function createApp({
   env = process.env,
@@ -17,6 +18,8 @@ export function createApp({
   loadDriveKnowledge = readDriveKnowledge,
   sharedVoice = createSharedVoice(),
   conversationService = null,
+  guestModels = null,
+  guestStore = null,
 } = {}) {
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
@@ -24,7 +27,6 @@ export function createApp({
   let conversations = conversationService;
   const chatService = () =>
     (conversations ||= createConversationService({ env, loadDocuments: loadDriveKnowledge }));
-  app.locals.closeChat = () => conversations?.close();
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '24kb' }));
@@ -69,6 +71,17 @@ export function createApp({
     next();
   });
 
+  const guestWorkspace = mountGuestWorkspaceRoutes(app, {
+    env,
+    models: guestModels,
+    store: guestStore,
+    loadDrive: loadDriveKnowledge,
+  });
+  app.locals.closeChat = () => {
+    conversations?.close();
+    guestWorkspace.close();
+  };
+
   // Public configuration. API keys stay on the server.
   app.get('/api/config', (req, res) => {
     res.json({
@@ -82,7 +95,7 @@ export function createApp({
       conversationMemory: memoryChat,
       memoryRetentionDays: memoryChat ? 30 : null,
       adaptiveLearning: memoryChat,
-      supportSummary: memoryChat,
+      supportSummary: false,
 
       speechMode: env.GOOGLE_CLOUD_PROJECT
         ? 'google'
@@ -172,63 +185,51 @@ export function createApp({
     try {
       res.json({
         learning: chatService().settings(req.chatOwner, req.params.id, req.body),
-        supportSummary: chatService().memory.supportSummary(req.chatOwner),
       });
     } catch (error) {
       chatFailure(res, error);
     }
   });
   app.get('/api/employee-support-summary', chatOwner, (req, res) => {
-    try {
-      res.json(chatService().memory.supportSummary(req.chatOwner));
-    } catch (error) {
-      chatFailure(res, error);
-    }
+    // A browser-session cookie and the HR guest selector are not verified HR
+    // credentials. Keep real reports closed until role-based access is connected.
+    res
+      .status(403)
+      .json({ code: 'HR_ACCESS_REQUIRED', error: 'Reports require verified HR access.' });
   });
   app.post('/api/support-summary/settings', chatOwner, (req, res) => {
     try {
-      res.json(chatService().memory.supportSettings(req.chatOwner, req.body));
+      const settings = chatService().memory.supportSettings(req.chatOwner, req.body);
+      res.json({ recording: settings.recording });
     } catch (error) {
       chatFailure(res, error);
     }
   });
   app.post('/api/conversations/:id/feedback', chatOwner, (req, res) => {
     try {
-      res.json({
-        supportSummary: chatService().memory.feedback(
-          req.chatOwner,
-          req.params.id,
-          req.body.messageId,
-          req.body.rating,
-        ),
-        rating: req.body.rating,
-      });
+      chatService().memory.feedback(
+        req.chatOwner,
+        req.params.id,
+        req.body.messageId,
+        req.body.rating,
+      );
+      res.json({ rating: req.body.rating });
     } catch (error) {
       chatFailure(res, error);
     }
   });
   app.post('/api/conversations/:id/voice-event', chatOwner, (req, res) => {
     try {
-      res.json({
-        supportSummary: chatService().memory.voiceEvent(
-          req.chatOwner,
-          req.params.id,
-          req.body.messageId,
-        ),
-      });
+      chatService().memory.voiceEvent(req.chatOwner, req.params.id, req.body.messageId);
+      res.json({ saved: true });
     } catch (error) {
       chatFailure(res, error);
     }
   });
   app.post('/api/conversations/:id/human-help', chatOwner, (req, res) => {
     try {
-      res.json({
-        supportSummary: chatService().memory.humanHelp(
-          req.chatOwner,
-          req.params.id,
-          req.body.messageId,
-        ),
-      });
+      chatService().memory.humanHelp(req.chatOwner, req.params.id, req.body.messageId);
+      res.json({ saved: true });
     } catch (error) {
       chatFailure(res, error);
     }
@@ -311,7 +312,8 @@ export function createApp({
             abort.signal,
             req.body.learningAction,
           );
-          if (!res.destroyed) res.json(result);
+          const { supportSummary, ...employeeAnswer } = result;
+          if (!res.destroyed) res.json(employeeAnswer);
         } catch (error) {
           if (!res.destroyed) chatFailure(res, error);
         } finally {

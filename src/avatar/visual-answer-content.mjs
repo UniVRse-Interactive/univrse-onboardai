@@ -59,6 +59,9 @@ export function visualAnswer(message) {
 // Topic labels and artwork describe the words in the answer. They do not
 // determine permission, eligibility, task completion, or employee ability.
 function visualSubject(text) {
+  const times = [
+    ...new Set(text.match(/\b\d{1,2}(?:[.:]\d{2})?\s*(?:[ap]\.m\.?|[ap]m)(?![a-z])/gi) || []),
+  ].slice(0, 4);
   if (
     /\b(work updates?|progress reports?)\b/i.test(text) &&
     /\b(prepare|share|submit|include)\b/i.test(text)
@@ -81,12 +84,6 @@ function visualSubject(text) {
       scene: 'document',
       title: /\b(mileage)\b/i.test(text) ? 'Mileage guidance' : 'Receipts & claims',
     };
-  if (/\b(working hours|office hours|hours of work|work schedule|breaks?|AM|PM)\b/i.test(text))
-    return {
-      scene: 'time',
-      title: 'Hours & schedule',
-      times: [...new Set(text.match(/\b\d{1,2}(?:[.:]\d{2})?\s*(?:AM|PM)\b/gi) || [])].slice(0, 3),
-    };
   if (/\b(wear|clothing|shirts?|jeans|pants|slippers|dress code|dress guidance)\b/i.test(text)) {
     const clothes = [];
     if (/\bcollared\b/i.test(text)) clothes.push('collared');
@@ -103,16 +100,35 @@ function visualSubject(text) {
     };
     return {
       scene: 'clothing',
-      title: clothes.length === 1 ? names[clothes[0]] : 'Clothing rules',
+      title: /\b(not allowed|not permitted|prohibited)\b/i.test(text)
+        ? /\bweekdays\b/i.test(text)
+          ? 'Weekday restrictions'
+          : 'Clothing restrictions'
+        : clothes.length === 1
+          ? names[clothes[0]]
+          : 'Clothing rules',
       clothes: clothes.slice(0, 3),
       ripped: /\bripped jeans\b/i.test(text),
     };
   }
   if (
+    times.length ||
+    /\b(working hours|office hours|hours of work|work schedule|breaks?)\b/i.test(text)
+  )
+    return {
+      scene: 'time',
+      title: /\b(vary|discretion|changes?)\b/i.test(text)
+        ? 'Schedule changes'
+        : /\bOn Fridays?\b/i.test(text) && /\b(lunch|break)\b/i.test(text)
+          ? 'Friday breaks'
+          : 'Hours & schedule',
+      times,
+    };
+  if (
     /\b(virtual reality|augmented reality|gamification|metaverses?)\b/i.test(text) &&
     /\b(focus|company|UniVRse|develop|speciali[sz])\b/i.test(text)
   )
-    return { scene: 'company', title: 'What UniVRse does' };
+    return { scene: 'company', title: 'What the company does' };
   if (/\b(virtual|3D)\b/i.test(text) && /\b(events?|world)\b/i.test(text))
     return { scene: 'company', title: 'Virtual experiences' };
   if (/\b(meetings?|agenda)\b/i.test(text)) return { scene: 'meeting', title: 'Meeting guidance' };
@@ -153,6 +169,8 @@ export function simpleAnswer(text) {
 }
 
 function visualIcon(text) {
+  if (/\b(wear|clothing|shirts?|t-shirts?|jeans|pants|slippers|dress)\b/i.test(text))
+    return 'shirt';
   if (/\b(hours?|time|morning|daily)\b/i.test(text)) return 'clock';
   if (/\b(meetings?|events?|calendar)\b/i.test(text)) return 'calendar';
   if (/\b(wear|clothing|shirts?|dress)\b/i.test(text)) return 'shirt';

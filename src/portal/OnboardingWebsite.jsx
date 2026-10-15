@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
+import OnboardAiBrand from '../brand/OnboardAiBrand';
 import DecorativeWebsiteIllustration from './DecorativeWebsiteIllustration';
 import { navigation, stages, stageIntros, tasks, supportTeams } from './website-content';
+import LoginPage from '../access/LoginPage';
+import HrWorkspace from '../access/HrWorkspace';
+import GuestEmployeeEntry from '../access/GuestEmployeeEntry';
 import './website.css';
 
 const AlyaChatPage = React.lazy(() => import('../avatar/AlyaChatPage'));
@@ -69,26 +73,7 @@ function Link({ to, navigate, children, ...props }) {
   );
 }
 function Brand() {
-  return (
-    <div className="uv-brand">
-      <span className="uv-brand-mark">
-        <svg viewBox="0 0 36 36" fill="none" aria-hidden="true">
-          <path
-            d="M8 6v17l10 7 10-7V6M8 13l10 7 10-7M18 20v10"
-            stroke="currentColor"
-            strokeWidth="2.5"
-          />
-          <path d="m8 6 10-4 10 4" stroke="currentColor" strokeWidth="1.3" />
-        </svg>
-      </span>
-      <span>
-        UNIVRSE
-        <small>
-          ONBOARD<span>Ai</span>
-        </small>
-      </span>
-    </div>
-  );
+  return <OnboardAiBrand />;
 }
 function Label({ children }) {
   return <span className="uv-eyebrow">{children}</span>;
@@ -205,7 +190,7 @@ function ProgressRing({ count }) {
   );
 }
 
-function Dashboard({ state, navigate, onTask, onProfile }) {
+function Dashboard({ state, navigate, onTask, onProfile, chatPath }) {
   const pending = tasks.filter((task) => !state.completed.includes(task.id)),
     next = pending[0];
   return (
@@ -260,7 +245,7 @@ function Dashboard({ state, navigate, onTask, onProfile }) {
               <Icon name="user" size={21} />
             </button>
           </div>
-          <span className="uv-hero-footnote">ONE PLACE TO FIND YOUR FEET AT UNIVRSE.</span>
+          <span className="uv-hero-footnote">A CLEARER START. AT YOUR OWN PACE.</span>
         </div>
         <DecorativeWebsiteIllustration />
       </section>
@@ -315,7 +300,7 @@ function Dashboard({ state, navigate, onTask, onProfile }) {
         </section>
         <aside className="uv-explore-panel">
           <Label>TAKE A LOOK AROUND</Label>
-          <Link to="/mira" navigate={navigate}>
+          <Link to={chatPath} navigate={navigate}>
             <span>01</span>
             <div>
               <h3>Ask Alya</h3>
@@ -362,7 +347,7 @@ function Onboarding({ state, onTask, notify }) {
   );
   function download() {
     const body = [
-      'UNIVRSE — MY ONBOARDING',
+      'OnboardAi — MY ONBOARDING',
       'Suggested checklist. HR confirms assigned activities.',
       '',
       ...tasks.map(
@@ -701,7 +686,7 @@ function Support({ state, onNote, onDelete, notify, initialTeam }) {
   );
 }
 
-function AssistantPage({ navigate }) {
+function AssistantPage({ navigate, guestId }) {
   return (
     <React.Suspense
       fallback={
@@ -711,7 +696,7 @@ function AssistantPage({ navigate }) {
         </div>
       }
     >
-      <AlyaChatPage navigate={navigate} />
+      <AlyaChatPage key={guestId || 'company'} navigate={navigate} guestId={guestId} />
     </React.Suspense>
   );
 }
@@ -844,10 +829,14 @@ export default function OnboardingWebsite() {
     [dialog, setDialog] = useState(null),
     [mobile, setMobile] = useState(false),
     [toast, setToast] = useState(''),
-    [supportTeam, setSupportTeam] = useState(null);
+    [supportTeam, setSupportTeam] = useState(null),
+    [guestPreview, setGuestPreview] = useState('');
   const mainRef = useRef(null),
     toastTimer = useRef(null);
-  const active = navigation.find((item) => item.path === path);
+  const guestId = path.match(/^\/(?:guest\/employee|employee)\/([a-f0-9-]{36})$/i)?.[1];
+  const assistantPath = path === '/mira' || !!guestId;
+  const chatPath = guestId || path === '/mira' ? path : '/employee';
+  const active = navigation.find((item) => item.path === (assistantPath ? '/mira' : path));
   useEffect(() => {
     const pop = () => {
       let next = window.location.pathname;
@@ -871,7 +860,15 @@ export default function OnboardingWebsite() {
     };
   }, []);
   useEffect(() => {
-    document.title = (active?.label || 'Page not found') + ' · UniVRse OnboardAi';
+    const accessTitle =
+      path === '/' || path === '/login'
+        ? 'Welcome'
+        : path === '/signup'
+          ? 'Create an employee account'
+          : ['/hr', '/hr-preview'].includes(path)
+            ? 'HR workspace'
+            : null;
+    document.title = (accessTitle || active?.label || 'Page not found') + ' · OnboardAi';
   }, [path]);
   useEffect(() => {
     const keys = (event) => {
@@ -903,6 +900,7 @@ export default function OnboardingWebsite() {
     setMobile(false);
     setDialog(null);
     setSupportTeam(null);
+    if (['/', '/login', '/signup'].includes(next)) setGuestPreview('');
     window.scrollTo({ top: 0, behavior: 'instant' });
     mainRef.current?.focus({ preventScroll: true });
   }
@@ -923,18 +921,32 @@ export default function OnboardingWebsite() {
   }
   const onTask = (task) => setDialog({ type: 'task', task }),
     name = state.profile.name || 'Your profile';
+  if (['/', '/login', '/signup'].includes(path))
+    return (
+      <LoginPage
+        signup={path === '/signup'}
+        navigate={navigate}
+        onGuest={(role) => {
+          setGuestPreview(role);
+          navigate(role === 'hr' ? '/hr' : '/dashboard');
+        }}
+      />
+    );
+  if (['/hr', '/hr-preview'].includes(path)) return <HrWorkspace navigate={navigate} />;
+  if (['/employee', '/guest/employee'].includes(path))
+    return <GuestEmployeeEntry navigate={navigate} />;
   return (
-    <div className="uv-portal">
+    <div className={'uv-portal' + (assistantPath ? ' uv-assistant-workspace' : '')}>
       <a className="uv-skip-link" href="#uv-main">
         Skip to content
       </a>
       <header className="uv-header">
         <div className="uv-header-top">
           <Link
-            to="/"
+            to="/dashboard"
             navigate={navigate}
             className="uv-brand-link"
-            aria-label="UniVRse OnboardAi dashboard"
+            aria-label="OnboardAi dashboard"
           >
             <Brand />
           </Link>
@@ -942,8 +954,11 @@ export default function OnboardingWebsite() {
           <div className="uv-header-actions">
             <span className="uv-preview-label">
               <span className="uv-small-dot mint" />
-              LOCAL PREVIEW
+              {guestId || guestPreview === 'employee' ? 'EMPLOYEE' : 'WORKSPACE'}
             </span>
+            <Link to="/login" navigate={navigate} className="uv-access-link">
+              Back to sign in <Icon name="arrow" size={14} />
+            </Link>
             <button
               className="uv-icon-button"
               aria-label="Search your workspace"
@@ -981,7 +996,7 @@ export default function OnboardingWebsite() {
         >
           {navigation.map((item, index) => (
             <Link
-              to={item.path}
+              to={item.path === '/mira' ? chatPath : item.path}
               navigate={navigate}
               key={item.path}
               aria-current={active?.path === item.path ? 'page' : undefined}
@@ -996,8 +1011,9 @@ export default function OnboardingWebsite() {
         </nav>
       </header>
       <main className="uv-main" id="uv-main" tabIndex={-1} ref={mainRef}>
-        {path === '/' ? (
+        {path === '/dashboard' ? (
           <Dashboard
+            chatPath={chatPath}
             state={state}
             navigate={navigate}
             onTask={onTask}
@@ -1016,8 +1032,8 @@ export default function OnboardingWebsite() {
             }}
             notify={notify}
           />
-        ) : path === '/mira' ? (
-          <AssistantPage navigate={navigate} />
+        ) : assistantPath ? (
+          <AssistantPage navigate={navigate} guestId={guestId} />
         ) : (
           <div className="uv-empty">
             <Label>404 / UNEXPLORED SPACE</Label>
@@ -1027,14 +1043,16 @@ export default function OnboardingWebsite() {
             </Link>
           </div>
         )}
-        <footer className="uv-footer">
-          <Brand />
-          <span>YOUR NEXT CHAPTER STARTS WITH YOU.</span>
-          <span>UNIVRSE ONBOARDAI / LOCAL PREVIEW</span>
-        </footer>
+        {!assistantPath && (
+          <footer className="uv-footer">
+            <Brand />
+            <span>YOUR NEXT CHAPTER STARTS WITH YOU.</span>
+            <span>OnboardAi / PREVIEW</span>
+          </footer>
+        )}
       </main>
-      {path !== '/mira' && (
-        <Link to="/mira" navigate={navigate} className="alya-assistant-entry">
+      {!assistantPath && (
+        <Link to={chatPath} navigate={navigate} className="alya-assistant-entry">
           <span>A</span>
           <div>
             Ask Alya<small>Your onboarding companion</small>

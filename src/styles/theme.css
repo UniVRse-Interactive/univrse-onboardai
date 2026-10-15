@@ -1,0 +1,47 @@
+:root {
+  --slate: #2d4365;
+  --ocean: #256a91;
+  --aqua: #e3f3f4;
+  --paper: #dce6ed;
+  --navy: #1f3047;
+  --navy-deep: #19273b;
+  --navy-panel: #293e58;
+  --navy-raised: #334b66;
+  --gold: #abd7de;
+  --gold-light: #bedfe5;
+  --ivory: #e8eff4;
+}
+.onboard-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  color: var(--gold);
+  white-space: nowrap;
+}
+.onboard-brand-mark {
+  width: 39px;
+  height: 39px;
+  flex-shrink: 0;
+}
+.onboard-brand-name {
+  font-family: 'Space Grotesk', sans-serif;
+  color: #e8eff4;
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.055em;
+}
+.onboard-brand-name > span {
+  color: var(--gold);
+}
+@media (max-width: 540px) {
+  .onboard-brand-mark {
+    width: 32px;
+    height: 36px;
+  }
+  .onboard-brand-name {
+    font-size: 20px;
+  }
+}
+.onboard-brand {
+  --brand-cutout: #1f3047;
+}

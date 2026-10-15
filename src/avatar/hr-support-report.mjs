@@ -11,7 +11,7 @@ export function reportText(snapshot, name = '') {
   const s = snapshot.summary,
     overview = s.overview || { interaction: s.description, recommendations: [], followUp: '' };
   return [
-    'UNIVRSE — EMPLOYEE ONBOARDING SUMMARY',
+    'OnboardAi — EMPLOYEE ONBOARDING SUMMARY',
     name.trim() ? 'Employee: ' + name.trim() : 'Employee: not specified',
     'Prepared: ' + reportDate(snapshot.createdAt),
     'Period: ' + reportDate(s.period.from) + ' — ' + reportDate(s.period.to),
