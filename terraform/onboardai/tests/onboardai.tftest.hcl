@@ -144,17 +144,24 @@ run "deployer_holds_only_resource_level_roles" {
 
   assert {
     condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("resource\\s+\"google_(folder|organization)_iam_", file("${path.module}/${f}")))])
-    error_message = "No folder- or organization-level IAM. The project-level roles of api-run are pinned in api_runtime_holds_exactly_three_project_roles; every other grant must be on a single resource."
+    error_message = "No folder- or organization-level IAM. The project-level roles are pinned in api_runtime_holds_exactly_three_project_roles; every other grant must be on a single resource."
   }
 
   assert {
-    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("roles/(owner|editor|viewer|run\\.admin|iam\\.serviceAccountTokenCreator|iam\\.serviceAccountAdmin|resourcemanager\\.)", file("${path.module}/${f}")))])
+    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("roles/(owner|editor|viewer|run\\.admin|iam\\.serviceAccountTokenCreator|iam\\.serviceAccountAdmin|resourcemanager\\.|aiplatform\\.admin|cloudsql\\.admin|secretmanager\\.admin)", file("${path.module}/${f}")))])
     error_message = "Basic roles, Cloud Run Admin, token-creator and admin roles must not appear in this module."
   }
 
+  # The only deployer role on the project is staging's Agent Engine deploy
+  # role (intake_agent.tf, #30), which production does not have.
   assert {
-    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("google_project_iam_(binding|policy)|google_project_iam_member\"\\s+\"deployer", file("${path.module}/${f}")))])
-    error_message = "The deployer holds no project-level role."
+    condition = (
+      alltrue([for f in fileset(path.module, "*.tf") : !can(regex("google_project_iam_(binding|policy)", file("${path.module}/${f}")))]) &&
+      sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"deployer", file("${path.module}/${f}")))]) == 1 &&
+      sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"deployer_deploys_agents\"", file("${path.module}/${f}")))]) == 1 &&
+      length(google_project_iam_member.deployer_deploys_agents) == 0
+    )
+    error_message = "The production deployer holds no project-level role; the only deployer project binding in the module is staging's deployer_deploys_agents."
   }
 
   assert {
@@ -200,10 +207,20 @@ run "api_runtime_holds_exactly_three_project_roles" {
     error_message = "Every project-level binding is for onboardai-api-run, on this project."
   }
 
-  # Exactly one project-level IAM resource block of any flavour (the for_each above).
+  # Exactly three project-level IAM resource blocks of any flavour: the
+  # api's roles (above), and staging's intake agent runtime and Agent Engine
+  # deploy roles (intake_agent.tf, #30), which have no instance in production.
   assert {
-    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 1 && sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"api_runtime\"", file("${path.module}/${f}")))]) == 1
-    error_message = "The only project-level IAM resource is google_project_iam_member.api_runtime (no binding, policy, audit config or custom role)."
+    condition = (
+      sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 3 &&
+      alltrue([
+        for name in ["api_runtime", "intake_agent_runtime", "deployer_deploys_agents"] :
+        sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"${name}\"", file("${path.module}/${f}")))]) == 1
+      ]) &&
+      length(google_project_iam_member.intake_agent_runtime) == 0 &&
+      length(google_project_iam_member.deployer_deploys_agents) == 0
+    )
+    error_message = "The only project-level IAM resources are google_project_iam_member.api_runtime and staging's intake_agent_runtime and deployer_deploys_agents (no binding, policy, audit config or custom role); production has only api_runtime."
   }
 
   assert {
@@ -218,10 +235,32 @@ run "api_runtime_holds_exactly_three_project_roles" {
     error_message = "The deployer, web-run and tts-run hold no project-level role."
   }
 
-  # The Gemini key is gone: no secret, secret IAM or secret version is managed.
+  # The Gemini key is gone: production manages no secret, secret IAM or secret
+  # version. Staging's #30 secrets (accounts.tf, intake_agent.tf) have no
+  # instance here; tests/accounts.tftest.hcl checks them.
   assert {
-    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("google_secret_manager_", file("${path.module}/${f}")))])
-    error_message = "This module manages no Secret Manager resource; the API authenticates to Google APIs with its service account."
+    condition = (
+      length(google_secret_manager_secret.accounts) == 0 &&
+      length(google_secret_manager_secret.intake_mcp_token) == 0 &&
+      length(google_secret_manager_secret_version.db_password) == 0 &&
+      length(google_secret_manager_secret_version.database_url) == 0 &&
+      length(google_secret_manager_secret_version.intake_mcp_token) == 0 &&
+      length(google_secret_manager_secret_iam_member.api_reads_database_url) == 0 &&
+      length(google_secret_manager_secret_iam_member.intake_mcp_token) == 0
+    )
+    error_message = "Production manages no Secret Manager resource; its API authenticates to Google APIs with its service account."
+  }
+
+  # Wherever a secret is managed, its value never reaches state: every secret
+  # version and the database password use write-only arguments, and the
+  # generated values come from ephemeral resources, never stored ones.
+  assert {
+    condition = alltrue([
+      for f in fileset(path.module, "*.tf") :
+      !can(regex("(?m)^\\s*(secret_data|password|root_password)\\s*=", file("${path.module}/${f}"))) &&
+      !can(regex("resource\\s+\"random_", file("${path.module}/${f}")))
+    ])
+    error_message = "Use secret_data_wo and password_wo with ephemeral random_password, never secret_data, password, root_password or a random_* resource (their values would be stored in state)."
   }
 
   assert {
@@ -654,6 +693,35 @@ run "production_keeps_its_names_labels_and_grants" {
   assert {
     condition     = output.github_environment_commands == null
     error_message = "Production keeps its repository variables; the GitHub environment setup output is staging's only (null keeps production's outputs unchanged)."
+  }
+
+  # Employee accounts and the intake agent (#30) are staging's until
+  # production's own plan is approved: production's plan must not change.
+  assert {
+    condition = (
+      length(google_project_service.accounts) == 0 &&
+      length(google_sql_database_instance.accounts) == 0 &&
+      length(google_sql_database.accounts) == 0 &&
+      length(google_sql_user.accounts) == 0 &&
+      length(google_cloud_run_v2_job.db_migrate) == 0 &&
+      length(google_cloud_run_v2_job_iam_member.deployer_runs_migrations) == 0 &&
+      length(google_service_account.intake_agent) == 0 &&
+      length(google_service_account_iam_member.deployer_acts_as_intake_agent) == 0 &&
+      length(google_firestore_field.employee_imports_ttl) == 0 &&
+      !contains(keys(google_project_iam_member.api_runtime), "roles/cloudsql.client")
+    )
+    error_message = "Production gets none of the #30 resources (Cloud SQL, migration job, intake agent, Firestore TTL, sqladmin API, Cloud SQL Client)."
+  }
+
+  assert {
+    condition = (
+      output.cloud_sql_instance_connection_name == null &&
+      output.accounts_secret_ids == null &&
+      output.db_migrate_job_name == null &&
+      output.intake_agent_service_account_email == null &&
+      output.intake_agent_deploy_settings == null
+    )
+    error_message = "The #30 outputs are null in production, which keeps its outputs unchanged."
   }
 
   assert {

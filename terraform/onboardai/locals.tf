@@ -33,26 +33,40 @@ locals {
   # reach every Firestore database and every Vertex AI Search engine in the
   # project, staging's included (README, Staging: production follow-ups).
   #
-  # staging: Gemini on the project (Vertex AI has no narrower grant), Firestore
-  # only through the IAM condition below, and no Discovery Engine role on the
-  # project at all: it searches through a grant on its own engine
-  # (vertex_ai_search.tf), so it cannot search production's engine.
+  # staging: Gemini on the project (Vertex AI has no narrower grant; the same
+  # role lets it query the intake agent on Agent Engine and delete the agent's
+  # sessions), Firestore only through the IAM condition below, Cloud SQL Client
+  # only on its own accounts instance (IAM condition below), and no Discovery
+  # Engine role on the project at all: it searches through a grant on its own
+  # engine (vertex_ai_search.tf), so it cannot search production's engine.
   api_project_roles = {
     for role, purpose in {
       "roles/aiplatform.user"        = "Gemini generateContent on Vertex AI"
       "roles/discoveryengine.viewer" = "Vertex AI Search: discoveryengine.servingConfigs.search"
       "roles/datastore.user"         = "Firestore: read and write documents"
+      "roles/cloudsql.client"        = "Cloud SQL: the Cloud Run connection to the accounts instance"
     } : role => purpose
-    if local.is_production || role != "roles/discoveryengine.viewer"
+    if !contains(local.api_project_roles_left_out, role)
   }
 
-  # IAM conditions on api_project_roles, by role (staging only). Firestore
-  # evaluates resource.name for database-level IAM conditions, so
-  # roles/datastore.user reaches the staging database and not (default). Both
-  # spellings of the project are accepted; each one names the staging database
-  # only.
-  api_project_role_conditions = {
-    for role, c in {
+  # staging searches through its engine grant; Cloud SQL only where accounts run.
+  api_project_roles_left_out = concat(
+    local.is_production ? [] : ["roles/discoveryengine.viewer"],
+    local.employee_accounts ? [] : ["roles/cloudsql.client"],
+  )
+
+  # IAM conditions on api_project_roles, by role (never production's: adding a
+  # condition replaces a binding).
+  # - roles/datastore.user (staging): Firestore evaluates resource.name for
+  #   database-level IAM conditions, so it reaches the staging database and not
+  #   (default). Both spellings of the project are accepted; each one names the
+  #   staging database only.
+  # - roles/cloudsql.client (wherever accounts run): Cloud SQL evaluates
+  #   resource.name and resource.type of the instance (Cloud SQL docs, "IAM
+  #   Conditions": allow connecting to specific instances), so the api can
+  #   connect to its own accounts instance and no other.
+  api_project_role_conditions = merge(
+    !local.is_production ? {
       "roles/datastore.user" = {
         title       = "${local.firestore_database_name} database only"
         description = "Firestore access for the ${var.environment} api: the ${local.firestore_database_name} database, never (default)."
@@ -61,12 +75,45 @@ locals {
           "resource.name == \"projects/${p}/databases/${local.firestore_database_name}\""
         ])
       }
-    } : role => c if !local.is_production
-  }
+    } : {},
+    local.employee_accounts ? {
+      "roles/cloudsql.client" = {
+        title       = "${local.sql_instance_name} instance only"
+        description = "Cloud SQL connections of the ${var.environment} api: the ${local.sql_instance_name} accounts instance, no other."
+        expression  = "resource.name == \"projects/${var.project_id}/instances/${local.sql_instance_name}\" && resource.type == \"sqladmin.googleapis.com/Instance\""
+      }
+    } : {},
+  )
 
   # (default) is production's; a project holds only one, so staging gets a
   # named database.
   firestore_database_name = local.is_production ? "(default)" : "onboardai${local.name_suffix}"
+
+  # ---------------------------------------------------------------------------
+  # Employee accounts and the form intake agent (#30), where
+  # local.employee_accounts is true. deploy.yml computes the same names from
+  # NAME_SUFFIX; tests/accounts.tftest.hcl checks that they match.
+  # ---------------------------------------------------------------------------
+  sql_instance_name = "onboardai-db${local.name_suffix}"
+  # The database and its user (the app's DATABASE_URL user) inside it.
+  sql_database_name = "onboardai"
+  sql_user_name     = "onboardai"
+  # Cloud Run job that runs `npm run db:migrate` from the api image.
+  db_migrate_job_name = "onboardai-db-migrate${local.name_suffix}"
+
+  # Secret Manager secret IDs. Values are generated during apply and written
+  # with write-only arguments, so none of them is in state.
+  secret_ids = {
+    db_password      = "onboardai-db-password${local.name_suffix}"      # the database user's password, for the HR bootstrap
+    database_url     = "onboardai-database-url${local.name_suffix}"     # DATABASE_URL of the api and the migration job
+    intake_mcp_token = "onboardai-intake-mcp-token${local.name_suffix}" # INTAKE_MCP_TOKEN of the api and the agent
+  }
+
+  # The agent's runtime service account, and the display name the deploy
+  # command creates or updates the reasoning engine by (it stops if two
+  # engines share it). deploy.yml passes the same: "... ($DEPLOY_ENV)".
+  intake_agent_account_id   = "onboardai-intake${local.name_suffix}"
+  intake_agent_display_name = "OnboardAi employee form intake (${var.environment})"
 
   # ---------------------------------------------------------------------------
   # Vertex AI Search, Firestore and the documents bucket (contract v2).

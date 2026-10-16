@@ -21,6 +21,12 @@ locals {
 
   # Start of display names, descriptions and alert titles.
   display_name = local.is_production ? "OnboardAi" : "OnboardAi [${var.environment}]"
+
+  # Employee accounts (Cloud SQL for PostgreSQL, accounts.tf) and the employee
+  # form intake agent on Vertex AI Agent Engine (intake_agent.tf), issue #30.
+  # Staging only for now: every resource they add has count or for_each on this
+  # flag, so production's plan stays unchanged until its own plan is approved.
+  employee_accounts = !local.is_production
 }
 
 # Refuses any plan whose inputs and state disagree: the selected workspace picks

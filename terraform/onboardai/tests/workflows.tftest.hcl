@@ -60,17 +60,23 @@ run "deploy_flags_match_terraform" {
     error_message = "deploy.yml must define exactly the three *_RUN_FLAGS lines."
   }
 
-  # Gemini runs on Vertex AI as onboardai-api-run: no secret is ever mounted,
-  # and the api always clears any reference an earlier revision carried.
+  # Gemini runs on Vertex AI as onboardai-api-run: production mounts no secret,
+  # and its api deploy clears any reference an earlier revision carried.
+  # Staging (#30) sets exactly two Secret Manager references, DATABASE_URL and
+  # INTAKE_MCP_TOKEN, in the branch only a staging deploy takes; --set-secrets
+  # replaces every earlier reference too.
   assert {
     condition = (
-      !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--set-secrets") &&
       !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GEMINI_SECRET") &&
       !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GEMINI_API_KEY=") &&
       !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "secret_flags") &&
-      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "          deploy api \"$api_env\" --clear-secrets\n")
+      !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--update-secrets") &&
+      length(regexall("--set-secrets", file("${path.module}/../../.github/workflows/deploy.yml"))) == 1 &&
+      length(regexall("deploy api ", file("${path.module}/../../.github/workflows/deploy.yml"))) == 2 &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "          else\n            # Production: no secrets at all. --clear-secrets drops any reference\n            # an earlier revision carried (the retired GEMINI_API_KEY mount).\n            deploy api \"$api_env\" --clear-secrets\n          fi\n") &&
+      can(regex("          if \\[\\[ \"\\$DEPLOY_ENV\" == staging \\]\\]; then\\n(?:            #[^\\n]*\\n)+            if \\[\\[ ! \"\\$INTAKE_AGENT_ENGINE\" =~ [^\\n]+\\n[^\\n]+\\n[^\\n]+\\n            fi\\n            deploy api \"\\$api_env,INTAKE_AGENT_ENGINE=\\$INTAKE_AGENT_ENGINE\" \\\\\\n              --set-cloudsql-instances=\"\\$GCP_PROJECT_ID:\\$GCP_REGION:onboardai-db\\$NAME_SUFFIX\" \\\\\\n              --set-secrets=\"DATABASE_URL=onboardai-database-url\\$NAME_SUFFIX:latest,INTAKE_MCP_TOKEN=onboardai-intake-mcp-token\\$NAME_SUFFIX:latest\"\\n          else\\n", file("${path.module}/../../.github/workflows/deploy.yml")))
     )
-    error_message = "deploy.yml must never use --set-secrets, and must always deploy the api with --clear-secrets."
+    error_message = "Production deploys the api with --clear-secrets and no secret; only the staging branch (DEPLOY_ENV == staging) sets --set-secrets, with exactly DATABASE_URL and INTAKE_MCP_TOKEN, and the Cloud SQL connection."
   }
 
   assert {
@@ -195,10 +201,15 @@ run "workflows_follow_public_repo_rules" {
     error_message = "Pin every action to a 40-character commit SHA followed by '# vX.Y.Z'."
   }
 
-  # id-token: write only on the two jobs that call Google Cloud.
+  # id-token: write only on the three jobs that call Google Cloud: images,
+  # agent (staging's intake agent, #30) and deploy.
   assert {
-    condition     = length(regexall("id-token: write", file("${path.module}/../../.github/workflows/deploy.yml"))) == 2 && !strcontains(file("${path.module}/../../.github/workflows/ci.yml"), "id-token")
-    error_message = "id-token: write belongs to the images and deploy jobs of deploy.yml only."
+    condition = (
+      length(regexall("id-token: write", file("${path.module}/../../.github/workflows/deploy.yml"))) == 3 &&
+      toset([for name, job in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs : name if try(job.permissions["id-token"], "") == "write"]) == toset(["images", "agent", "deploy"]) &&
+      !strcontains(file("${path.module}/../../.github/workflows/ci.yml"), "id-token")
+    )
+    error_message = "id-token: write belongs to the images, agent and deploy jobs of deploy.yml only."
   }
 
   assert {
@@ -371,9 +382,9 @@ run "deploy_selects_the_stack_by_branch" {
   assert {
     condition = (
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).env.DEPLOY_ENV == "$${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}" &&
-      alltrue([for j in ["config", "images", "deploy"] : yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs[j].environment == "$${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}"])
+      alltrue([for j in ["config", "images", "agent", "deploy"] : yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs[j].environment == "$${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}"])
     )
-    error_message = "DEPLOY_ENV and the environment of config, images and deploy must all map refs/heads/staging to staging and anything else (main) to production."
+    error_message = "DEPLOY_ENV and the environment of config, images, agent and deploy must all map refs/heads/staging to staging and anything else (main) to production."
   }
 
   # vars.* in a job without an environment would read production's repository
@@ -449,5 +460,85 @@ run "production_values_pass_the_production_checks" {
       !endswith(m[1], "-staging") if contains(["GCP_WIF_PROVIDER", "VERTEX_SEARCH_ENGINE_ID", "FIRESTORE_DATABASE_ID"], m[0])
     ]) && google_service_account.deployer.account_id == "onboardai-deployer"
     error_message = "Production's provider, engine and database must not look like staging's, or the config job would refuse the production deploy."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Employee accounts and the intake agent: staging only (#30)
+# ---------------------------------------------------------------------------
+
+# Every #30 step runs on the staging branch only, so a production deploy takes
+# exactly the steps it took before. tests/accounts.tftest.hcl checks that the
+# names these steps use are the ones Terraform creates.
+run "accounts_steps_run_on_staging_only" {
+  command = plan
+
+  # The agent job: after every image is pushed, each step but the skip notice
+  # gated on the staging branch, and its one output is the engine name.
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.needs == "images" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.outputs == { engine = "$${{ steps.agent.outputs.engine }}" } &&
+      length(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps) == 8 &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[0].if == "github.ref != 'refs/heads/staging'" &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[0].run, "::notice") &&
+      alltrue([for s in slice(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps, 1, 8) : try(s.if, "") == "github.ref == 'refs/heads/staging'"])
+    )
+    error_message = "The agent job runs after images, skips with a notice on main, gates every other step on refs/heads/staging, and outputs only the engine name."
+  }
+
+  # The deploy job waits for the agent, takes its engine, and migrates before
+  # it deploys anything, on staging only.
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.needs == ["images", "agent"] &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env.INTAKE_AGENT_ENGINE == "$${{ needs.agent.outputs.engine }}" &&
+      [for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.name] == ["Authenticate to Google Cloud", "Set up gcloud", "Record the revisions serving now (rollback targets)", "Migrate the accounts database", "Deploy", "Print rollback commands"] &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].if == "github.ref == 'refs/heads/staging'" &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "gcloud run jobs update \"$job\" --project=\"$GCP_PROJECT_ID\" --region=\"$GCP_REGION\" --image=\"$REGISTRY/onboardai$NAME_SUFFIX/api:$GITHUB_SHA\" --quiet\n") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "gcloud run jobs execute \"$job\" --project=\"$GCP_PROJECT_ID\" --region=\"$GCP_REGION\" --wait --quiet")
+    )
+    error_message = "deploy needs [images, agent], reads INTAKE_AGENT_ENGINE from the agent job, and runs the staging-only migration (the api image of this commit, --wait) before the Deploy step."
+  }
+
+  # The smoke job's #30 checks run on staging only.
+  assert {
+    condition = (
+      length(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps) == 3 &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].name == "Check employee accounts and form import" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].if == "github.ref == 'refs/heads/staging'" &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].run, "'.accounts == true and .employeeImport == true'") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].run, "\"$API_URL/mcp\"") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].run, "if [[ \"$code\" == 401 ]]; then")
+    )
+    error_message = "On staging the smoke test checks /api/config (accounts and employeeImport) and that /mcp refuses a caller without the token (401)."
+  }
+
+  # The agent's toolchain never handles credentials: dependencies install
+  # without install scripts before the auth step, and the repository is checked
+  # out below the workspace root the auth step writes its credentials file to.
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[1].with.path == "repo" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[4].run == "npm ci --omit=dev --ignore-scripts" &&
+      startswith(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[5].uses, "google-github-actions/auth@") &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[3].with["enable-cache"] == false &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[7].id == "agent" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[7]["working-directory"] == "repo"
+    )
+    error_message = "The agent job checks out into repo/, installs with --ignore-scripts before authenticating, runs uv without a cache, and deploys from repo/."
+  }
+
+  # The deploy command gets the secret's ID, never its value, and its last
+  # stdout line must be a reasoning engine in INTAKE_AGENT_LOCATION.
+  assert {
+    condition = (
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[7].run, "--mcp-token-secret \"onboardai-intake-mcp-token$NAME_SUFFIX\"") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[7].run, "--mcp-url \"$api_url/mcp\"") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[7].run, "engine=$(tail -n 1 \"$log\")") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[7].run, "/reasoningEngines/[0-9]+$ ]]; then") &&
+      !can(regex("(?i)secrets versions access|INTAKE_MCP_TOKEN=[^o]|DATABASE_URL=[^o]", file("${path.module}/../../.github/workflows/deploy.yml")))
+    )
+    error_message = "The agent deploy passes the token's secret ID only, and the workflow never reads a secret value."
   }
 }
