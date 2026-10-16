@@ -1,8 +1,6 @@
 // Department choices and the pieces of the "create employee" flow that need no
-// DOM, so they can be unit-tested. The department list is shared with the server.
-import { departments } from '../../server/departments.mjs';
-
-export { departments };
+// DOM, so they can be unit-tested. The department list comes from the API
+// (GET /api/hr/departments): [{ id, name, prefix, archived, exampleId, employees }].
 
 export const departmentPlaceholder = 'Choose department';
 export const departmentRequiredMessage = 'Choose a department.';
@@ -10,37 +8,45 @@ export const autoIdNote =
   'The Employee ID and a temporary password are created automatically from the department.';
 
 const norm = (value) => String(value ?? '').trim();
+const list = (departments) => (Array.isArray(departments) ? departments : []);
 
-export function isKnownDepartment(value) {
-  return departments.some((department) => department.name === norm(value));
+export function activeDepartments(departments) {
+  return list(departments).filter((department) => !department.archived);
 }
 
-// Options for the Department <select>. `legacy` is the stored value of an
-// employee being edited: when it is not one of the six, it comes first as
-// "<text> (current)" so HR can keep it.
+// New hires need an active department.
+export function isKnownDepartment(departments, value) {
+  return activeDepartments(departments).some((department) => department.name === norm(value));
+}
+
+// Options for the Department <select>: the active departments. `current` is the
+// stored value of an employee being edited: when it is not active (archived or
+// legacy text), it comes first as "<text> (current)" so HR can keep it.
 // -> [{ value, label, legacy? }]
-export function departmentOptions(legacy = '') {
-  const options = departments.map(({ name }) => ({ value: name, label: name }));
-  const current = norm(legacy);
-  if (current && !isKnownDepartment(current))
-    options.unshift({ value: current, label: `${current} (current)`, legacy: true });
+export function departmentOptions(departments, current = '') {
+  const options = activeDepartments(departments).map(({ name }) => ({ value: name, label: name }));
+  const stored = norm(current);
+  if (stored && !isKnownDepartment(departments, stored))
+    options.unshift({ value: stored, label: `${stored} (current)`, legacy: true });
   return options;
 }
 
 // The value the <select> should show: '' (placeholder) when nothing usable.
-export function selectedDepartment(value, legacy = '') {
-  const current = norm(value);
-  return departmentOptions(legacy).some((option) => option.value === current) ? current : '';
+export function selectedDepartment(departments, value, current = '') {
+  const chosen = norm(value);
+  return departmentOptions(departments, current).some((option) => option.value === chosen)
+    ? chosen
+    : '';
 }
 
 // Client check for the add form; the server re-checks. -> message or null
-export function departmentProblem(form) {
-  return isKnownDepartment(form?.job?.department) ? null : departmentRequiredMessage;
+export function departmentProblem(form, departments) {
+  return isKnownDepartment(departments, form?.job?.department) ? null : departmentRequiredMessage;
 }
 
 // "IDs look like PE-0001" for the chosen department, '' when none chosen.
-export function idFormatHint(department) {
-  const match = departments.find((item) => item.name === norm(department));
+export function idFormatHint(departments, department) {
+  const match = list(departments).find((item) => item.name === norm(department));
   return match ? `IDs look like ${match.prefix}-0001` : '';
 }
 

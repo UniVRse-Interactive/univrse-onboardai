@@ -7,6 +7,8 @@ import { defaultHrSection, visibleHrSections } from './hr-navigation.mjs';
 import CompanyDocumentLibrary from './CompanyDocumentLibrary';
 import HrEmployees from './HrEmployees';
 import HrCompanyKnowledge from './HrCompanyKnowledge';
+import HrSettings from './HrSettings';
+import { departmentCache } from './use-departments';
 import SignedInPeopleSupport from './SignedInPeopleSupport';
 import PeopleSupport, { PeopleTotals } from './PeopleSupport';
 import { ScreenAlert, ScreenFooter, ScreenHeading } from './HrScreenParts';
@@ -156,6 +158,10 @@ export default function HrWorkspace({ navigate, account = null, onSignOut }) {
   const sections = visibleHrSections(signedIn);
   const [view, setView] = useState(() => defaultHrSection(signedIn));
   const headingRef = useRef(null);
+  // A new page view starts with a fresh department list.
+  useEffect(() => {
+    departmentCache.reset();
+  }, []);
   const current = sections.some((section) => section.id === view)
     ? view
     : defaultHrSection(signedIn);
@@ -201,6 +207,8 @@ export default function HrWorkspace({ navigate, account = null, onSignOut }) {
         ) : signedIn ? (
           current === 'people' ? (
             <SignedInPeopleSupport headingRef={headingRef} />
+          ) : current === 'settings' ? (
+            <HrSettings headingRef={headingRef} />
           ) : (
             <HrCompanyKnowledge headingRef={headingRef} />
           )

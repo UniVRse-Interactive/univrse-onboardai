@@ -4,6 +4,7 @@ import { accountApi } from './account-api.mjs';
 import AutofillControl, { useProfileAutofill } from './AutofillControl';
 import { SecretField, TextField, useFocusFirstError } from './account-fields';
 import DepartmentField from './DepartmentField';
+import { useDepartments } from './use-departments';
 import EmployeeCreatedDialog from './EmployeeCreatedDialog';
 import { autoIdNote, departmentProblem } from './employee-departments.mjs';
 import { canConfirmDelete, deleteErrorMessage } from './delete-confirm.mjs';
@@ -32,6 +33,8 @@ export function ProfileFields({
   onEdit,
   requireDepartment = false,
   legacyDepartment = '',
+  departments = null,
+  departmentError = '',
 }) {
   return profileGroups.map((group) => (
     <fieldset className="account-group" key={group.key}>
@@ -51,6 +54,8 @@ export function ProfileFields({
                 label={field.label}
                 required={requireDepartment}
                 legacy={legacyDepartment}
+                departments={departments}
+                loadError={departmentError}
                 showIdHint={requireDepartment}
                 value={form[group.key][field.key]}
                 onChange={change}
@@ -81,7 +86,7 @@ export function ProfileFields({
   ));
 }
 
-function Panel({ headingId, title, onClose, children }) {
+export function Panel({ headingId, title, onClose, children }) {
   const headingRef = useRef(null);
   useEffect(() => {
     headingRef.current?.focus();
@@ -111,7 +116,7 @@ function Panel({ headingId, title, onClose, children }) {
   );
 }
 
-function ErrorSummary({ message, summaryRef }) {
+export function ErrorSummary({ message, summaryRef }) {
   return (
     <div
       className="account-error-summary"
@@ -148,6 +153,7 @@ function applyServerError(error, setErrors, setSummary) {
 }
 
 function AddEmployeePanel({ onClose, onCreated, autofillEnabled }) {
+  const { departments, error: departmentError } = useDepartments();
   const [profile, setProfile] = useState(() => profileToForm(null));
   const autofill = useProfileAutofill(profile, setProfile);
   const [errors, setErrors] = useState({});
@@ -167,7 +173,7 @@ function AddEmployeePanel({ onClose, onCreated, autofillEnabled }) {
     event.preventDefault();
     if (busy || autofill.reading) return;
     const found = fieldErrors(validateProfileForm(profile)).errors;
-    const departmentMessage = departmentProblem(profile);
+    const departmentMessage = departmentProblem(profile, departments);
     if (departmentMessage) found['job.department'] = departmentMessage;
     setSummary('');
     if (Object.keys(found).length) {
@@ -205,6 +211,8 @@ function AddEmployeePanel({ onClose, onCreated, autofillEnabled }) {
           notes={autofill.notes}
           onEdit={autofill.edited}
           requireDepartment
+          departments={departments}
+          departmentError={departmentError}
         />
         <ErrorSummary message={summary} summaryRef={summaryRef} />
         <div className="account-actions">
@@ -221,6 +229,7 @@ function AddEmployeePanel({ onClose, onCreated, autofillEnabled }) {
 }
 
 function EditProfilePanel({ employee, onClose, onDone, autofillEnabled }) {
+  const { departments, error: departmentError } = useDepartments();
   const [form, setForm] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [errors, setErrors] = useState({});
@@ -293,6 +302,8 @@ function EditProfilePanel({ employee, onClose, onDone, autofillEnabled }) {
             notes={autofill.notes}
             onEdit={autofill.edited}
             legacyDepartment={legacyDepartment}
+            departments={departments}
+            departmentError={departmentError}
           />
           <ErrorSummary message={summary} summaryRef={summaryRef} />
           <div className="account-actions">

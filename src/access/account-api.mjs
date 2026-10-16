@@ -141,6 +141,12 @@ export const accountApi = {
       body: { temporaryPassword },
     }),
   deleteEmployee: (id) => accountRequest('/api/hr/employees/' + enc(id), { method: 'DELETE' }),
+  listDepartments: (options) => accountRequest('/api/hr/departments', options),
+  createDepartment: (department) =>
+    accountRequest('/api/hr/departments', { method: 'POST', body: department }),
+  // body holds only the changed fields: { name?, prefix?, archived? }
+  updateDepartment: (id, body) =>
+    accountRequest('/api/hr/departments/' + enc(id), { method: 'PATCH', body }),
   supportSummaries: (options) => accountRequest('/api/hr/support-summaries', options),
   setStatus: (id, status) =>
     accountRequest('/api/hr/employees/' + enc(id) + '/status', {

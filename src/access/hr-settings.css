@@ -1,0 +1,13 @@
+/* Settings > Departments. Same light accounts card as Employee accounts. */
+.account-badge.is-muted {
+  background: #dbe7ee;
+  color: #1f3047;
+}
+.hr-preview-page .hr-accounts .account-field-note {
+  color: #17475c;
+}
+@media (max-width: 480px) {
+  .hr-accounts .account-row-actions button {
+    flex: 1 1 120px;
+  }
+}

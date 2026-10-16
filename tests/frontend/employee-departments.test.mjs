@@ -11,41 +11,65 @@ import {
   manualCopyMessage,
   selectedDepartment,
 } from '../../src/access/employee-departments.mjs';
-import { departments } from '../../server/departments.mjs';
 import { formToProfileInput, profileToForm } from '../../src/access/profile-validation.mjs';
 
-test('six department options, in order', () => {
-  const options = departmentOptions();
-  assert.equal(options.length, 6);
+const dept = (id, name, prefix, archived = false) => ({
+  id,
+  name,
+  prefix,
+  archived,
+  exampleId: `${prefix}-0001`,
+  employees: 0,
+});
+const departments = [
+  dept('d1', 'Product & Engineering', 'PE'),
+  dept('d2', 'Finance', 'FN'),
+  dept('d3', 'Legal', 'LG', true),
+];
+
+test('dropdown options are the active departments only, in the API order', () => {
+  const options = departmentOptions(departments);
   assert.deepEqual(
     options.map((o) => o.value),
-    departments.map((d) => d.name),
+    ['Product & Engineering', 'Finance'],
   );
+  assert.deepEqual(departmentOptions(null), []);
 });
 
-test('legacy department text becomes a first "(current)" option', () => {
-  const options = departmentOptions('Old Dept');
-  assert.equal(options.length, 7);
-  assert.deepEqual(options[0], { value: 'Old Dept', label: 'Old Dept (current)', legacy: true });
-  assert.equal(selectedDepartment('Old Dept', 'Old Dept'), 'Old Dept');
-  assert.equal(departmentOptions('Finance').length, 6);
-  assert.equal(departmentOptions('  ').length, 6);
-  assert.equal(selectedDepartment('Finance', 'Old Dept'), 'Finance');
-  assert.equal(selectedDepartment('Unknown', ''), '');
+test('an archived or legacy current value becomes a first "(current)" option', () => {
+  const archived = departmentOptions(departments, 'Legal');
+  assert.deepEqual(archived[0], { value: 'Legal', label: 'Legal (current)', legacy: true });
+  assert.equal(archived.length, 3);
+  const legacy = departmentOptions(departments, 'Old Dept');
+  assert.deepEqual(legacy[0], { value: 'Old Dept', label: 'Old Dept (current)', legacy: true });
+  assert.equal(selectedDepartment(departments, 'Old Dept', 'Old Dept'), 'Old Dept');
+  assert.equal(selectedDepartment(departments, 'Legal', 'Legal'), 'Legal');
+  // an active current value adds nothing
+  assert.equal(departmentOptions(departments, 'Finance').length, 2);
+  assert.equal(departmentOptions(departments, '  ').length, 2);
+  assert.equal(selectedDepartment(departments, 'Finance', 'Old Dept'), 'Finance');
+  // archived and not the stored value: not selectable
+  assert.equal(selectedDepartment(departments, 'Legal', ''), '');
+  assert.equal(selectedDepartment(departments, 'Unknown', ''), '');
 });
 
-test('department is required on the add form', () => {
-  assert.ok(departmentProblem(profileToForm(null)));
-  assert.ok(departmentProblem({ job: { department: 'Made up' } }));
+test('department is required on the add form and must be active', () => {
+  assert.ok(departmentProblem(profileToForm(null), departments));
+  assert.ok(departmentProblem({ job: { department: 'Made up' } }, departments));
+  assert.ok(departmentProblem({ job: { department: 'Legal' } }, departments));
+  assert.ok(departmentProblem({ job: { department: 'Finance' } }, null));
   const form = profileToForm({ job: { department: 'Finance' } });
-  assert.equal(departmentProblem(form), null);
+  assert.equal(departmentProblem(form, departments), null);
 });
 
-test('ID format hint per department', () => {
+test('ID format hint uses the prefix from the API', () => {
   for (const { name, prefix } of departments)
-    assert.equal(idFormatHint(name), `IDs look like ${prefix}-0001`);
-  assert.equal(idFormatHint(''), '');
-  assert.equal(idFormatHint('Other'), '');
+    assert.equal(idFormatHint(departments, name), `IDs look like ${prefix}-0001`);
+  const changed = [dept('d2', 'Finance', 'ZZ')];
+  assert.equal(idFormatHint(changed, 'Finance'), 'IDs look like ZZ-0001');
+  assert.equal(idFormatHint(departments, ''), '');
+  assert.equal(idFormatHint(departments, 'Other'), '');
+  assert.equal(idFormatHint(null, 'Finance'), '');
 });
 
 test('create request body holds only the profile', () => {
