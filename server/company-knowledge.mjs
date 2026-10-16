@@ -1,12 +1,5 @@
 import { createHash } from 'node:crypto';
 import { AccountError } from './account-errors.mjs';
-import { ChatError } from './chat-errors.mjs';
-import {
-  driveFailure,
-  parseGoogleDocLink,
-  readDriveKnowledge,
-  readGoogleDocument,
-} from './google-drive-documents.mjs';
 import { onboardingDocumentTopics } from './onboarding-document-topics.mjs';
 import {
   createUploadedDocumentIndex,
@@ -15,28 +8,23 @@ import {
 import { interleavePassages } from './workspace-company-knowledge.mjs';
 import { workspaceLimits } from './workspace-limits.mjs';
 
-// Company knowledge for signed-in accounts (issue #32):
+// Company knowledge for signed-in accounts (issues #32 and #35):
 //
-// - The HR library at /api/hr/company-knowledge (account-routes.mjs): Google Docs
-//   that HR links, stored company-wide in Firestore companyDocuments
-//   (company-documents.mjs), plus the status of the optional GOOGLE_DRIVE_FOLDER_ID
-//   folder. Request and response shapes mirror the guest workspace library of #28.
-// - Retrieval for chats owned by an account (`account:<id>`): the connected Docs
-//   and the Drive folder, interleaved with the existing company retriever
-//   (Vertex AI Search, or the sample guide). Guest workspaces and anonymous
-//   browsers never see this library.
-//
-// Answers use the text saved when HR connected a Doc; connecting the same link
-// to the same topic again refreshes it. The Drive folder is read on each turn.
-export const driveStatusTtlMs = 30000;
+// - The HR library at /api/hr/company-knowledge (account-routes.mjs): files
+//   that HR uploads, read into plain text and stored company-wide in Firestore
+//   companyDocuments (company-documents.mjs). Only the extracted text and
+//   metadata are kept; the original file never is.
+// - Retrieval for chats owned by an account (`account:<id>`): the library,
+//   interleaved with the existing company retriever (Vertex AI Search, or the
+//   sample guide). Guest workspaces and anonymous browsers never see it.
 export const isAccountOwner = (owner) => typeof owner === 'string' && owner.startsWith('account:');
 
 const requestErrors = {
-  googleDocOnly: () =>
+  fileRequired: () =>
     new AccountError(
       415,
-      'GOOGLE_DOC_ONLY',
-      'Only Google Docs links are accepted. Paste a Google Docs document link instead of uploading a file.',
+      'FILE_UPLOAD_REQUIRED',
+      'Upload a PDF, Word (.docx), text or Markdown file. Google Docs links are no longer accepted.',
     ),
   topicRequired: () =>
     new AccountError(
@@ -53,129 +41,52 @@ const requestErrors = {
 };
 export { requestErrors as companyKnowledgeRequestErrors };
 
-// The status an HR link failure gets, as in #28.
-const linkFailureStatus = (code) =>
-  code === 'GOOGLE_DOC_LINK_INVALID'
-    ? 400
-    : ['GOOGLE_DOC_TYPE_REQUIRED', 'GOOGLE_DOC_TOO_LARGE', 'DRIVE_EMPTY_DOCUMENTS'].includes(code)
-      ? 422
-      : 503;
-
 export function createCompanyKnowledge({
-  env = {},
   // createCompanyDocumentStore(...)
   documents,
   // The existing company retriever: retrieve(query, { signal }) -> passages.
   companyRetrieve,
-  loadGoogleDoc = readGoogleDocument,
-  loadDrive = readDriveKnowledge,
-  log = (line) => console.warn(line),
 }) {
-  const folderId = (env.GOOGLE_DRIVE_FOLDER_ID || '').trim();
-  const logDrive = (operation, code) =>
-    log('Company knowledge Drive request failed: ' + JSON.stringify({ operation, code }));
-
-  // The Drive folder's state for the HR library, checked at most every 30 seconds.
-  let cachedStatus = null,
-    checkedAt = 0,
-    checking = null;
-  async function driveStatus() {
-    if (!folderId) return { state: 'not-configured', documents: [] };
-    if (cachedStatus && Date.now() - checkedAt < driveStatusTtlMs) return cachedStatus;
-    checking ||= (async () => {
-      try {
-        const files = await loadDrive(folderId);
-        cachedStatus = {
-          state: 'connected',
-          documents: files.map((file) => ({
-            title: file.title,
-            googleDocId: file.googleDocId,
-            category: file.category,
-            characters: file.text.length,
-          })),
-        };
-      } catch (error) {
-        const failure = driveFailure(error);
-        logDrive('read folder', failure.code);
-        cachedStatus = { state: 'unavailable', documents: [], ...failure };
-      }
-      return cachedStatus;
-    })().finally(() => {
-      checkedAt = Date.now();
-      checking = null;
-    });
-    return checking;
-  }
-
-  // GET /api/hr/company-knowledge
+  // GET /api/hr/company-knowledge: never the text.
   async function snapshot() {
-    const [stored, drive] = await Promise.all([documents.list(), driveStatus()]);
+    const stored = await documents.list();
     return {
-      documents: stored.map(({ id, title, bytes, created, category, googleDocId, characters }) => ({
+      documents: stored.map(({ id, title, fileName, category, characters, bytes, created }) => ({
         id,
         title,
+        fileName,
+        category,
+        characters,
         bytes,
         created,
-        category,
-        googleDocId,
-        characters,
       })),
       limits: workspaceLimits,
-      companyKnowledge: { drive },
-      // #28's local-only "move into the company folder" is not offered here.
-      driveMoves: { enabled: false, configured: false },
     };
   }
 
-  // POST /api/hr/company-knowledge/documents with { category, url, name }.
-  // Returns { id, duplicate: true } or { id, duplicate: false, replaced }.
-  async function connect(actorId, body, at) {
-    const { category, url, name } = body && typeof body === 'object' ? body : {};
-    const topic = onboardingDocumentTopics.find((item) => item.id === category);
+  // The topic title (and its validation) for an upload's query, before the
+  // file is read. Returns { category, title }.
+  function describe({ category, name }) {
+    const topic =
+      typeof category === 'string' && onboardingDocumentTopics.find((item) => item.id === category);
     if (!topic && category !== 'additional') throw requestErrors.topicRequired();
     const title = topic?.title || (typeof name === 'string' ? name.trim() : '');
     if (!title || title.length > 80 || /[\u0000-\u001f\u007f]/.test(title))
       throw requestErrors.nameInvalid();
-    let link, document;
-    try {
-      link = parseGoogleDocLink(url);
-      document = await loadGoogleDoc(link.id);
-    } catch (error) {
-      const failure = driveFailure(error);
-      const status = linkFailureStatus(failure.code);
-      if (status === 503) logDrive('read document', failure.code);
-      throw new AccountError(status, failure.code, failure.error);
-    }
-    return documents.connect(
-      { category, title, googleDocId: link.id, text: document.text },
+    return { category, title };
+  }
+
+  // Stores a file read by readUploadedDocument ({ name, text, bytes }) under
+  // the described topic. Returns { id, duplicate: true } or
+  // { id, duplicate: false, replaced }.
+  const add = (actorId, { category, title }, file, at) =>
+    documents.add(
+      { category, title, fileName: file.name, text: file.text, bytes: file.bytes },
       actorId,
       at,
     );
-  }
 
-  // Documents for an account's chat: the Drive folder, then connected Docs that
-  // are not also in the folder. An empty folder adds nothing; any other Drive
-  // failure fails the answer (a failed read never falls back to older text).
-  async function library() {
-    const [drive, stored] = await Promise.all([
-      folderId
-        ? loadDrive(folderId).catch((error) => {
-            if (error?.code === 'DRIVE_NO_DOCUMENTS') return [];
-            const failure = driveFailure(error);
-            logDrive('read folder for an answer', failure.code);
-            throw new ChatError(503, failure.code, failure.error);
-          })
-        : [],
-      documents.list(),
-    ]);
-    const shared = new Set(drive.map((doc) => doc.googleDocId).filter(Boolean));
-    return [
-      ...drive.map(({ title, text }) => ({ title, text })),
-      ...stored
-        .filter((doc) => !shared.has(doc.googleDocId))
-        .map(({ title, text }) => ({ title, text })),
-    ];
-  }
+  const library = async () => (await documents.list()).map(({ title, text }) => ({ title, text }));
   let index = null;
   function rank(docs, query) {
     const hash = createHash('sha256')
@@ -188,9 +99,9 @@ export function createCompanyKnowledge({
     Promise.all([library(), companyRetrieve(query, signal ? { signal } : undefined)]);
 
   return {
-    driveStatus,
     snapshot,
-    connect,
+    describe,
+    add,
     remove: (id) => documents.remove(id),
     library,
     // Gemini chat: up to six [{ title, heading, text }], the library first.

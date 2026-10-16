@@ -1,17 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { accountRequest } from './account-api.mjs';
 import { createKnowledgeApi, hrKnowledgeBase } from './company-knowledge-api.mjs';
-import GoogleDocsLibrary from './GoogleDocsLibrary';
+import CompanyKnowledgeLibrary from './CompanyKnowledgeLibrary';
 import { ScreenAlert, ScreenFooter, ScreenHeading } from './HrScreenParts';
 
 // "Good guidance starts here" for a signed-in HR session, backed by
 // /api/hr/company-knowledge/*.
 export default function HrCompanyKnowledge({ headingRef }) {
   const api = useMemo(
-    () =>
-      createKnowledgeApi(hrKnowledgeBase, (url, { method, body, signal }) =>
-        accountRequest(url, { method, body, signal }),
-      ),
+    () => createKnowledgeApi(hrKnowledgeBase, (url, options) => accountRequest(url, options)),
     [],
   );
   const [snapshot, setSnapshot] = useState(null);
@@ -44,13 +41,13 @@ export default function HrCompanyKnowledge({ headingRef }) {
     <>
       <ScreenHeading
         headingRef={headingRef}
-        kicker="COMPANY KNOWLEDGE"
+        kicker="COMPANY DOCUMENTATION"
         title="Good guidance starts here."
         text="Six onboarding essentials, with room for other related guidance."
       />
       <ScreenAlert message={error} onRetry={load} />
       {snapshot ? (
-        <GoogleDocsLibrary workspace={snapshot} onRefresh={load} api={api} />
+        <CompanyKnowledgeLibrary workspace={snapshot} onRefresh={load} api={api} />
       ) : (
         !error && (
           <div className="hr-screen-loading" role="status">

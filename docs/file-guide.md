@@ -133,7 +133,7 @@ The existing removed pages and old standalone avatar demos stay removed. The unu
 
 ## Accounts
 
-HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds accounts, sessions and the audit trail; Firestore holds employee profiles, account-owned chats and the company Google Docs library. See [Account access](account-access.md) for the setup, rules and API contract.
+HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds accounts, sessions and the audit trail; Firestore holds employee profiles, account-owned chats and the company knowledge library. See [Account access](account-access.md) for the setup, rules and API contract.
 
 | File                                    | Purpose                                                                                                                       |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -146,9 +146,8 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | `server/departments.mjs`                | The six first departments and prefixes, seed data only (migration 004 holds the live list in `departments`); import-free      |
 | `server/employee-ids.mjs`               | The prefix rule (2–4 letters, `HR` reserved) and the `PE-0001` Employee ID format                                             |
 | `server/employee-profiles.mjs`          | Profile validation and `employeeProfiles/{accountId}` in Firestore; removes an account's profile and `employeeImports` drafts |
-| `server/company-knowledge.mjs`          | HR company Google Docs library, Drive folder status, and its search for account-owned chats                                   |
-| `server/company-documents.mjs`          | Firestore `companyDocuments` and the library rules (one Doc per topic, twelve documents)                                      |
-| `server/google-drive-documents.mjs`     | Read-only Google Docs and Drive folder reader with fixed, safe error codes                                                    |
+| `server/company-knowledge.mjs`          | HR company knowledge uploads and their search for account-owned chats                                                         |
+| `server/company-documents.mjs`          | Firestore `companyDocuments` and the library rules (one document per topic, twelve documents)                                 |
 | `server/onboarding-document-topics.mjs` | The six onboarding topics of the company library                                                                              |
 | `server/profile-autofill.mjs`           | Profile autofill: reads profile fields from an uploaded document with Gemini; saves nothing                                   |
 | `server/database-migrations.mjs`        | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                                                     |

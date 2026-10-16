@@ -22,7 +22,6 @@ import { createAccountBackends, createAccountService } from './account-service.m
 import { createCompanyDocumentStore } from './company-documents.mjs';
 import { createCompanyKnowledge, isAccountOwner } from './company-knowledge.mjs';
 import { createFirestoreClient } from './firestore-client.mjs';
-import { readDriveKnowledge, readGoogleDocument } from './google-drive-documents.mjs';
 import {
   accountCookie,
   accountCookieOptions,
@@ -62,12 +61,9 @@ export function createApp({
   // Profile autofill service (profile-autofill.mjs). By default it uses Vertex
   // AI through fetchImpl and getAccessToken; pass null to turn it off.
   profileAutofill = undefined,
-  // The HR company Google Docs library (company-documents.mjs). By default it
+  // The HR company knowledge library (company-documents.mjs). By default it
   // is stored in Firestore whenever accounts are on.
   companyDocuments = undefined,
-  // Read-only Google Drive access for that library (google-drive-documents.mjs).
-  loadGoogleDocument = readGoogleDocument,
-  loadDriveKnowledge = readDriveKnowledge,
   // The company search (Vertex AI Search, or the sample guide); tests replace it.
   companyRetrieve = undefined,
 } = {}) {
@@ -98,8 +94,7 @@ export function createApp({
   // the sample guide when VERTEX_SEARCH_ENGINE_ID is unset.
   const retrieve =
     companyRetrieve || createCompanyRetriever({ env, fetchImpl, getAccessToken: vertexToken });
-  // With accounts on, HR's company Google Docs library (and the optional
-  // GOOGLE_DRIVE_FOLDER_ID folder) is searched too, for chats owned by an
+  // With accounts on, HR's uploaded company knowledge library is searched too, for chats owned by an
   // account only. Anonymous browsers and guest workspaces are unchanged.
   const library = !accounts
     ? null
@@ -110,11 +105,8 @@ export function createApp({
         : null;
   const knowledge = library
     ? createCompanyKnowledge({
-        env,
         documents: library,
         companyRetrieve: retrieve,
-        loadGoogleDoc: loadGoogleDocument,
-        loadDrive: loadDriveKnowledge,
       })
     : null;
   // retrieve(query, options, owner): `owner` is the chat's owner, when known.
@@ -561,7 +553,7 @@ export function createApp({
       try {
         passages = await quoteRetrieve(question.trim(), signal ? { signal } : undefined, owner);
       } catch (error) {
-        // Company library and Drive failures are ChatErrors with fixed codes.
+        // Company library failures are ChatErrors with fixed codes.
         const failure =
           error instanceof ChatError
             ? { status: error.status, code: error.code, error: error.message }

@@ -102,8 +102,8 @@ function GuestViews({ section, headingRef }) {
   return (
     <>
       <ScreenHeading
-        kicker={peopleView ? 'PEOPLE & SUPPORT' : 'COMPANY KNOWLEDGE'}
-        title={peopleView ? 'A clearer picture of your people.' : 'Company documents.'}
+        kicker={peopleView ? 'PEOPLE & SUPPORT' : 'COMPANY DOCUMENTATION'}
+        title={peopleView ? 'A clearer picture of your people.' : 'Good guidance starts here.'}
         text={
           peopleView
             ? 'See the support employees ask for, and what you can offer next.'

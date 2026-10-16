@@ -1,6 +1,6 @@
-// Request adapter for the "Good guidance starts here" Google Docs library.
-// The guest workspace and signed-in HR share the same request and response
-// shapes; only the base path (and the server-side storage) differs.
+import { buildUploadRequest } from './company-knowledge-upload.mjs';
+
+// Request adapter for the "Good guidance starts here" company knowledge library.
 export const guestKnowledgeBase = '/api/guest-workspace';
 export const hrKnowledgeBase = '/api/hr/company-knowledge';
 
@@ -11,10 +11,11 @@ export function createKnowledgeApi(base, request) {
   return {
     base: root,
     snapshot: (options = {}) => request(root, { method: 'GET', ...options }),
-    connect: ({ category, url, name }, signal) =>
-      request(root + '/documents', { method: 'POST', body: { category, url, name }, signal }),
-    disconnect: (id) =>
-      request(root + '/documents/' + encodeURIComponent(id), { method: 'DELETE' }),
+    upload: (file, { category, name }, signal) => {
+      const { url, ...options } = buildUploadRequest(root, { category, name }, file);
+      return request(url, { ...options, signal });
+    },
+    remove: (id) => request(root + '/documents/' + encodeURIComponent(id), { method: 'DELETE' }),
   };
 }
 

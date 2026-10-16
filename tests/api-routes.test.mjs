@@ -166,29 +166,23 @@ test('no server or script file reads GEMINI_API_KEY', async () => {
         offenders.push(`${dir}/${f}`);
   assert.deepEqual(offenders, []);
 });
-// Issue #32 brought back the read-only Drive reader for the HR company library
-// only: one file talks to Drive, with the drive.readonly scope and no writes,
-// and one file reads GOOGLE_DRIVE_FOLDER_ID.
-test('only the read-only Drive reader talks to Google Drive, and only the HR library reads the folder', async () => {
+// Issue #35 retired Google Drive and Google Docs for company knowledge: HR
+// uploads files instead, so no server or script file reads Google Drive.
+test('no server file reads Google Drive', async () => {
   const { readdirSync, readFileSync } = await import('node:fs');
-  const drive = [],
-    folder = [];
+  const offenders = [];
   for (const dir of ['server', 'scripts'])
     for (const f of readdirSync(new URL(`../${dir}/`, import.meta.url))) {
       if (!/\.(mjs|js|ps1|cs)$/.test(f)) continue;
       const text = readFileSync(new URL(`../${dir}/${f}`, import.meta.url), 'utf8');
-      if (/googleapis\.com\/drive|auth\/drive/.test(text)) drive.push(`${dir}/${f}`);
-      if (/\.GOOGLE_DRIVE_FOLDER_ID|\[['"]GOOGLE_DRIVE_FOLDER_ID/.test(text))
-        folder.push(`${dir}/${f}`);
+      if (
+        /googleapis\.com\/drive|auth\/drive|\.GOOGLE_DRIVE_FOLDER_ID|\[['"]GOOGLE_DRIVE_FOLDER_ID/.test(
+          text,
+        )
+      )
+        offenders.push(`${dir}/${f}`);
     }
-  assert.deepEqual(drive, ['server/google-drive-documents.mjs']);
-  assert.deepEqual(folder, ['server/company-knowledge.mjs']);
-  const reader = readFileSync(
-    new URL('../server/google-drive-documents.mjs', import.meta.url),
-    'utf8',
-  );
-  assert.deepEqual(reader.match(/auth\/drive[\w.]*/g), ['auth/drive.readonly']);
-  assert.doesNotMatch(reader, /method:\s*'(PATCH|POST|PUT|DELETE)'/);
+  assert.deepEqual(offenders, []);
 });
 test('company search settings are reported in /api/config only for the modes that search', async () => {
   const env = {

@@ -159,7 +159,7 @@ npm run docs:import -- ./company-docs --apply
 
 ## Information boundaries
 
-Chats owned by a signed-in account also search the company Google Docs library that HR connects (Firestore `companyDocuments`, and the optional `GOOGLE_DRIVE_FOLDER_ID` folder), interleaved with Vertex AI Search or the sample guide; see [Account access](account-access.md#account-chats-and-the-company-library). Anonymous and guest chats do not.
+Chats owned by a signed-in account also search the company knowledge library that HR uploads (Firestore `companyDocuments`), interleaved with Vertex AI Search or the sample guide; see [Account access](account-access.md#account-chats-and-the-company-library). Anonymous and guest chats do not.
 
 Only documents approved for the intended employees belong in the data store. Prompt instructions cannot reliably hide PNC information that the model has already received. Exclude restricted HR records, passwords, individual salary/medical details and other material employees should not access. Employee sign-in now exists (see [Account access](account-access.md)), but every signed-in employee searches the same company documents: for multiple employee roles, apply document permissions **before retrieval**. The anonymous browser-session isolation is not employee authentication.
 

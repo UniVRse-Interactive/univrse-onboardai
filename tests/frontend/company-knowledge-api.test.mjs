@@ -19,28 +19,26 @@ test('base paths', () => {
 test('the HR adapter targets /api/hr/company-knowledge', async () => {
   const { calls, request } = recorder();
   const api = createKnowledgeApi(hrKnowledgeBase, request);
+  const file = { name: 'IT guide.pdf', size: 10 };
   await api.snapshot();
-  await api.connect({ category: 'it', url: 'https://docs.google.com/document/d/x', name: '' });
-  await api.disconnect('doc 1');
+  await api.upload(file, { category: 'it', name: '' });
+  await api.remove('doc 1');
   assert.deepEqual(
     calls.map(([url, o]) => [o.method, url]),
     [
       ['GET', '/api/hr/company-knowledge'],
-      ['POST', '/api/hr/company-knowledge/documents'],
+      ['POST', '/api/hr/company-knowledge/documents?category=it'],
       ['DELETE', '/api/hr/company-knowledge/documents/doc%201'],
     ],
   );
-  assert.deepEqual(calls[1][1].body, {
-    category: 'it',
-    url: 'https://docs.google.com/document/d/x',
-    name: '',
-  });
+  assert.equal(calls[1][1].rawBody, file);
+  assert.equal(calls[1][1].headers['X-File-Name'], 'IT%20guide.pdf');
 });
 
 test('the same adapter serves the guest workspace and ignores a trailing slash', async () => {
   const { calls, request } = recorder();
   const api = createKnowledgeApi(guestKnowledgeBase + '/', request);
   assert.equal(api.base, '/api/guest-workspace');
-  await api.connect({ category: 'company', url: 'u' });
-  assert.equal(calls[0][0], '/api/guest-workspace/documents');
+  await api.upload({ name: 'a.md' }, { category: 'company' });
+  assert.equal(calls[0][0], '/api/guest-workspace/documents?category=company');
 });

@@ -5,14 +5,14 @@ import { defaultHrSection, visibleHrSections } from '../../src/access/hr-navigat
 test('signed-in HR sees all four sections in order, Settings last', () => {
   assert.deepEqual(
     visibleHrSections(true).map((s) => s.label),
-    ['Employee accounts', 'People & Support', 'Company knowledge', 'Settings'],
+    ['Employee accounts', 'People & Support', 'Company Documentation', 'Settings'],
   );
 });
 
-test('guest HR sees only People & Support and Company knowledge, never Settings', () => {
+test('guest HR sees only People & Support and Company Documentation, never Settings', () => {
   assert.deepEqual(
     visibleHrSections(false).map((s) => s.label),
-    ['People & Support', 'Company knowledge'],
+    ['People & Support', 'Company Documentation'],
   );
 });
 

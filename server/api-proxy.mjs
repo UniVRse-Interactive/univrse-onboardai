@@ -33,12 +33,14 @@ export function parseApiServiceUrl(value) {
 }
 
 const tooLarge = { code: 'REQUEST_TOO_LARGE', error: 'That request is too large.' };
+const fileTooLarge = { code: 'FILE_TOO_LARGE', error: 'Each file must be 5 MB or smaller.' };
 const autofillTooLarge = autofillErrors.tooLarge();
 // Raw file uploads (application/octet-stream POSTs): the API path, the body
 // limit, and the 413 answer when a file is larger. Autofill keeps the API's
 // own AUTOFILL_FILE_TOO_LARGE answer.
 const uploads = new Map([
   ['/guest-workspace/documents', { limit: workspaceLimits.bytes, tooLarge }],
+  ['/hr/company-knowledge/documents', { limit: workspaceLimits.bytes, tooLarge: fileTooLarge }],
   [
     '/hr/employees/autofill',
     {
