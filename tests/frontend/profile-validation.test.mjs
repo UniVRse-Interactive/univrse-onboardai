@@ -97,3 +97,35 @@ test('display helpers', () => {
   });
   assert.equal(profileSections(null).length, 4);
 });
+
+test('a shown error clears when its field gets a valid value', async () => {
+  const { clearResolvedErrors, profileToForm } =
+    await import('../../src/access/profile-validation.mjs');
+  const { mergeAutofill } = await import('../../src/access/profile-autofill.mjs');
+  const before = profileToForm({ job: { fullName: 'Ada' } });
+  const errors = {
+    'job.department': 'Choose a department.',
+    'contact.workEmail': 'Work email must be a valid email address.',
+    'job.jobTitle': 'Job title is required.',
+  };
+  // autofill fills department and a valid email, leaves the job title empty
+  const filled = mergeAutofill(before, {
+    profile: { job: { department: 'Finance' }, contact: { workEmail: 'ada@example.com' } },
+    filled: ['job.department', 'contact.workEmail'],
+  });
+  const after = clearResolvedErrors(errors, before, filled.form);
+  assert.deepEqual(after, { 'job.jobTitle': 'Job title is required.' });
+  assert.notEqual(after, errors);
+  // manual change of the select
+  const chosen = profileToForm({ job: { fullName: 'Ada', department: 'Finance' } });
+  assert.deepEqual(clearResolvedErrors({ 'job.department': 'x' }, before, chosen), {});
+  // an invalid new value keeps the error; an unchanged field keeps it too
+  const bad = profileToForm({ job: { fullName: 'Ada' }, contact: { workEmail: 'nope' } });
+  const kept = { 'contact.workEmail': 'bad' };
+  assert.equal(clearResolvedErrors(kept, before, bad), kept);
+  assert.equal(
+    clearResolvedErrors({ 'job.department': 'x' }, before, before)['job.department'],
+    'x',
+  );
+  assert.deepEqual(clearResolvedErrors({}, before, bad), {});
+});

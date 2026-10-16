@@ -126,6 +126,28 @@ const fieldIndex = new Map(
   ),
 );
 
+// A shown error goes away as soon as its field gets a valid value, whether HR
+// typed it or autofill filled it. Only fields whose value changed between
+// `previous` and `form` are looked at; other errors stay. -> errors (same object
+// when nothing was cleared). Department has no format rule: any choice clears it.
+export function clearResolvedErrors(errors, previous, form) {
+  const paths = Object.keys(errors || {});
+  if (!paths.length) return errors;
+  const stillInvalid = new Set(validateProfileForm(form).map((item) => item.field));
+  let next = errors;
+  for (const path of paths) {
+    const [group, key] = path.split('.');
+    const before = String(previous?.[group]?.[key] ?? '');
+    const after = String(form?.[group]?.[key] ?? '');
+    if (before === after || !fieldIndex.has(path)) continue;
+    const resolved = path === 'job.department' ? after.trim() !== '' : !stillInvalid.has(path);
+    if (!resolved) continue;
+    if (next === errors) next = { ...errors };
+    delete next[path];
+  }
+  return next;
+}
+
 export function problemMessage(field, problem) {
   const def = typeof field === 'string' ? fieldIndex.get(field) : field;
   const label = def?.label || 'This field';

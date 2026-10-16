@@ -11,6 +11,7 @@ import { canConfirmDelete, deleteErrorMessage } from './delete-confirm.mjs';
 import { accountBadges, employeeNames, formatDateTime, formatDay } from './profile-display.mjs';
 import {
   employeeErrorTarget,
+  clearResolvedErrors,
   fieldErrors,
   formToProfileInput,
   passwordProblem,
@@ -159,6 +160,13 @@ function AddEmployeePanel({ onClose, onCreated, autofillEnabled }) {
   const [errors, setErrors] = useState({});
   const [summary, setSummary] = useState('');
   const [busy, setBusy] = useState(false);
+  // A shown error clears once its field gets a valid value (typed or autofilled).
+  const previousForm = useRef(profile);
+  useEffect(() => {
+    const before = previousForm.current;
+    previousForm.current = profile;
+    if (before) setErrors((current) => clearResolvedErrors(current, before, profile));
+  }, [profile]);
   const formRef = useRef(null),
     summaryRef = useRef(null),
     alive = useRef(true);
@@ -238,6 +246,13 @@ function EditProfilePanel({ employee, onClose, onDone, autofillEnabled }) {
   const [updatedAt, setUpdatedAt] = useState('');
   const [legacyDepartment, setLegacyDepartment] = useState('');
   const autofill = useProfileAutofill(form, setForm);
+  // A shown error clears once its field gets a valid value (typed or autofilled).
+  const previousForm = useRef(form);
+  useEffect(() => {
+    const before = previousForm.current;
+    previousForm.current = form;
+    if (before) setErrors((current) => clearResolvedErrors(current, before, form));
+  }, [form]);
   const formRef = useRef(null),
     summaryRef = useRef(null),
     alive = useRef(true);
