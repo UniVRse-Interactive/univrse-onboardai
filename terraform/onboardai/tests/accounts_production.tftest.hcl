@@ -295,9 +295,10 @@ run "production_has_no_intake_agent" {
       length(google_secret_manager_secret_iam_member.intake_mcp_token) == 0 &&
       length(google_project_iam_member.deployer_deploys_agents) == 0 &&
       length(google_service_account_iam_member.deployer_acts_as_intake_agent) == 0 &&
-      length(google_firestore_field.employee_imports_ttl) == 0
+      length(google_firestore_field.employee_imports_ttl) == 0 &&
+      length(google_cloud_run_v2_service_iam_member.intake_agent_invokes_api) == 0
     )
-    error_message = "Production gets none of the intake agent's resources (runtime account, Gemini role, MCP token, deployer Agent Engine roles, draft-import TTL)."
+    error_message = "Production gets none of the intake agent's resources (runtime account, Gemini role, MCP token, deployer Agent Engine roles, draft-import TTL, api invoker)."
   }
 
   assert {

@@ -8,6 +8,7 @@ import { searchFailure } from './vertex-ai-search.mjs';
 import { quoteSearchResults } from './document-search.mjs';
 import { createSharedVoice, sharedVoiceName } from './kokoro-voice.mjs';
 import { createRemoteVoice } from './remote-voice.mjs';
+import { serviceIdTokenProvider } from './service-auth.mjs';
 import { parseVoiceRequest, voiceRequestError, voiceFailure } from './voice-request.mjs';
 import { randomBytes } from 'node:crypto';
 import { sessionHash } from './saved-conversations.mjs';
@@ -45,8 +46,17 @@ export function createApp({
   env = process.env,
   fetchImpl = fetch,
   localVoice = null,
+  // Signs the calls to the TTS service (service-auth.mjs). By default it follows
+  // SERVICE_AUTH and Cloud Run; pass a provider to force ID tokens on, null for off.
+  idTokenProvider = undefined,
   sharedVoice = env.TTS_SERVICE_URL
-    ? createRemoteVoice({ url: env.TTS_SERVICE_URL })
+    ? createRemoteVoice({
+        url: env.TTS_SERVICE_URL,
+        idTokenProvider:
+          idTokenProvider !== undefined
+            ? idTokenProvider
+            : serviceIdTokenProvider({ env, url: env.TTS_SERVICE_URL }),
+      })
     : createSharedVoice(),
   trustProxy = false,
   // The saved-chat service (gemini-chat-workflow.mjs), or a function

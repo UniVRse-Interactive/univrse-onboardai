@@ -373,9 +373,10 @@ run "cloud_run_matches_service_contract" {
     error_message = "tts needs 2Gi for Kokoro (measured peak about 1 GiB; 1.1 GiB was OOM-killed)."
   }
 
+  # #57: only web is public; services_are_private_except_web checks the rest.
   assert {
-    condition     = length(google_cloud_run_v2_service_iam_member.public_invoker) == 3 && alltrue([for m in google_cloud_run_v2_service_iam_member.public_invoker : m.member == "allUsers" && m.role == "roles/run.invoker"])
-    error_message = "All three services are public (user decision for the demo)."
+    condition     = keys(google_cloud_run_v2_service_iam_member.public_invoker) == ["web"] && alltrue([for m in google_cloud_run_v2_service_iam_member.public_invoker : m.member == "allUsers" && m.role == "roles/run.invoker" && m.name == "onboardai-web"])
+    error_message = "Only onboardai-web is public (allUsers roles/run.invoker); the api and tts are private (#57)."
   }
 
   assert {
@@ -401,6 +402,60 @@ run "cloud_run_matches_service_contract" {
   assert {
     condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("(?i)google_drive|drive\\.googleapis", file("${path.module}/${f}")))])
     error_message = "Google Drive is retired: no Drive API and no folder variable."
+  }
+}
+
+# #57: web is the only public service. Each runtime account may invoke the one
+# service it calls (web the api, the api tts) and nothing else; allUsers is
+# nowhere else. Ingress stays all: Cloud Run IAM does the gating.
+run "services_are_private_except_web" {
+  command = apply
+
+  assert {
+    condition = (
+      length(google_cloud_run_v2_service_iam_member.runtime_invoker) == 2 &&
+      google_cloud_run_v2_service_iam_member.runtime_invoker["web-to-api"].name == "onboardai-api" &&
+      google_cloud_run_v2_service_iam_member.runtime_invoker["web-to-api"].member == "serviceAccount:onboardai-web-run@onboardai-test-123.iam.gserviceaccount.com" &&
+      google_cloud_run_v2_service_iam_member.runtime_invoker["api-to-tts"].name == "onboardai-tts" &&
+      google_cloud_run_v2_service_iam_member.runtime_invoker["api-to-tts"].member == "serviceAccount:onboardai-api-run@onboardai-test-123.iam.gserviceaccount.com" &&
+      alltrue([
+        for key, m in google_cloud_run_v2_service_iam_member.runtime_invoker :
+        m.role == "roles/run.invoker" && m.location == google_cloud_run_v2_service.service[{ "web-to-api" = "api", "api-to-tts" = "tts" }[key]].location && m.project == google_cloud_run_v2_service.service[{ "web-to-api" = "api", "api-to-tts" = "tts" }[key]].project
+      ])
+    )
+    error_message = "onboardai-web-run may invoke onboardai-api and onboardai-api-run may invoke onboardai-tts, with roles/run.invoker, and nothing else."
+  }
+
+  # Every run.invoker grant in production, by service: web for everyone, the
+  # api for web's account, tts for the api's account. (The deployer's Cloud
+  # Run Developer, which also includes run.routes.invoke, is checked in
+  # deployer_holds_only_resource_level_roles.)
+  assert {
+    condition = toset(concat(
+      [for m in google_cloud_run_v2_service_iam_member.public_invoker : "${m.name} ${m.member}"],
+      [for m in google_cloud_run_v2_service_iam_member.runtime_invoker : "${m.name} ${m.member}"],
+      [for m in google_cloud_run_v2_service_iam_member.intake_agent_invokes_api : "${m.name} ${m.member}"],
+      )) == toset([
+      "onboardai-web allUsers",
+      "onboardai-api serviceAccount:onboardai-web-run@onboardai-test-123.iam.gserviceaccount.com",
+      "onboardai-tts serviceAccount:onboardai-api-run@onboardai-test-123.iam.gserviceaccount.com",
+    ]) && length(google_cloud_run_v2_service_iam_member.intake_agent_invokes_api) == 0
+    error_message = "Production's invokers: allUsers on web, onboardai-web-run on the api, onboardai-api-run on tts, and no intake agent."
+  }
+
+  # allUsers appears in one place in the module, the web-only public binding.
+  assert {
+    condition = (
+      sum([for f in fileset(path.module, "*.tf") : length(regexall("\"allUsers\"|\"allAuthenticatedUsers\"", file("${path.module}/${f}")))]) == 1 &&
+      strcontains(file("${path.module}/cloud_run.tf"), "  member   = \"allUsers\"\n") &&
+      strcontains(file("${path.module}/cloud_run.tf"), "  public_services = [\"web\"]\n")
+    )
+    error_message = "allUsers (or allAuthenticatedUsers) may appear only in public_invoker, and public_services must be [\"web\"]."
+  }
+
+  assert {
+    condition     = alltrue([for s in google_cloud_run_v2_service.service : s.ingress == "INGRESS_TRAFFIC_ALL"]) && alltrue([for flags in output.cloud_run_deploy_flags : strcontains(flags, "--ingress=all")])
+    error_message = "Ingress stays all on every service (Terraform and deploy flags): IAM, not ingress, makes the api and tts private."
   }
 }
 

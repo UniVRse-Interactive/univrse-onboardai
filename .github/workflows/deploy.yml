@@ -307,6 +307,9 @@ jobs:
       # The smoke job names no environment; it prints rollback commands with these.
       project_id: ${{ vars.GCP_PROJECT_ID }}
       region: ${{ vars.GCP_REGION }}
+      # and gets the deployer's ID token for the api with these (#57).
+      wif_provider: ${{ vars.GCP_WIF_PROVIDER }}
+      deployer_sa: ${{ vars.GCP_DEPLOYER_SA }}
       web_url: ${{ steps.deploy.outputs.web_url }}
       api_url: ${{ steps.deploy.outputs.api_url }}
       tts_url: ${{ steps.deploy.outputs.tts_url }}
@@ -523,12 +526,20 @@ jobs:
             fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+  # Checks the stack from outside, through web like a browser. Since #57 the api
+  # and tts are private (Cloud Run IAM, terraform/onboardai) and web reaches
+  # them with ID tokens, so web is the way in; every check through web passes
+  # whether or not that IAM is applied yet (the app is deployed first). The api
+  # and tts URLs themselves are only reported, as public or private.
   smoke:
     name: Smoke test
     needs: deploy
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    permissions: {}
+    # Only for the deployer's ID token of the POST /mcp check (staging, when
+    # this run deployed the intake agent); no other step authenticates.
+    permissions:
+      id-token: write
     env:
       GCP_PROJECT_ID: ${{ needs.deploy.outputs.project_id }}
       GCP_REGION: ${{ needs.deploy.outputs.region }}
@@ -540,12 +551,16 @@ jobs:
       - name: Check the deployed services
         run: |
           set -euo pipefail
-          # probe LABEL URL ATTEMPTS RETRY_CODES: wants HTTP 200; retries 10 s apart
-          # while the answer matches RETRY_CODES.
+          # probe LABEL URL ATTEMPTS RETRY_CODES [CURL_ARGS...]: wants HTTP 200;
+          # retries 10 s apart while the answer matches RETRY_CODES. Leaves the
+          # last answer's Content-Type in PROBE_TYPE.
+          PROBE_TYPE=""
           probe() {
-            local label=$1 url=$2 attempts=$3 retry=$4 code=000 i
+            local label=$1 url=$2 attempts=$3 retry=$4 code=000 answer i
+            shift 4
             for ((i = 1; i <= attempts; i++)); do
-              code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url") || code=000
+              answer=$(curl -sS -o /dev/null -w '%{http_code} %{content_type}' --max-time 30 "$@" "$url") || answer=000
+              read -r code PROBE_TYPE <<< "$answer"
               if [[ "$code" == 200 ]]; then
                 echo "ok   $label -> 200"
                 return 0
@@ -557,6 +572,18 @@ jobs:
             echo "::error::$label -> HTTP $code ($url)"
             return 1
           }
+          # reach NAME URL: reports whether URL answers without an ID token, and
+          # never fails: 200 (public) until terraform/onboardai ($DEPLOY_ENV) has
+          # #57's IAM, 403 (private) after it.
+          reach() {
+            local name=$1 url=$2 code
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$url") || code=000
+            case "$code" in
+              403) echo "::notice title=$name is private::GET $url answers 403 without an ID token (Cloud Run IAM)." ;;
+              200) echo "::notice title=$name is public::GET $url answers 200 without an ID token. Apply terraform/onboardai ($DEPLOY_ENV) to make it private (#57)." ;;
+              *) echo "::notice title=$name::GET $url answers HTTP $code without an ID token." ;;
+            esac
+          }
           for url in "$WEB_URL" "$API_URL" "$TTS_URL"; do
             if [[ ! "$url" =~ ^https:// ]]; then
               echo "::error::A service URL is missing from the deploy job's outputs."
@@ -564,28 +591,59 @@ jobs:
             fi
           done
           failed=0
-          # tts answers 503 until Kokoro has loaded on a cold instance.
-          probe "tts GET /health" "$TTS_URL/health" 24 '503|000' || failed=1
-          probe "api GET /api/health" "$API_URL/api/health" 6 '5[0-9][0-9]|000' || failed=1
           probe "web GET /web-health" "$WEB_URL/web-health" 6 '5[0-9][0-9]|000' || failed=1
-          probe "web GET /api/health (proxied to api)" "$WEB_URL/api/health" 6 '5[0-9][0-9]|000' || failed=1
           probe "web GET / (frontend)" "$WEB_URL/" 6 '5[0-9][0-9]|000' || failed=1
+          # web -> api, with web's ID token for the api.
+          probe "web GET /api/health (proxied to api)" "$WEB_URL/api/health" 6 '5[0-9][0-9]|000' || failed=1
+          # web -> api -> tts, with both ID tokens: one short word, rendered by
+          # Kokoro. A cold tts loads the model first (up to 240 s; the api waits
+          # 120 s for tts, then answers 503), so 5xx is retried.
+          if probe "web POST /api/voice (api -> tts)" "$WEB_URL/api/voice" 6 '5[0-9][0-9]|000' --max-time 150 -X POST -H 'Content-Type: application/json' --data '{"text":"Hello.","rate":1}'; then
+            if [[ "$PROBE_TYPE" != audio/wav* ]]; then
+              echo "::error::web POST /api/voice answered 200 with ${PROBE_TYPE:-no Content-Type}, not audio/wav."
+              failed=1
+            fi
+          else
+            failed=1
+          fi
+          reach "onboardai-api$NAME_SUFFIX" "$API_URL/api/health"
+          reach "onboardai-tts$NAME_SUFFIX" "$TTS_URL/health"
           exit "$failed"
+
+      # POST /mcp is the one direct call to the api (it is not under /api, so web
+      # does not proxy it), and the api may be private. The request carries the
+      # deployer's ID token for the api, whose Cloud Run Developer role on the
+      # api includes run.routes.invoke. The token is masked in the log and no
+      # credentials file is written.
+      - name: Get an ID token for the api
+        id: api-token
+        if: needs.deploy.outputs.intake_agent == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ needs.deploy.outputs.wif_provider }}
+          service_account: ${{ needs.deploy.outputs.deployer_sa }}
+          token_format: id_token
+          id_token_audience: ${{ needs.deploy.outputs.api_url }}
+          id_token_include_email: true
+          create_credentials_file: false
+          export_environment_variables: false
 
       # Every stack (#45): the api found its accounts database (DATABASE_URL
       # and the Cloud SQL connection reached it). Only when this run deployed
       # the intake agent (staging, #30): the api found the agent, and the MCP
       # endpoint refuses a caller without the token.
       - name: Check employee accounts and form import
+        env:
+          API_ID_TOKEN: ${{ steps.api-token.outputs.id_token }}
         run: |
           set -euo pipefail
           failed=0
-          if ! config=$(curl -sS --fail --max-time 30 "$API_URL/api/config"); then
-            echo "::error::GET /api/config failed."
+          if ! config=$(curl -sS --fail --max-time 30 "$WEB_URL/api/config"); then
+            echo "::error::GET /api/config through web failed."
             exit 1
           fi
           if jq -e '.accounts == true' > /dev/null <<< "$config"; then
-            echo "ok   api GET /api/config -> accounts is on"
+            echo "ok   web GET /api/config -> accounts is on"
           else
             echo "::error::GET /api/config must report accounts: true (DATABASE_URL and the Cloud SQL connection reached the api)."
             failed=1
@@ -595,16 +653,25 @@ jobs:
             exit "$failed"
           fi
           if jq -e '.employeeImport == true' > /dev/null <<< "$config"; then
-            echo "ok   api GET /api/config -> employeeImport is on"
+            echo "ok   web GET /api/config -> employeeImport is on"
           else
             echo "::error::GET /api/config must report employeeImport: true (INTAKE_AGENT_ENGINE and INTAKE_MCP_TOKEN reached the api)."
             failed=1
           fi
-          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' --data '{}' "$API_URL/mcp") || code=000
-          if [[ "$code" == 401 ]]; then
-            echo "ok   api POST /mcp without the token -> 401"
+          if [[ -z "${API_ID_TOKEN:-}" ]]; then
+            echo "::error::No ID token for the api; POST /mcp was not checked."
+            exit 1
+          fi
+          # The ID token goes in X-Serverless-Authorization (Authorization is the
+          # MCP token's, deliberately absent) and reaches curl on stdin, never on
+          # its command line. The api itself must answer: 401 with its JSON-RPC
+          # error, not Cloud Run's own 401 or 403 page.
+          body="$RUNNER_TEMP/mcp.json"
+          code=$(curl -sS -o "$body" -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' -H @- --data '{}' "$API_URL/mcp" <<< "X-Serverless-Authorization: Bearer $API_ID_TOKEN") || code=000
+          if [[ "$code" == 401 ]] && jq -e '.jsonrpc == "2.0" and .error.code == -32001' > /dev/null 2>&1 < "$body"; then
+            echo "ok   api POST /mcp with the deployer's ID token, without the MCP token -> 401 from the api"
           else
-            echo "::error::POST /mcp without the token answered HTTP $code, expected 401."
+            echo "::error::POST /mcp with an ID token but without the MCP token answered HTTP $code, expected the api's own 401 (a 403 or an HTML 401 is Cloud Run refusing the ID token)."
             failed=1
           fi
           exit "$failed"
