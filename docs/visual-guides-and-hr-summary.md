@@ -22,7 +22,7 @@ Selecting parts and opening the full wording are local reading controls. They do
 
 Employee chat has no onboarding report, Privacy & sharing menu or report download. Recorded support continues to update after successful answers and explicit feedback, following the existing recording preference. Removing the menu does not turn paused collection back on. Employee-facing APIs omit aggregate summaries; `/api/employee-support-summary` returns `403 HR_ACCESS_REQUIRED`, including for an unverified HR guest.
 
-The HR page at `/hr` (also `/hr-preview`) presents a document library, a team overview and separate live guest summaries. It fetches the current browser’s isolated employee reports and uploads; no existing private employee report API is opened. Alya reads the configured company Drive guidance as well as the workspace uploads. See [Account and workspace details](account-access.md) for the complete flow, retention, limits and authentication boundary.
+The HR page at `/hr` (also `/hr-preview`) presents a document library, a team overview and separate live guest summaries. It fetches the current browser’s isolated employee reports and uploads; no existing private employee report API is opened. Alya searches the configured company documents (Vertex AI Search) as well as the workspace uploads. See [Account and workspace details](account-access.md) for the complete flow, retention, limits and authentication boundary.
 
 The summary contains:
 
@@ -52,7 +52,7 @@ The installed voice model warms at server startup with a discarded greeting thro
 
 - `server/answer-guide-metadata.mjs`: retained source-supported answer metadata and guide-count compatibility for saved chats.
 - `server/employee-support-tracking.mjs`: bounded interaction events, aggregate counts and summary templates.
-- `server/saved-conversations.mjs`: support-event migration, ownership, retention and transactional writes alongside existing chats.
+- `server/saved-conversations.mjs` (SQLite) and `server/firestore-chat-memory.mjs` (Firestore): support observations, ownership, retention and transactional writes alongside existing chats.
 - `src/avatar/VisualAnswerPanel.jsx`: separate visual workspace, loading state and answer selection.
 - `src/avatar/IllustratedAnswer.jsx`: numbered section selection, fitted reading pages, focused illustration, full-answer dialog and keyboard controls.
 - `src/avatar/use-visual-text-pages.js`: measures paragraph space on resize, font loading and view changes.
@@ -64,7 +64,7 @@ The installed voice model warms at server startup with a discarded greeting thro
 - `src/avatar/answer-support-controls.css`: feedback, source and explanation control styling; obsolete employee report components and styles are removed.
 - `src/access/HrWorkspace.jsx`: automatic employee summaries.
 - `src/access/hr-report-insights.mjs`: team counts and explicit activity labels.
-- `src/access/CompanyDocumentLibrary.jsx`: uploads and connected Drive guidance.
+- `src/access/CompanyDocumentLibrary.jsx`: uploads and company-source status.
 - `src/avatar/hr-support-report.mjs`: concise HR report text.
 - `tests/employee-support-tracking.test.mjs`: source consistency, retries, aggregation, pause, corrections, deletion, ownership and cross-origin checks.
 - `tests/visual-answer-content.test.mjs`: complete wording/conditions, decimal values, numbered facts, bounded structure and unsourced replies.

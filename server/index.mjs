@@ -6,8 +6,20 @@ import { createApp } from './api-routes.mjs';
 import { avatarRoute } from './avatar-route.mjs';
 import { createWindowsVoice } from './optional-windows-voice.mjs';
 import { createSharedVoice } from './kokoro-voice.mjs';
-import { readDriveKnowledge, driveFailure } from './google-drive-documents.mjs';
+import { describeKnowledgeSource } from './company-document-retriever.mjs';
+import { describeChatStorage } from './chat-store.mjs';
+import { AccountsConfigError, describeAccounts } from './account-settings.mjs';
 if (existsSync('.env')) process.loadEnvFile('.env');
+// With DATABASE_URL set, refuse to start without the Firestore settings that
+// keep local personal data in the emulator (see account-settings.mjs).
+let accountsLine;
+try {
+  accountsLine = describeAccounts(process.env);
+} catch (error) {
+  if (!(error instanceof AccountsConfigError)) throw error;
+  console.error(`OnboardAi cannot start: ${error.message}`);
+  process.exit(1);
+}
 let localVoice = null;
 // K_SERVICE is set by Cloud Run, which never has a Windows voice.
 if (process.env.GOOGLE_CLOUD_TTS !== 'enabled' && !process.env.K_SERVICE) {
@@ -42,6 +54,11 @@ if (process.argv.includes('--production')) {
 const port = Number(process.env.PORT) || 3000;
 server.listen(port, process.env.HOST || '127.0.0.1', () => {
   console.log(`OnboardAi ready at http://localhost:${port}`);
+  if (['gemini-chat', 'document-search'].includes(process.env.AI_MODE))
+    console.info(`Company knowledge: ${describeKnowledgeSource(process.env)}.`);
+  console.info(`Accounts: ${accountsLine}.`);
+  if (process.env.AI_MODE === 'gemini-chat' || process.env.DATABASE_URL)
+    console.info(`Saved chats: ${describeChatStorage(process.env)}.`);
   if (process.env.VOICE_WARMUP !== 'false') {
     sharedVoice
       .prepare()
@@ -49,17 +66,6 @@ server.listen(port, process.env.HOST || '127.0.0.1', () => {
       .catch(() =>
         console.warn('Voice warmup unavailable. Run npm run voice:prepare to install the model.'),
       );
-  }
-  // Prepare company text while the page/avatar loads. Every question still
-  // checks current Drive revisions and access; startup failure never blocks the website.
-  if (
-    ['gemini-chat', 'document-search'].includes(process.env.AI_MODE) &&
-    process.env.GOOGLE_DRIVE_FOLDER_ID &&
-    process.env.KNOWLEDGE_WARMUP !== 'false'
-  ) {
-    readDriveKnowledge(process.env.GOOGLE_DRIVE_FOLDER_ID)
-      .then(() => console.info('Company document cache is ready.'))
-      .catch((error) => console.warn('Company document warmup:', driveFailure(error).code));
   }
 });
 let stopping = false;

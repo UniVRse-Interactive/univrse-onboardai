@@ -4,7 +4,9 @@ import { createChatMemory, ChatError } from './saved-conversations.mjs';
 import { guestWorkspaceLifetime, workspaceLimits } from './workspace-limits.mjs';
 export { guestWorkspaceLifetime, workspaceLimits } from './workspace-limits.mjs';
 
-// This database contains isolated guest workspaces, never the existing employee database.
+// This database contains isolated guest workspaces, never the existing employee
+// database. It is always a local SQLite file (FIRESTORE_DATABASE_ID does not apply):
+// guest tables share the file with the SQLite chat store, whose methods are async.
 export function createGuestWorkspaceStore({
   path = resolve('.cache/guest-workspaces/workspaces.sqlite'),
   geminiAvailable = false,
@@ -56,25 +58,38 @@ export function createGuestWorkspaceStore({
     );
     return guest(owner, id);
   }
+  // Chat erasure is async (the SQLite chat store's interface), so one cleanup pass
+  // runs at a time and concurrent requests wait for it.
+  let cleaning = null;
   function cleanup() {
-    const expired = db
-      .prepare('SELECT owner FROM guest_workspaces WHERE updated<?')
-      .all(Date.now() - guestWorkspaceLifetime);
+    return (cleaning ||= removeExpired().finally(() => {
+      cleaning = null;
+    }));
+  }
+  async function removeExpired() {
+    const cutoff = () => Date.now() - guestWorkspaceLifetime;
+    const expired = db.prepare('SELECT owner FROM guest_workspaces WHERE updated<?').all(cutoff());
     for (const { owner } of expired) {
       let busy = false;
       for (const person of db
         .prepare('SELECT chat_owner FROM workspace_guests WHERE workspace_owner=?')
         .all(owner)) {
-        for (const chat of memory.list(person.chat_owner)) {
+        for (const chat of await memory.list(person.chat_owner)) {
           try {
-            memory.erase(person.chat_owner, chat.id);
+            await memory.erase(person.chat_owner, chat.id);
           } catch (error) {
             if (error.status === 409) busy = true;
-            else throw error;
+            else if (error.status !== 404) throw error;
           }
         }
       }
-      if (busy) continue;
+      // Keep a workspace with an answer in progress, or one used again meanwhile.
+      if (
+        busy ||
+        db.prepare('SELECT updated FROM guest_workspaces WHERE owner=?').get(owner)?.updated >=
+          cutoff()
+      )
+        continue;
       db.prepare(
         'DELETE FROM support_preferences WHERE owner IN (SELECT chat_owner FROM workspace_guests WHERE workspace_owner=?)',
       ).run(owner);
@@ -93,8 +108,8 @@ export function createGuestWorkspaceStore({
     if (inserted.changes) newGuest(owner);
     return db.prepare('SELECT * FROM guest_workspaces WHERE owner=?').get(owner);
   });
-  function ensure(owner) {
-    cleanup();
+  async function ensure(owner) {
+    await cleanup();
     return touch(owner);
   }
   function guest(owner, id) {
@@ -155,17 +170,19 @@ export function createGuestWorkspaceStore({
         'That document is not in your workspace.',
       );
   }
-  function snapshot(owner) {
-    const workspace = ensure(owner);
-    const guests = db
-      .prepare('SELECT * FROM workspace_guests WHERE workspace_owner=? ORDER BY created,rowid')
-      .all(owner)
-      .map((person) => ({
-        id: person.id,
-        name: person.name,
-        created: person.created,
-        summary: memory.supportSummary(person.chat_owner),
-      }));
+  async function snapshot(owner) {
+    const workspace = await ensure(owner);
+    const guests = await Promise.all(
+      db
+        .prepare('SELECT * FROM workspace_guests WHERE workspace_owner=? ORDER BY created,rowid')
+        .all(owner)
+        .map(async (person) => ({
+          id: person.id,
+          name: person.name,
+          created: person.created,
+          summary: await memory.supportSummary(person.chat_owner),
+        })),
+    );
     return {
       lastGuestId: workspace.last_guest_id,
       expiresAt: workspace.updated + guestWorkspaceLifetime,
@@ -174,6 +191,17 @@ export function createGuestWorkspaceStore({
       limits: workspaceLimits,
     };
   }
+  const forgetGuest = db.transaction((owner, id) => {
+    db.prepare('DELETE FROM workspace_guests WHERE workspace_owner=? AND id=?').run(owner, id);
+    const next = db
+      .prepare(
+        'SELECT id FROM workspace_guests WHERE workspace_owner=? ORDER BY created,rowid LIMIT 1',
+      )
+      .get(owner);
+    db.prepare(
+      'UPDATE guest_workspaces SET last_guest_id=CASE WHEN last_guest_id=? THEN ? ELSE last_guest_id END WHERE owner=?',
+    ).run(id, next?.id || null, owner);
+  });
   return {
     memory,
     ensure,
@@ -184,19 +212,13 @@ export function createGuestWorkspaceStore({
       return person;
     },
     newGuest,
-    removeGuest: db.transaction((owner, id) => {
+    // The guest's chats and support records go first, atomically, and nothing is
+    // removed while one of their answers is in progress (409 CHAT_BUSY).
+    async removeGuest(owner, id) {
       const person = guest(owner, id);
-      memory.eraseOwner(person.chat_owner);
-      db.prepare('DELETE FROM workspace_guests WHERE workspace_owner=? AND id=?').run(owner, id);
-      const next = db
-        .prepare(
-          'SELECT id FROM workspace_guests WHERE workspace_owner=? ORDER BY created,rowid LIMIT 1',
-        )
-        .get(owner);
-      db.prepare(
-        'UPDATE guest_workspaces SET last_guest_id=CASE WHEN last_guest_id=? THEN ? ELSE last_guest_id END WHERE owner=?',
-      ).run(id, next?.id || null, owner);
-    }),
+      await memory.eraseOwner(person.chat_owner);
+      forgetGuest(owner, id);
+    },
     documents,
     addDocument,
     removeDocument,

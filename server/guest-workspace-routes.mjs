@@ -8,21 +8,21 @@ import {
 import { sessionHash, ChatError } from './saved-conversations.mjs';
 import { readUploadedDocument } from './read-uploaded-document.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
-import { createKnowledgeRetriever } from './company-document-retriever.mjs';
-import { searchDocuments } from './document-search.mjs';
+import { createCompanyRetriever } from './company-document-retriever.mjs';
 import { adaptLearning } from './answer-style-preferences.mjs';
 import { createAnswerGuide } from './answer-guide-metadata.mjs';
 import { tasks } from './sample-onboarding-content.mjs';
 import { sharedVoiceName } from './kokoro-voice.mjs';
 import { createWorkspaceKnowledge } from './workspace-company-knowledge.mjs';
-import { driveFailure } from './google-drive-documents.mjs';
 import { vertexConfig } from './vertex-ai.mjs';
 
 // Guest HR and employee views share an isolated browser workspace. This cookie
-// is not an HR credential and cannot open the separate employee/Drive database.
+// is not an HR credential and cannot open the separate saved-chat store.
+// companyRetrieve(query, { signal }) is the shared company document search
+// (Vertex AI Search); it is used only when VERTEX_SEARCH_ENGINE_ID is set.
 export function mountGuestWorkspaceRoutes(
   app,
-  { env, models, store: providedStore, loadDrive } = {},
+  { env, models, store: providedStore, companyRetrieve = createCompanyRetriever({ env }) } = {},
 ) {
   const router = express.Router(),
     available = !!(vertexConfig(env) || models);
@@ -31,11 +31,10 @@ export function mountGuestWorkspaceRoutes(
   const store = () => (saved ||= createGuestWorkspaceStore({ geminiAvailable: available }));
   const answerMode = env.AI_MODE === 'document-search' || !available ? 'search' : 'gemini';
   const knowledge = createWorkspaceKnowledge({
-    folderId: env.GOOGLE_DRIVE_FOLDER_ID,
-    loadDrive,
+    env,
+    companyRetrieve,
     uploaded: (owner) => store().documents(owner),
   });
-  const retrievers = new Map();
   function engine() {
     return (service ||= createConversationService({
       env,
@@ -45,18 +44,11 @@ export function mountGuestWorkspaceRoutes(
         const guest = store().guestForConversation(config.configurable.thread_id);
         if (!guest)
           throw new ChatError(404, 'WORKSPACE_GUEST_NOT_FOUND', 'This guest chat is unavailable.');
-        if (!retrievers.has(guest.workspace_owner)) {
-          if (retrievers.size >= 100) retrievers.delete(retrievers.keys().next().value);
-          retrievers.set(
-            guest.workspace_owner,
-            createKnowledgeRetriever(async () => knowledge.load(guest.workspace_owner)),
-          );
-        }
-        return retrievers.get(guest.workspace_owner)(query, config);
+        return knowledge.retrieve(guest.workspace_owner, query, { signal: config?.signal });
       },
     }));
   }
-  router.use((req, res, next) => {
+  router.use(async (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     if (req.get('origin')) {
       try {
@@ -81,21 +73,22 @@ export function mountGuestWorkspaceRoutes(
       path: '/api/guest-workspace',
     });
     req.workspaceOwner = sessionHash(token);
-    store().ensure(req.workspaceOwner);
+    await store().ensure(req.workspaceOwner);
     next();
   });
   const person = (req) => store().selectGuest(req.workspaceOwner, req.params.guestId);
   router.get('/', async (req, res) => {
-    const snapshot = store().snapshot(req.workspaceOwner);
-    const drive = await knowledge.status();
-    if (!res.destroyed) res.json({ ...snapshot, companyKnowledge: { drive } });
+    const snapshot = await store().snapshot(req.workspaceOwner);
+    // `drive` is the HR page's name for the company document source, which is
+    // now the company document search (Vertex AI Search) status.
+    if (!res.destroyed) res.json({ ...snapshot, companyKnowledge: { drive: knowledge.status() } });
   });
   router.post('/guests', (req, res) => {
     const guest = store().newGuest(req.workspaceOwner);
     res.status(201).json({ id: guest.id, name: guest.name });
   });
-  router.delete('/guests/:guestId', (req, res) => {
-    store().removeGuest(req.workspaceOwner, req.params.guestId);
+  router.delete('/guests/:guestId', async (req, res) => {
+    await store().removeGuest(req.workspaceOwner, req.params.guestId);
     res.status(204).end();
   });
   router.post(
@@ -116,7 +109,6 @@ export function mountGuestWorkspaceRoutes(
   );
   router.delete('/documents/:id', (req, res) => {
     store().removeDocument(req.workspaceOwner, req.params.id);
-    retrievers.delete(req.workspaceOwner);
     res.status(204).end();
   });
   router.get('/guests/:guestId/config', (req, res) => {
@@ -128,7 +120,7 @@ export function mountGuestWorkspaceRoutes(
       adaptiveLearning: answerMode === 'gemini',
       answerFormatsAvailable: answerMode === 'gemini',
       supportSummary: false,
-      knowledgeMode: env.GOOGLE_DRIVE_FOLDER_ID ? 'company-documents' : 'uploaded-documents',
+      knowledgeMode: knowledge.companySearch ? 'company-documents' : 'uploaded-documents',
       guestWorkspace: true,
       employeeName: guest.name,
       documentCount: store().documents(req.workspaceOwner).length,
@@ -136,20 +128,22 @@ export function mountGuestWorkspaceRoutes(
       tasks,
     });
   });
-  router.get('/guests/:guestId/conversations', (req, res) =>
-    res.json({ conversations: store().memory.list(person(req).chat_owner) }),
+  // The chat store's methods are async; Express 5 passes rejections to the
+  // error handler below.
+  router.get('/guests/:guestId/conversations', async (req, res) =>
+    res.json({ conversations: await store().memory.list(person(req).chat_owner) }),
   );
-  router.post('/guests/:guestId/conversations', (req, res) =>
-    res.status(201).json(store().memory.create(person(req).chat_owner)),
+  router.post('/guests/:guestId/conversations', async (req, res) =>
+    res.status(201).json(await store().memory.create(person(req).chat_owner)),
   );
-  router.get('/guests/:guestId/conversations/:id', (req, res) =>
-    res.json(store().memory.read(person(req).chat_owner, req.params.id)),
+  router.get('/guests/:guestId/conversations/:id', async (req, res) =>
+    res.json(await store().memory.read(person(req).chat_owner, req.params.id)),
   );
-  router.delete('/guests/:guestId/conversations/:id', (req, res) => {
-    store().memory.erase(person(req).chat_owner, req.params.id);
+  router.delete('/guests/:guestId/conversations/:id', async (req, res) => {
+    await store().memory.erase(person(req).chat_owner, req.params.id);
     res.status(204).end();
   });
-  router.post('/guests/:guestId/conversations/:id/learning', (req, res) => {
+  router.post('/guests/:guestId/conversations/:id/learning', async (req, res) => {
     const guest = person(req);
     if (answerMode !== 'gemini')
       throw new ChatError(
@@ -157,10 +151,10 @@ export function mountGuestWorkspaceRoutes(
         'WORKSPACE_FORMATS_UNAVAILABLE',
         'Conversational answer formats require Gemini. Document search quotes the source text.',
       );
-    res.json({ learning: engine().settings(guest.chat_owner, req.params.id, req.body) });
+    res.json({ learning: await engine().settings(guest.chat_owner, req.params.id, req.body) });
   });
-  router.post('/guests/:guestId/conversations/:id/feedback', (req, res) => {
-    store().memory.feedback(
+  router.post('/guests/:guestId/conversations/:id/feedback', async (req, res) => {
+    await store().memory.feedback(
       person(req).chat_owner,
       req.params.id,
       req.body?.messageId,
@@ -168,8 +162,8 @@ export function mountGuestWorkspaceRoutes(
     );
     res.json({ rating: req.body.rating });
   });
-  router.post('/guests/:guestId/conversations/:id/human-help', (req, res) => {
-    store().memory.humanHelp(person(req).chat_owner, req.params.id, req.body?.messageId);
+  router.post('/guests/:guestId/conversations/:id/human-help', async (req, res) => {
+    await store().memory.humanHelp(person(req).chat_owner, req.params.id, req.body?.messageId);
     res.json({ saved: true });
   });
   router.post('/guests/:guestId/chat', async (req, res) => {
@@ -188,7 +182,7 @@ export function mountGuestWorkspaceRoutes(
         'WORKSPACE_QUESTION_INVALID',
         'Choose a chat and enter a question of up to 1,600 characters.',
       );
-    if (!env.GOOGLE_DRIVE_FOLDER_ID && !store().documents(req.workspaceOwner).length)
+    if (!knowledge.hasKnowledge(req.workspaceOwner))
       throw new ChatError(
         409,
         'WORKSPACE_KNOWLEDGE_EMPTY',
@@ -224,7 +218,8 @@ export function mountGuestWorkspaceRoutes(
     }
   });
   async function searchAnswer(guest, id, question, requestId, signal) {
-    const { row, release } = store().memory.acquire(guest.chat_owner, id);
+    const turn = await store().memory.acquire(guest.chat_owner, id),
+      row = turn.row;
     try {
       const completed = row.messages.find(
         (m) => m.requestId === requestId && m.role === 'assistant',
@@ -243,15 +238,12 @@ export function mountGuestWorkspaceRoutes(
       }
       if (row.messages.length >= 160)
         throw new ChatError(409, 'CHAT_FULL', 'Start a new chat to ask more questions.');
-      let documents;
-      try {
-        documents = await knowledge.load(guest.workspace_owner);
-      } catch (error) {
-        const failure = driveFailure(error);
-        throw new ChatError(503, failure.code, failure.error);
-      }
-      const found = searchDocuments(question, documents);
-      const answer = found.passages?.map((p) => p.preview || p.text).join('\n\n') || found.answer;
+      // Company search failures are CompanySearchErrors (fixed SEARCH_* codes).
+      const passages = await knowledge.quote(guest.workspace_owner, question, { signal });
+      const found = { mode: 'document-search', matched: passages.length > 0, passages };
+      const answer =
+        passages.map((p) => p.preview || p.text).join('\n\n') ||
+        "I couldn't find a matching passage in the company documents. Try a specific topic such as working hours or dress code, or ask HR to confirm.";
       const learning = { ...adaptLearning(row.learning, { question }), format: 'standard' };
       const result = {
         ...found,
@@ -262,11 +254,8 @@ export function mountGuestWorkspaceRoutes(
       };
       result.card = createAnswerGuide(answer, { hasSources: found.matched });
       signal?.throwIfAborted();
-      store().memory.save(
-        guest.chat_owner,
-        id,
+      await turn.save(
         [
-          ...row.messages,
           { id: requestId + '-u', requestId, role: 'user', text: question },
           { id: requestId + '-a', requestId, role: 'assistant', text: answer, result },
         ],
@@ -274,7 +263,7 @@ export function mountGuestWorkspaceRoutes(
       );
       return result;
     } finally {
-      release();
+      await turn.release();
     }
   }
   router.use((req, res) =>

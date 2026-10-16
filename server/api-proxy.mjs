@@ -1,6 +1,7 @@
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { workspaceLimits } from './workspace-limits.mjs';
+import { autofillFileBytes, workspaceLimits } from './workspace-limits.mjs';
+import { autofillErrors } from './account-errors.mjs';
 
 const hopByHop = new Set([
   'connection',
@@ -31,6 +32,24 @@ export function parseApiServiceUrl(value) {
   return url.origin;
 }
 
+const tooLarge = { code: 'REQUEST_TOO_LARGE', error: 'That request is too large.' };
+const fileTooLarge = { code: 'FILE_TOO_LARGE', error: 'Each file must be 5 MB or smaller.' };
+const autofillTooLarge = autofillErrors.tooLarge();
+// Raw file uploads (application/octet-stream POSTs): the API path, the body
+// limit, and the 413 answer when a file is larger. Autofill keeps the API's
+// own AUTOFILL_FILE_TOO_LARGE answer.
+const uploads = new Map([
+  ['/guest-workspace/documents', { limit: workspaceLimits.bytes, tooLarge }],
+  ['/hr/company-knowledge/documents', { limit: workspaceLimits.bytes, tooLarge: fileTooLarge }],
+  [
+    '/hr/employees/autofill',
+    {
+      limit: autofillFileBytes,
+      tooLarge: { code: autofillTooLarge.code, error: autofillTooLarge.message },
+    },
+  ],
+]);
+
 async function readBody(req, limit) {
   const chunks = [];
   let size = 0;
@@ -55,16 +74,9 @@ export function createApiProxy({
   const origin = parseApiServiceUrl(apiUrl);
   return async function apiProxy(req, res) {
     const upload =
-      req.method === 'POST' &&
-      req.path === '/guest-workspace/documents' &&
-      req.is('application/octet-stream');
-    const body = await readBody(req, upload ? workspaceLimits.bytes : maxBodyBytes).catch(
-      () => null,
-    );
-    if (body === null)
-      return res
-        .status(413)
-        .json({ code: 'REQUEST_TOO_LARGE', error: 'That request is too large.' });
+      req.method === 'POST' && req.is('application/octet-stream') ? uploads.get(req.path) : null;
+    const body = await readBody(req, upload ? upload.limit : maxBodyBytes).catch(() => null);
+    if (body === null) return res.status(413).json(upload ? upload.tooLarge : tooLarge);
 
     const headers = new Headers();
     for (const [name, value] of Object.entries(req.headers)) {

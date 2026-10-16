@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads';
 
-const { extension, maxCharacters } = workerData;
+const { extension, maxCharacters, truncate } = workerData;
 const buffer = Buffer.from(workerData.buffer);
 const fail = (code, error) => {
   throw Object.assign(new Error(error), { code });
@@ -68,9 +68,11 @@ try {
               typeof item.str === 'string' ? item.str + (item.hasEOL ? '\n' : ' ') : '',
             )
             .join('') + '\n\n';
-        if (text.length > maxCharacters)
-          fail('FILE_TEXT_TOO_LONG', 'Upload a shorter guide; this file contains too much text.');
         page.cleanup();
+        if (text.length > maxCharacters) {
+          if (truncate) break;
+          fail('FILE_TEXT_TOO_LONG', 'Upload a shorter guide; this file contains too much text.');
+        }
       }
     } finally {
       await loading.destroy();
@@ -85,8 +87,10 @@ try {
       'FILE_NO_TEXT',
       'No readable guidance was found. Scanned PDFs need a text-based PDF or DOCX copy.',
     );
-  if (text.length > maxCharacters)
-    fail('FILE_TEXT_TOO_LONG', 'Upload a shorter guide; this file contains too much text.');
+  if (text.length > maxCharacters) {
+    if (truncate) text = text.slice(0, maxCharacters);
+    else fail('FILE_TEXT_TOO_LONG', 'Upload a shorter guide; this file contains too much text.');
+  }
   parentPort.postMessage({ type: 'document-result', text });
 } catch (error) {
   const known = typeof error.code === 'string' && error.code.startsWith('FILE_');

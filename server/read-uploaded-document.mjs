@@ -4,7 +4,14 @@ import { ChatError } from './saved-conversations.mjs';
 import { workspaceLimits } from './guest-workspace-store.mjs';
 
 let activeReaders = 0;
-export async function readUploadedDocument(name, buffer) {
+// truncate: keep the first workspaceLimits.characters characters of a longer
+// document instead of rejecting it (profile autofill). Guest uploads reject.
+// timeoutMs bounds the reader (FILE_READ_TIMEOUT); tests may lift it.
+export async function readUploadedDocument(
+  name,
+  buffer,
+  { truncate = false, timeoutMs = 20000 } = {},
+) {
   if (
     typeof name !== 'string' ||
     !name.trim() ||
@@ -46,7 +53,12 @@ export async function readUploadedDocument(name, buffer) {
   try {
     const text = await new Promise((resolve, reject) => {
       const worker = new Worker(new URL('./uploaded-document-worker.mjs', import.meta.url), {
-        workerData: { extension, buffer, maxCharacters: workspaceLimits.characters },
+        workerData: {
+          extension,
+          buffer,
+          maxCharacters: workspaceLimits.characters,
+          truncate: truncate === true,
+        },
         // The reader must not inherit the development server's --watch flags.
         execArgv: [],
         resourceLimits: { maxOldGenerationSizeMb: 128 },
@@ -68,7 +80,7 @@ export async function readUploadedDocument(name, buffer) {
               'This file took too long to read. Try a smaller PDF, DOCX or text copy.',
             ),
           ),
-        20000,
+        timeoutMs,
       );
       worker.on('message', (message) => {
         // Node's file watcher can also send dependency notifications. Only a

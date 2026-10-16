@@ -4,6 +4,7 @@ import Icon from '../portal/Icon';
 import { createServerSpeech } from './answer-audio-player';
 import AnswerStyleSettings, { learningFormats } from './AnswerStyleSettings';
 import VisualAnswerPanel from './VisualAnswerPanel';
+import { ensureSession, reportAccountResponse } from '../access/account-api.mjs';
 import './answer-support-controls.css';
 import './alya-chat.css';
 import './alya-workspace.css';
@@ -404,10 +405,13 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
     });
     if (response.status === 204) return null;
     const data = await response.json();
-    if (!response.ok)
+    if (!response.ok) {
+      // A signed-in chat can learn the session ended or a password change is due.
+      reportAccountResponse(response.status, data);
       throw new Error(
         data.error || 'The server could not complete that request. Please try again.',
       );
+    }
     return data;
   }
   function applyChat(chat) {
@@ -528,6 +532,9 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
     );
     const timeout = setTimeout(() => abort.abort('timeout'), 65000);
     try {
+      // Signed-in browsers must still have a session; otherwise the question
+      // would be answered anonymously and never saved to the account.
+      if (!(await ensureSession())) return;
       const task = config.tasks.find((task) => task.id === 'company-resources') || config.tasks[0];
       // Shared Kokoro audio is requested separately; no Google TTS is called.
       const response = await fetch(apiBase + '/chat', {
@@ -544,8 +551,10 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
         }),
       });
       const result = await response.json();
-      if (!response.ok)
+      if (!response.ok) {
+        reportAccountResponse(response.status, result);
         throw new Error(result.error || 'The assistant could not answer. Please try again.');
+      }
       const answer = presentAnswer(result);
       if (sequence.current !== token) return;
       setMessages((previous) => [
