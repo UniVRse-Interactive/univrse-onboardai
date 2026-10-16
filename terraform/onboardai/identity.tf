@@ -1,10 +1,11 @@
 # One service account per identity; none is the default compute account.
 # Every grant below is on a single resource, except the project-level roles of
-# the API runtime (local.api_project_roles). They are the only project-level
-# bindings in this module; tests enforce that. Each environment has its own
-# accounts, pool and provider (production: onboardai-*, staging:
-# onboardai-*-staging), and every grant points at its own environment's
-# resources only.
+# the API runtime (local.api_project_roles). Those and staging's two intake
+# agent roles (intake_agent.tf) are the only project-level bindings in this
+# module; tests enforce that. Each environment has its own accounts, pool and
+# provider (production: onboardai-*, staging: onboardai-*-staging), and every
+# grant points at its own environment's resources only, except
+# roles/aiplatform.user, which Vertex AI offers on the project alone.
 
 # --- Runtime identities ------------------------------------------------------
 
@@ -23,14 +24,18 @@ resource "google_service_account" "runtime" {
   depends_on = [google_project_service.required]
 }
 
-# The api account authenticates with ADC (no API key).
-# production holds, on the project: roles/aiplatform.user (Gemini
-# generateContent), roles/discoveryengine.viewer (includes
-# discoveryengine.servingConfigs.search) and roles/datastore.user (Firestore).
-# staging holds roles/aiplatform.user, and roles/datastore.user limited by an
-# IAM condition to its own database; it searches through a grant on its own
-# engine (vertex_ai_search.tf). web, tts and the deployer get no project-level
-# role.
+# The api account authenticates with ADC (no API key). In every environment
+# it holds, on the project: roles/aiplatform.user (Gemini generateContent),
+# roles/datastore.user limited by an IAM condition to its own Firestore
+# database, and roles/cloudsql.client limited to its own accounts instance
+# (local.api_project_roles). It searches through a grant on its own engine
+# (vertex_ai_search.tf). web, tts and the deployer get no project-level role.
+#
+# create_before_destroy: a binding that gains or changes its condition is
+# replaced. The new binding is written to the project policy before the old
+# one is removed, so the api never loses the role in between (#56). Both
+# writes go to the same policy, so no reader sees the removal without the
+# addition.
 resource "google_project_iam_member" "api_runtime" {
   for_each = local.api_project_roles
 
@@ -46,6 +51,10 @@ resource "google_project_iam_member" "api_runtime" {
       description = condition.value.description
       expression  = condition.value.expression
     }
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 
   depends_on = [google_project_service.required]

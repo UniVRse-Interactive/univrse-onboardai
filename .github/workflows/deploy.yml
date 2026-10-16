@@ -357,12 +357,22 @@ jobs:
       # "Migrations finished: ..." or "Migration stopped: ...". Lines reach
       # Cloud Logging a few seconds late, so it retries for about 40 s; an
       # incomplete log never fails a successful migration.
+      #
+      # It first reads the job (#54). Terraform creates the job and the
+      # deployer's access to it; before that apply, `gcloud run jobs update`
+      # would stop with a bare PERMISSION_DENIED on run.jobs.get "(or resource
+      # may not exist)". This names the missing apply instead.
       - name: Migrate the databases
         id: migrate
         run: |
           set -euo pipefail
           job="onboardai-db-migrate$NAME_SUFFIX"
           view="onboardai-db-migrate$NAME_SUFFIX"
+          if ! gcloud run jobs describe "$job" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(metadata.name)' > /dev/null 2> "$RUNNER_TEMP/migrate-describe.log"; then
+            echo "::error::Cannot read the migration job $job. Apply terraform/onboardai ($DEPLOY_ENV) first; it creates the job and the deployer's access to it. Nothing was deployed."
+            echo "gcloud: $(grep -m 1 '^ERROR' "$RUNNER_TEMP/migrate-describe.log" || head -n 1 "$RUNNER_TEMP/migrate-describe.log")"
+            exit 1
+          fi
           gcloud run jobs update "$job" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --image="$REGISTRY/onboardai$NAME_SUFFIX/api:$GITHUB_SHA" --quiet
           since=$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)
           progress="$RUNNER_TEMP/migrate-execute.log"

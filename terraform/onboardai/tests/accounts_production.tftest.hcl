@@ -176,16 +176,18 @@ run "production_accounts_secrets_and_grants" {
     error_message = "onboardai-api-run (the api and the migration job) reads onboardai-database-url, and nobody reads the bare password."
   }
 
-  # The new binding starts with its condition; the three bindings production
-  # was applied with keep none (adding one would replace them).
+  # Cloud SQL Client on onboardai-db only (#45); since #56 Firestore on
+  # (default) only and no Discovery Engine role on the project; Gemini stays
+  # unconditioned.
   assert {
     condition = (
-      toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/discoveryengine.viewer", "roles/datastore.user", "roles/cloudsql.client"]) &&
+      toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user", "roles/cloudsql.client"]) &&
       google_project_iam_member.api_runtime["roles/cloudsql.client"].condition[0].expression == "resource.name == \"projects/onboardai-test-123/instances/onboardai-db\" && resource.type == \"sqladmin.googleapis.com/Instance\"" &&
       google_project_iam_member.api_runtime["roles/cloudsql.client"].member == "serviceAccount:onboardai-api-run@onboardai-test-123.iam.gserviceaccount.com" &&
-      alltrue([for role in ["roles/aiplatform.user", "roles/discoveryengine.viewer", "roles/datastore.user"] : length(google_project_iam_member.api_runtime[role].condition) == 0])
+      length(google_project_iam_member.api_runtime["roles/datastore.user"].condition) == 1 &&
+      length(google_project_iam_member.api_runtime["roles/aiplatform.user"].condition) == 0
     )
-    error_message = "Production's api holds roles/cloudsql.client on onboardai-db only, and its three original roles stay unconditioned."
+    error_message = "Production's api holds roles/cloudsql.client on onboardai-db only, roles/datastore.user with its database condition, and roles/aiplatform.user unconditioned."
   }
 
   assert {
@@ -244,13 +246,16 @@ run "production_migration_job_migrates_cloud_sql_and_default_firestore" {
   }
 
   # Its account may write (default): production's roles/datastore.user is
-  # unconditioned on the project.
+  # limited to exactly the database the job migrates (#56).
   assert {
     condition = (
       google_project_iam_member.api_runtime["roles/datastore.user"].member == "serviceAccount:${google_cloud_run_v2_job.db_migrate[0].template[0].template[0].service_account}" &&
-      length(google_project_iam_member.api_runtime["roles/datastore.user"].condition) == 0
+      google_project_iam_member.api_runtime["roles/datastore.user"].condition[0].expression == join(" || ", [
+        for p in ["onboardai-test-123", "123456789012"] :
+        "resource.name == \"projects/${p}/databases/${one([for e in google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env : e.value if e.name == "FIRESTORE_DATABASE_ID"])}\""
+      ])
     )
-    error_message = "The production job's account holds roles/datastore.user, which reaches (default)."
+    error_message = "The production job's account holds roles/datastore.user on exactly the database it migrates, (default)."
   }
 
   assert {

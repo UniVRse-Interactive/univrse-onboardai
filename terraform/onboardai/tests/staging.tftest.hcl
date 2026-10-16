@@ -93,6 +93,13 @@ override_resource {
   }
 }
 
+override_resource {
+  target = google_cloud_run_v2_service.service["web"]
+  values = {
+    uri = "https://onboardai-web-staging-abc123xyz-as.a.run.app"
+  }
+}
+
 # Production's values, for the parity checks below.
 run "production_reference" {
   command = plan
@@ -140,8 +147,9 @@ run "staging_names_carry_the_suffix" {
     condition = alltrue([
       for labels in concat(
         [for s in google_cloud_run_v2_service.service : s.labels],
-        [google_artifact_registry_repository.onboardai.labels, google_storage_bucket.docs.labels, google_monitoring_alert_policy.server_errors.user_labels, google_monitoring_alert_policy.api_latency.user_labels],
+        [google_artifact_registry_repository.onboardai.labels, google_storage_bucket.docs.labels, google_monitoring_alert_policy.server_errors.user_labels, google_monitoring_alert_policy.api_latency.user_labels, google_monitoring_alert_policy.uptime.user_labels],
         [for c in google_monitoring_notification_channel.email : c.user_labels],
+        [for c in google_monitoring_uptime_check_config.health : c.user_labels],
       ) : labels.environment == "staging" && labels.app == "onboardai" && labels["managed-by"] == "terraform"
     ])
     error_message = "Every labelled staging resource carries environment = staging."
@@ -152,7 +160,8 @@ run "staging_names_carry_the_suffix" {
       for n in concat(
         [for a in google_service_account.runtime : a.display_name],
         [for c in google_monitoring_notification_channel.email : c.display_name],
-        [google_service_account.deployer.display_name, google_discovery_engine_data_store.docs.display_name, google_discovery_engine_search_engine.docs.display_name, google_monitoring_alert_policy.server_errors.display_name, google_monitoring_alert_policy.api_latency.display_name, google_iam_workload_identity_pool.github.display_name, google_iam_workload_identity_pool_provider.github.display_name],
+        [for c in google_monitoring_uptime_check_config.health : c.display_name],
+        [google_service_account.deployer.display_name, google_discovery_engine_data_store.docs.display_name, google_discovery_engine_search_engine.docs.display_name, google_monitoring_alert_policy.server_errors.display_name, google_monitoring_alert_policy.api_latency.display_name, google_monitoring_alert_policy.uptime.display_name, google_iam_workload_identity_pool.github.display_name, google_iam_workload_identity_pool_provider.github.display_name],
       ) : strcontains(n, "[staging]")
     ])
     error_message = "Every staging display name says [staging]."
@@ -278,10 +287,9 @@ run "staging_deployer_has_no_production_binding" {
   }
 }
 
-# Residual risk, by design: production's onboardai-api-run keeps its
-# unconditioned project roles (production's plan must not change), so it can
-# still reach staging's database and engine. Tracked as a production follow-up
-# in README.md, Staging.
+# The reverse holds since #56: production's onboardai-api-run reaches only
+# (default) and onboardai-search (tests/onboardai.tftest.hcl,
+# api_runtime_holds_exactly_three_project_roles).
 run "staging_api_cannot_reach_production_data" {
   command = apply
 
@@ -318,6 +326,16 @@ run "staging_api_cannot_reach_production_data" {
       !strcontains(google_project_iam_member.api_runtime["roles/datastore.user"].condition[0].expression, "startsWith")
     )
     error_message = "roles/datastore.user is limited to exactly the onboardai-staging database (by project ID or number), never (default)."
+  }
+
+  # Title and description are part of the binding: changing either would
+  # replace staging's grant, so they stay as applied (#20).
+  assert {
+    condition = (
+      google_project_iam_member.api_runtime["roles/datastore.user"].condition[0].title == "onboardai-staging database only" &&
+      google_project_iam_member.api_runtime["roles/datastore.user"].condition[0].description == "Firestore access for the staging api: the onboardai-staging database, never (default)."
+    )
+    error_message = "Staging's Firestore condition keeps the title and description it was applied with."
   }
 
   assert {
@@ -398,6 +416,13 @@ run "staging_has_production_shape" {
     error_message = "Staging Firestore: Native mode, asia-southeast1, delete protection and ABANDON like production."
   }
 
+  # Unlike production (#56, tests/onboardai.tftest.hcl): staging's data needs
+  # no recovery, so it skips the PITR version storage.
+  assert {
+    condition     = google_firestore_database.default.point_in_time_recovery_enablement == "POINT_IN_TIME_RECOVERY_DISABLED"
+    error_message = "Staging Firestore keeps point-in-time recovery off (production has it on)."
+  }
+
   assert {
     condition = (
       length(google_discovery_engine_data_store.docs.document_processing_config[0].default_parsing_config[0].layout_parsing_config) == 1 &&
@@ -445,6 +470,30 @@ run "staging_alerts_watch_staging_services" {
       alltrue([for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency] : toset(p.notification_channels) == toset([for c in google_monitoring_notification_channel.email : c.name])])
     )
     error_message = "Staging alerts say [staging] and reach every alert address through staging's own channels."
+  }
+
+  # #56: staging's own uptime checks, on the staging web host only.
+  assert {
+    condition = (
+      toset(keys(google_monitoring_uptime_check_config.health)) == toset(["web", "api"]) &&
+      google_monitoring_uptime_check_config.health["web"].display_name == "OnboardAi [staging]: onboardai-web-staging /web-health" &&
+      google_monitoring_uptime_check_config.health["api"].display_name == "OnboardAi [staging]: onboardai-api-staging /api/health through onboardai-web-staging" &&
+      alltrue([
+        for c in google_monitoring_uptime_check_config.health :
+        c.monitored_resource[0].labels == tomap({ project_id = "onboardai-test-123", host = "onboardai-web-staging-abc123xyz-as.a.run.app" })
+      ])
+    )
+    error_message = "Staging's uptime checks are its own ([staging]) and check the staging web host only."
+  }
+
+  assert {
+    condition = (
+      google_monitoring_alert_policy.uptime.display_name == "OnboardAi [staging]: uptime checks failing (/web-health, /api/health)" &&
+      startswith(google_monitoring_alert_policy.uptime.documentation[0].subject, "OnboardAi [staging]: ") &&
+      strcontains(google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].filter, format("metric.label.check_id = one_of(%s)", join(", ", [for c in google_monitoring_uptime_check_config.health : "\"${c.uptime_check_id}\""]))) &&
+      toset(google_monitoring_alert_policy.uptime.notification_channels) == toset([for c in google_monitoring_notification_channel.email : c.name])
+    )
+    error_message = "Staging's uptime alert says [staging], watches staging's two checks and reaches staging's channels."
   }
 }
 
