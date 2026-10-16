@@ -1,5 +1,8 @@
 terraform {
-  required_version = ">= 1.9"
+  # 1.11: write-only arguments (secret_data_wo, password_wo), which keep the
+  # generated database password and MCP token out of state (accounts.tf,
+  # intake_agent.tf).
+  required_version = ">= 1.11"
 
   required_providers {
     google = {
@@ -11,6 +14,12 @@ terraform {
     google-beta = {
       source  = "hashicorp/google-beta"
       version = "~> 8.6"
+    }
+    # Only for ephemeral "random_password" (3.7+): the database password and
+    # the MCP token are generated during apply and never written to state.
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.7"
     }
   }
 

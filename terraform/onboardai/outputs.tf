@@ -83,3 +83,43 @@ output "import_documents_command" {
     "-d '${local.import_request}'",
   ])
 }
+
+# ---------------------------------------------------------------------------
+# Employee accounts and the intake agent (#30). Names only, never a secret
+# value. null where accounts do not run (production today), which keeps
+# production's outputs unchanged.
+# ---------------------------------------------------------------------------
+
+output "cloud_sql_instance_connection_name" {
+  description = "Connection name of the accounts Cloud SQL instance (project:region:instance). The deploy workflow passes it to the api as --set-cloudsql-instances; the HR bootstrap passes it to the Cloud SQL Auth Proxy."
+  value       = local.employee_accounts ? google_sql_database_instance.accounts[0].connection_name : null
+}
+
+output "accounts_secret_ids" {
+  description = "Secret Manager secret IDs (values are never output): db_password (the database user's, for the HR bootstrap), database_url (DATABASE_URL of the api and the migration job), intake_mcp_token (INTAKE_MCP_TOKEN of the api and the agent)."
+  value = local.employee_accounts ? {
+    db_password      = google_secret_manager_secret.accounts["db_password"].secret_id
+    database_url     = google_secret_manager_secret.accounts["database_url"].secret_id
+    intake_mcp_token = google_secret_manager_secret.intake_mcp_token[0].secret_id
+  } : null
+}
+
+output "db_migrate_job_name" {
+  description = "Cloud Run job that runs npm run db:migrate from the api image before each api deploy."
+  value       = local.employee_accounts ? google_cloud_run_v2_job.db_migrate[0].name : null
+}
+
+output "intake_agent_service_account_email" {
+  description = "Runtime service account of the intake agent on Agent Engine (--service-account of npm run intake-agent:deploy)."
+  value       = local.employee_accounts ? google_service_account.intake_agent[0].email : null
+}
+
+output "intake_agent_deploy_settings" {
+  description = "What the deploy workflow passes to npm run intake-agent:deploy, besides --mcp-url (<api URL>/mcp, read at deploy time) and --model."
+  value = local.employee_accounts ? {
+    location         = var.intake_agent_location
+    display_name     = local.intake_agent_display_name
+    service_account  = google_service_account.intake_agent[0].email
+    mcp_token_secret = google_secret_manager_secret.intake_mcp_token[0].secret_id
+  } : null
+}
