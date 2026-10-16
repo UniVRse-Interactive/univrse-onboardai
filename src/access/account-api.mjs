@@ -2,6 +2,8 @@
 // The session is an HttpOnly cookie that same-origin fetch sends by itself:
 // nothing here reads, stores or logs a password or token.
 
+import { createEmployeeBody } from './employee-departments.mjs';
+
 export class AccountApiError extends Error {
   constructor({ status = 0, code = '', message = '', fields = [] }) {
     super(message || 'The request could not be completed. Please try again.');
@@ -113,11 +115,9 @@ export const accountApi = {
     }),
   myProfile: (options) => accountRequest('/api/me/profile', options),
   listEmployees: (options) => accountRequest('/api/hr/employees', options),
-  createEmployee: (username, temporaryPassword, profile) =>
-    accountRequest('/api/hr/employees', {
-      method: 'POST',
-      body: { username, temporaryPassword, profile },
-    }),
+  // The server assigns the Employee ID and a temporary password: -> { employee, temporaryPassword }
+  createEmployee: (profile) =>
+    accountRequest('/api/hr/employees', { method: 'POST', body: createEmployeeBody(profile) }),
   // Raw file bytes, the same pattern as the guest document upload.
   autofillProfile: (file, signal) =>
     accountRequest('/api/hr/employees/autofill', {

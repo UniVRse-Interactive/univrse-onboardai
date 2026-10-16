@@ -7,7 +7,6 @@ import {
   formToProfileInput,
   passwordProblem,
   profileToForm,
-  validateNewEmployee,
   validateProfileForm,
 } from '../../src/access/profile-validation.mjs';
 import {
@@ -75,25 +74,10 @@ test('PROFILE_INVALID fields map to inputs', () => {
   assert.match(errors['job.fullName'], /at most 120/);
   assert.equal(general.length, 1);
 });
-test('new employee validation', () => {
-  assert.deepEqual(
-    Object.keys(validateNewEmployee({ username: 'a', temporaryPassword: '', confirmation: '' })),
-    ['username', 'temporaryPassword'],
-  );
-  assert.deepEqual(
-    validateNewEmployee({ username: 'FE-01', temporaryPassword: 'longenough1', confirmation: 'x' }),
-    { confirmation: 'The passwords do not match.' },
-  );
-  assert.deepEqual(
-    validateNewEmployee({
-      username: 'FE-01',
-      temporaryPassword: 'longenough1',
-      confirmation: 'longenough1',
-    }),
-    {},
-  );
-  assert.ok(passwordProblem('fe-01-fe-01'.slice(0, 5), 'x'));
+test('password rules still apply to reset', () => {
+  assert.ok(passwordProblem('short', 'x'));
   assert.ok(passwordProblem('abcdefgh', 'ABCDEFGH'));
+  assert.equal(passwordProblem('longenough1', 'x'), null);
 });
 test('server error codes target inputs', () => {
   assert.equal(employeeErrorTarget('USERNAME_TAKEN'), 'username');
