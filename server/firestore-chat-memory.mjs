@@ -456,6 +456,34 @@ export function createFirestoreChatMemory({
       return { updated: a.at };
     });
   }
+  // Removes everything this owner has: every chat with its messages, support
+  // observations and checkpoints (expired and half-deleted chats included), then
+  // the support preferences. Nothing is removed while one of the owner's answers
+  // is running (409 CHAT_BUSY), because that answer could still write
+  // checkpoints. Safe to repeat: an interrupted run is finished by the next.
+  async function eraseOwner(owner) {
+    const ids = await call('delete owner chats', async () => {
+      const p = await paths();
+      return p.db.runTransaction(async (tx) => {
+        const mine = await tx.get(
+          p.conversations.where('owner', '==', owner).select('deleting', 'turnToken', 'turnUntil'),
+        );
+        const at = now();
+        if (mine.docs.some((doc) => !doc.data().deleting && leased(doc.data(), at)))
+          throw chatBusy(busyMessages.eraseOwner);
+        for (const doc of mine.docs)
+          if (!doc.data().deleting)
+            tx.update(doc.ref, { deleting: true, updated: 0, turnToken: null, turnUntil: 0 });
+        return mine.docs.map((doc) => doc.id);
+      });
+    });
+    for (const id of ids) await purge(id);
+    // Last, because purging a chat with observations bumps the preferences.
+    await call('delete support preferences', async () => {
+      const p = await paths();
+      await p.preferences.doc(ownerDocId(owner)).delete();
+    });
+  }
   async function supportSettings(owner, patch) {
     if (!isSupportSettings(patch)) throw supportSettingsInvalid();
     await call('save support settings', async () => {
@@ -479,6 +507,7 @@ export function createFirestoreChatMemory({
     create,
     read,
     erase,
+    eraseOwner,
     acquire,
     setLearning,
     supportSummary: async (owner) => {

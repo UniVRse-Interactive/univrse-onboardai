@@ -1,12 +1,15 @@
 import express from 'express';
 import { ChatError } from './chat-errors.mjs';
 import { accountErrors, autofillErrors } from './account-errors.mjs';
+import { companyKnowledgeRequestErrors } from './company-knowledge.mjs';
 
 // HTTP routes for accounts (see docs/account-access.md for the contract):
 //   /api/auth/*           sign in, session, sign out, change password
 //   /api/me/*             the signed-in account's own data
-//   /api/hr/employees*    HR-only employee administration
+//   /api/hr/employees*    HR-only employee administration, including deletion
 //   /api/hr/employees/autofill  HR-only profile autofill (profile-autofill.mjs)
+//   /api/hr/support-summaries   HR-only support summaries of employee accounts
+//   /api/hr/company-knowledge*  HR-only company Google Docs library (company-knowledge.mjs)
 // Every route checks the browser's Origin like the saved-chat routes, answers
 // 503 ACCOUNTS_NOT_CONFIGURED without DATABASE_URL, is never cached, and sits
 // behind the app's POST rate limiter.
@@ -48,8 +51,13 @@ export function sendAccountError(res, error) {
 }
 
 // profileAutofill: the service from createProfileAutofill, or null (503
-// AUTOFILL_NOT_CONFIGURED).
-export function mountAccountRoutes(app, { env, accounts, profileAutofill = null }) {
+// AUTOFILL_NOT_CONFIGURED). chatMemory(): the saved-chat store holding account
+// chats (deletion and support summaries). companyKnowledge: the service from
+// createCompanyKnowledge (the HR library).
+export function mountAccountRoutes(
+  app,
+  { env, accounts, profileAutofill = null, chatMemory = null, companyKnowledge = null },
+) {
   const setSession = (req, res, result) =>
     res.cookie(accountCookie, result.token, {
       ...accountCookieOptions(req, env),
@@ -141,6 +149,37 @@ export function mountAccountRoutes(app, { env, accounts, profileAutofill = null 
   });
   employees.put('/employees/:id/status', hr, async (req, res) => {
     res.json(await accounts.setStatus(req.accountSession, req.params.id, req.body));
+  });
+  // Deletes the employee's Firestore data, then the account. Safe to retry.
+  employees.delete('/employees/:id', hr, async (req, res) => {
+    await accounts.deleteEmployee(req.accountSession, req.params.id, {
+      eraseChats: (owner) => chatMemory().eraseOwner(owner),
+    });
+    res.status(204).end();
+  });
+  employees.get('/support-summaries', hr, async (req, res) => {
+    res.json({
+      employees: await accounts.supportSummaries((owner) => chatMemory().supportSummary(owner)),
+    });
+  });
+
+  // The company Google Docs library: the shapes of #28's guest workspace
+  // library (GET snapshot fields, POST/DELETE /documents), stored company-wide.
+  const library = () => {
+    if (!companyKnowledge) throw accountErrors.notConfigured();
+    return companyKnowledge;
+  };
+  employees.get('/company-knowledge', hr, async (req, res) => {
+    res.json(await library().snapshot());
+  });
+  employees.post('/company-knowledge/documents', hr, async (req, res) => {
+    if (!req.is('application/json')) throw companyKnowledgeRequestErrors.googleDocOnly();
+    const added = await library().connect(req.accountSession.account.id, req.body, new Date());
+    if (!res.destroyed) res.status(added.duplicate || added.replaced ? 200 : 201).json(added);
+  });
+  employees.delete('/company-knowledge/documents/:id', hr, async (req, res) => {
+    await library().remove(req.params.id);
+    res.status(204).end();
   });
 
   for (const [path, router] of [

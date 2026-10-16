@@ -10,18 +10,21 @@ const at = new Date('2026-10-15T01:00:00.000Z');
 const hash = 'scrypt$n=1024,r=8,p=1$synthetic$synthetic';
 
 test('migrations are plain SQL files, applied once and recorded in schema_migrations', async () => {
-  assert.deepEqual(migrationFiles(), ['001_accounts.sql']);
+  const all = ['001_accounts.sql', '002_account_event_labels.sql'];
+  assert.deepEqual(migrationFiles(), all);
   const sql = readFileSync(join(migrationsDirectory, '001_accounts.sql'), 'utf8');
   for (const table of ['accounts', 'sessions', 'account_events'])
     assert.match(sql, new RegExp(`CREATE TABLE ${table} \\(`));
   const database = await createTestDatabase();
-  assert.deepEqual(database.migrated, { applied: ['001_accounts.sql'], skipped: [] });
+  assert.deepEqual(database.migrated, { applied: all, skipped: [] });
   // Running again changes nothing.
-  assert.deepEqual(await migrate(database.pool), { applied: [], skipped: ['001_accounts.sql'] });
-  assert.deepEqual(await migrate(database.pool), { applied: [], skipped: ['001_accounts.sql'] });
+  assert.deepEqual(await migrate(database.pool), { applied: [], skipped: all });
+  assert.deepEqual(await migrate(database.pool), { applied: [], skipped: all });
   assert.deepEqual(
-    (await database.rows('SELECT name FROM schema_migrations')).map((row) => row.name),
-    ['001_accounts.sql'],
+    (await database.rows('SELECT name FROM schema_migrations ORDER BY name')).map(
+      (row) => row.name,
+    ),
+    all,
   );
   const columns = await database.rows(
     `SELECT table_name, column_name FROM information_schema.columns
@@ -47,8 +50,34 @@ test('migrations are plain SQL files, applied once and recorded in schema_migrat
     'username',
   ]);
   assert.deepEqual(of('sessions'), ['account_id', 'created_at', 'expires_at', 'token_hash']);
-  // Events hold who, whom, what and when: no column for secrets or profile values.
-  assert.deepEqual(of('account_events'), ['action', 'actor_id', 'created_at', 'id', 'target_id']);
+  // Events hold who, whom (and a deleted account's username), what and when:
+  // no column for secrets or profile values.
+  assert.deepEqual(of('account_events'), [
+    'action',
+    'actor_id',
+    'created_at',
+    'id',
+    'target_id',
+    'target_label',
+  ]);
+});
+
+test('002 adds target_label safely: its statements can run again, and only an ID fits', async () => {
+  const database = await createTestDatabase();
+  // The file itself is idempotent, not only its record in schema_migrations.
+  const sql = readFileSync(join(migrationsDirectory, '002_account_event_labels.sql'), 'utf8');
+  await database.pool.query(sql);
+  await database.pool.query(sql);
+  await database.pool.query(
+    "INSERT INTO account_events (target_label, action) VALUES ('EMP-0001', 'employee_deleted')",
+  );
+  for (const label of ['not an id', 'x', 'a'.repeat(33)])
+    await assert.rejects(
+      database.pool.query(
+        "INSERT INTO account_events (target_label, action) VALUES ($1, 'employee_deleted')",
+        [label],
+      ),
+    );
 });
 
 test('the database enforces unique IDs regardless of case, the ID format, roles, statuses and hash format', async () => {

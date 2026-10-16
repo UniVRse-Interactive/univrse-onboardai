@@ -2,8 +2,8 @@ import pg from 'pg';
 import { ChatError } from './chat-errors.mjs';
 import { accountErrors } from './account-errors.mjs';
 
-// Sign-in data in PostgreSQL (tables in server/migrations/001_accounts.sql):
-// accounts, sessions (SHA-256 of each token only) and account_events. Every
+// Sign-in data in PostgreSQL (tables in server/migrations/*.sql): accounts,
+// sessions (SHA-256 of each token only) and account_events. Every
 // time comes from the caller, so tests can move the clock. Database failures
 // become 503 ACCOUNTS_UNAVAILABLE; the log records the operation and the
 // SQLSTATE or error code only, never values, usernames or connection details.
@@ -271,6 +271,41 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
         if (!account) return null;
         await event(query, actorId, id, action, at);
         await during(account);
+        return account;
+      });
+    },
+    // Signs an employee out everywhere (the first step of deleting the account,
+    // so no new chat data is made while Firestore is cleaned up).
+    async endEmployeeSessions(id) {
+      await run(
+        'end employee sessions',
+        `DELETE FROM sessions WHERE account_id IN
+           (SELECT id FROM accounts WHERE id = $1 AND role = 'employee')`,
+        [id],
+      );
+    },
+    // Deletes an employee account (sessions cascade) and records
+    // employee_deleted. Every event about the account keeps its username in
+    // target_label, since target_id becomes NULL. Returns the deleted row, or
+    // null when no employee account has that ID (HR accounts included).
+    async deleteEmployee(actorId, id, at) {
+      return transaction('delete employee', async (query) => {
+        const found = await query(
+          `SELECT ${columns} FROM accounts WHERE id = $1 AND role = 'employee'`,
+          [id],
+        );
+        const account = found.rows[0];
+        if (!account) return null;
+        await query('UPDATE account_events SET target_label = $2 WHERE target_id = $1', [
+          id,
+          account.username,
+        ]);
+        await query(`DELETE FROM accounts WHERE id = $1 AND role = 'employee'`, [id]);
+        await query(
+          `INSERT INTO account_events (actor_id, target_id, target_label, action, created_at)
+           VALUES ($1, NULL, $2, 'employee_deleted', $3)`,
+          [actorId, account.username, at],
+        );
         return account;
       });
     },

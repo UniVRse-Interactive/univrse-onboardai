@@ -119,10 +119,14 @@ export function createConversationService({
   models: providedModels,
   // Firestore when FIRESTORE_DATABASE_ID is set, else SQLite (chat-store.mjs).
   memory = createChatStore(env),
-  // retrieve(query, config) -> [{ title, heading, text }] in rank order.
+  // retrieve(query, config, owner) -> [{ title, heading, text }] in rank order.
+  // `owner` is the chat's owner, so account chats can search more sources.
   retrieve = createCompanyRetriever({ env }),
 } = {}) {
   let models = providedModels;
+  // The owner of each chat with an answer in progress, by thread (chat) ID. A
+  // chat's lease allows one answer at a time, so an ID is never shared.
+  const turnOwners = new Map();
   const recent = (state) => state.messages.slice(state.summaryCount || 0).map((m) => m);
   const summaryNote = (state) =>
     state.summary
@@ -193,7 +197,11 @@ export function createConversationService({
       const started = performance.now();
       try {
         // Gemini's standalone rewrite of the question is the search query.
-        const found = await retrieve(state.plan.query, config);
+        const found = await retrieve(
+          state.plan.query,
+          config,
+          turnOwners.get(config?.configurable?.thread_id),
+        );
         return {
           timingsMs: { ...state.timingsMs, retrieval: Math.round(performance.now() - started) },
           // IDs follow the search rank, so citations can be checked against them.
@@ -327,10 +335,23 @@ export function createConversationService({
         ),
         new HumanMessage(question),
       ];
-      const result = await graph.invoke(
-        { messages, plan: null, passages: [], result: null, learning: row.learning, timingsMs: {} },
-        { configurable: { thread_id: id }, signal, recursionLimit: 14 },
-      );
+      turnOwners.set(id, owner);
+      let result;
+      try {
+        result = await graph.invoke(
+          {
+            messages,
+            plan: null,
+            passages: [],
+            result: null,
+            learning: row.learning,
+            timingsMs: {},
+          },
+          { configurable: { thread_id: id }, signal, recursionLimit: 14 },
+        );
+      } finally {
+        turnOwners.delete(id);
+      }
       signal?.throwIfAborted();
       const delivered = {
         ...result.result,

@@ -170,8 +170,8 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
     create: async (owner) => create(owner),
     read: async (owner, id) => read(owner, id),
     erase: async (owner, id) => erase(owner, id),
-    // SQLite only (no Firestore equivalent): guest workspaces remove one guest's
-    // chats, checkpoints and support records together, or nothing while one is busy.
+    // Removes one owner's chats, checkpoints and support records together, or
+    // nothing while one is busy (guest removal; Firestore has the same method).
     eraseOwner: async (owner) => eraseOwner(owner),
     acquire: async (owner, id) => acquire(owner, id),
     setLearning: async (owner, id, learning) => setLearning(owner, id, learning),

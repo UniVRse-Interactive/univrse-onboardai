@@ -133,26 +133,30 @@ The existing removed pages and old standalone avatar demos stay removed. The unu
 
 ## Accounts
 
-HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds accounts, sessions and the audit trail; Firestore holds employee profiles and account-owned chats. See [Account access](account-access.md) for the setup, rules and API contract.
+HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds accounts, sessions and the audit trail; Firestore holds employee profiles, account-owned chats and the company Google Docs library. See [Account access](account-access.md) for the setup, rules and API contract.
 
-| File                             | Purpose                                                                                         |
-| -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `server/account-settings.mjs`    | When accounts are on, and the start-up guard (Firestore emulator off Cloud Run)                 |
-| `server/account-service.mjs`     | Sign-in, sessions, lockout, password changes and HR actions                                     |
-| `server/account-store.mjs`       | PostgreSQL pool, queries and transactions; code-only error logs                                 |
-| `server/account-routes.mjs`      | `/api/auth`, `/api/me` and `/api/hr` routes and the `onboardai_account` cookie                  |
-| `server/account-errors.mjs`      | Account error codes and messages                                                                |
-| `server/password-hashing.mjs`    | scrypt password hashes and password rules                                                       |
-| `server/employee-profiles.mjs`   | Profile validation and `employeeProfiles/{accountId}` in Firestore                              |
-| `server/profile-autofill.mjs`    | Profile autofill: reads profile fields from an uploaded document with Gemini; saves nothing     |
-| `server/database-migrations.mjs` | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                       |
-| `server/migrations/`             | Plain SQL migrations                                                                            |
-| `scripts/migrate-database.mjs`   | `npm run db:migrate`                                                                            |
-| `scripts/create-hr-account.mjs`  | `npm run hr:create`: the first HR account, password never shown or passed as an argument        |
-| `scripts/reset-hr-password.mjs`  | `npm run hr:reset-password`: recover an HR account (new password, lock cleared, sessions ended) |
-| `server/local-setup.mjs`         | The compose `setup` service: guard, migrations, local HR login, `hr-login.json`, banner         |
-| `scripts/local-stack.mjs`        | Host command for `npm run local*`: starts Docker, runs compose, prints the login summary        |
-| `scripts/hr-account-tool.mjs`    | Input (terminal without echo, or piped lines) and rules shared by both HR scripts               |
+| File                                    | Purpose                                                                                                                       |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `server/account-settings.mjs`           | When accounts are on, and the start-up guard (Firestore emulator off Cloud Run)                                               |
+| `server/account-service.mjs`            | Sign-in, sessions, lockout, password changes and HR actions (deletion and support summaries too)                              |
+| `server/account-store.mjs`              | PostgreSQL pool, queries and transactions; code-only error logs                                                               |
+| `server/account-routes.mjs`             | `/api/auth`, `/api/me` and `/api/hr` routes and the `onboardai_account` cookie                                                |
+| `server/account-errors.mjs`             | Account error codes and messages                                                                                              |
+| `server/password-hashing.mjs`           | scrypt password hashes and password rules                                                                                     |
+| `server/employee-profiles.mjs`          | Profile validation and `employeeProfiles/{accountId}` in Firestore; removes an account's profile and `employeeImports` drafts |
+| `server/company-knowledge.mjs`          | HR company Google Docs library, Drive folder status, and its search for account-owned chats                                   |
+| `server/company-documents.mjs`          | Firestore `companyDocuments` and the library rules (one Doc per topic, twelve documents)                                      |
+| `server/google-drive-documents.mjs`     | Read-only Google Docs and Drive folder reader with fixed, safe error codes                                                    |
+| `server/onboarding-document-topics.mjs` | The six onboarding topics of the company library                                                                              |
+| `server/profile-autofill.mjs`           | Profile autofill: reads profile fields from an uploaded document with Gemini; saves nothing                                   |
+| `server/database-migrations.mjs`        | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                                                     |
+| `server/migrations/`                    | Plain SQL migrations                                                                                                          |
+| `scripts/migrate-database.mjs`          | `npm run db:migrate`                                                                                                          |
+| `scripts/create-hr-account.mjs`         | `npm run hr:create`: the first HR account, password never shown or passed as an argument                                      |
+| `scripts/reset-hr-password.mjs`         | `npm run hr:reset-password`: recover an HR account (new password, lock cleared, sessions ended)                               |
+| `server/local-setup.mjs`                | The compose `setup` service: guard, migrations, local HR login, `hr-login.json`, banner                                       |
+| `scripts/local-stack.mjs`               | Host command for `npm run local*`: starts Docker, runs compose, prints the login summary                                      |
+| `scripts/hr-account-tool.mjs`           | Input (terminal without echo, or piped lines) and rules shared by both HR scripts                                             |
 
 ## Uploaded company guidance
 

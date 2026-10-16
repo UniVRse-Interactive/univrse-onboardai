@@ -1,4 +1,5 @@
 import { AccountError } from './account-errors.mjs';
+import { commitInBatches, deleteOperation } from './firestore-checkpointer.mjs';
 import { createStorageCall } from './firestore-client.mjs';
 
 // Each employee's personal profile is one Firestore document,
@@ -6,6 +7,14 @@ import { createStorageCall } from './firestore-client.mjs';
 // Every call is bounded by the storage deadline in firestore-client.mjs, and its
 // log line names the operation and Firestore status only, never profile values.
 export const profileCollection = 'employeeProfiles';
+// Draft employee imports (issue #27), employeeImports/{importId}. A draft names
+// an account as its target, as a possible duplicate or as its creator.
+export const importCollection = 'employeeImports';
+export const importMentions = (data, accountId) =>
+  data?.targetEmployee?.accountId === accountId ||
+  data?.createdBy?.accountId === accountId ||
+  (Array.isArray(data?.possibleDuplicates) &&
+    data.possibleDuplicates.some((match) => match?.accountId === accountId));
 
 // group -> field -> rule. Every field is optional text except job.fullName.
 export const profileSchema = Object.freeze({
@@ -158,19 +167,24 @@ export const profileSummary = (profile) =>
     startDate: profile.job.startDate,
   };
 
-function profileStorageError(error) {
-  if (error?.code === 'STORAGE_TIMEOUT')
-    return new AccountError(
+export const profileStorageErrors = {
+  timeout: () =>
+    new AccountError(
       504,
       'PROFILE_STORAGE_TIMEOUT',
       'Employee profiles took too long to respond. Please try again.',
-    );
-  return new AccountError(
-    503,
-    'PROFILE_STORAGE_UNAVAILABLE',
-    'Employee profiles are temporarily unavailable. Please try again shortly.',
-  );
-}
+    ),
+  unavailable: () =>
+    new AccountError(
+      503,
+      'PROFILE_STORAGE_UNAVAILABLE',
+      'Employee profiles are temporarily unavailable. Please try again shortly.',
+    ),
+};
+const profileStorageError = (error) =>
+  error?.code === 'STORAGE_TIMEOUT'
+    ? profileStorageErrors.timeout()
+    : profileStorageErrors.unavailable();
 
 export function createProfileStore({
   // A Firestore instance, or an async function returning one.
@@ -220,6 +234,23 @@ export function createProfileStore({
     remove: (accountId) =>
       guarded('delete employee profile', async () => {
         await ref(await database(), accountId).delete();
+      }),
+    // Deletes the profile and every import draft that mentions the account (a
+    // full scan of the small employeeImports collection; nothing when it does
+    // not exist). Safe to repeat.
+    removeAccountData: (accountId) =>
+      guarded('delete employee data', async () => {
+        const db = await database();
+        const drafts = await db
+          .collection(importCollection)
+          .select('targetEmployee', 'createdBy', 'possibleDuplicates')
+          .get();
+        await commitInBatches(db, [
+          ...drafts.docs
+            .filter((doc) => importMentions(doc.data(), accountId))
+            .map((doc) => deleteOperation(doc.ref)),
+          deleteOperation(ref(db, accountId)),
+        ]);
       }),
     close: async () => {
       const open = client;

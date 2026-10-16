@@ -13,6 +13,8 @@ import { createChatMemory } from './saved-conversations.mjs';
 //   create(owner)                      -> { id, title, messages, learning, created, updated }
 //   read(owner, id)                    -> { id, title, messages, created, updated, learning }
 //   erase(owner, id)                   deletes visible history, observations and checkpoints
+//   eraseOwner(owner)                  deletes every chat and the preferences of one owner
+//                                      (409 CHAT_BUSY while one of its answers runs)
 //   acquire(owner, id)                 -> { row, save(messages, learning), release() }
 //   setLearning(owner, id, learning)   -> learning
 //   supportSummary(owner)              -> summary

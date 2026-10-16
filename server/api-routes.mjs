@@ -19,6 +19,10 @@ import { ChatError } from './chat-errors.mjs';
 import { accountErrors } from './account-errors.mjs';
 import { accountSettings } from './account-settings.mjs';
 import { createAccountBackends, createAccountService } from './account-service.mjs';
+import { createCompanyDocumentStore } from './company-documents.mjs';
+import { createCompanyKnowledge, isAccountOwner } from './company-knowledge.mjs';
+import { createFirestoreClient } from './firestore-client.mjs';
+import { readDriveKnowledge, readGoogleDocument } from './google-drive-documents.mjs';
 import {
   accountCookie,
   accountCookieOptions,
@@ -46,6 +50,8 @@ export function createApp({
     ? createRemoteVoice({ url: env.TTS_SERVICE_URL })
     : createSharedVoice(),
   trustProxy = false,
+  // The saved-chat service (gemini-chat-workflow.mjs), or a function
+  // ({ retrieve }) => service that is given the app's company retriever.
   conversationService = null,
   guestModels = null,
   guestStore = null,
@@ -56,6 +62,14 @@ export function createApp({
   // Profile autofill service (profile-autofill.mjs). By default it uses Vertex
   // AI through fetchImpl and getAccessToken; pass null to turn it off.
   profileAutofill = undefined,
+  // The HR company Google Docs library (company-documents.mjs). By default it
+  // is stored in Firestore whenever accounts are on.
+  companyDocuments = undefined,
+  // Read-only Google Drive access for that library (google-drive-documents.mjs).
+  loadGoogleDocument = readGoogleDocument,
+  loadDriveKnowledge = readDriveKnowledge,
+  // The company search (Vertex AI Search, or the sample guide); tests replace it.
+  companyRetrieve = undefined,
 } = {}) {
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
@@ -76,9 +90,42 @@ export function createApp({
       : createProfileAutofill({ env, fetchImpl, getAccessToken: vertexToken });
   // Company passages for gemini-chat and document-search: Vertex AI Search, or
   // the sample guide when VERTEX_SEARCH_ENGINE_ID is unset.
-  const retrieve = createCompanyRetriever({ env, fetchImpl, getAccessToken: vertexToken });
-  let conversations = conversationService;
-  const chatService = () => (conversations ||= createConversationService({ env, retrieve }));
+  const retrieve =
+    companyRetrieve || createCompanyRetriever({ env, fetchImpl, getAccessToken: vertexToken });
+  // With accounts on, HR's company Google Docs library (and the optional
+  // GOOGLE_DRIVE_FOLDER_ID folder) is searched too, for chats owned by an
+  // account only. Anonymous browsers and guest workspaces are unchanged.
+  const library = !accounts
+    ? null
+    : companyDocuments !== undefined
+      ? companyDocuments
+      : settings
+        ? createCompanyDocumentStore({ firestore: createFirestoreClient(settings.firestore) })
+        : null;
+  const knowledge = library
+    ? createCompanyKnowledge({
+        env,
+        documents: library,
+        companyRetrieve: retrieve,
+        loadGoogleDoc: loadGoogleDocument,
+        loadDrive: loadDriveKnowledge,
+      })
+    : null;
+  // retrieve(query, options, owner): `owner` is the chat's owner, when known.
+  const chatRetrieve = (query, options, owner) =>
+    knowledge && isAccountOwner(owner)
+      ? knowledge.retrieve(query, { signal: options?.signal })
+      : retrieve(query, options);
+  const quoteRetrieve = (query, options, owner) =>
+    knowledge && isAccountOwner(owner)
+      ? knowledge.quote(query, { signal: options?.signal })
+      : retrieve(query, options);
+  let conversations = typeof conversationService === 'function' ? null : conversationService;
+  const chatService = () =>
+    (conversations ||=
+      typeof conversationService === 'function'
+        ? conversationService({ retrieve: chatRetrieve })
+        : createConversationService({ env, retrieve: chatRetrieve }));
 
   app.disable('x-powered-by');
   // With a trusted proxy in front, req.ip and req.host are the browser's IP and host.
@@ -134,11 +181,22 @@ export function createApp({
     store: guestStore,
     companyRetrieve: retrieve,
   });
-  mountAccountRoutes(app, { env, accounts, profileAutofill: autofill });
+  mountAccountRoutes(app, {
+    env,
+    accounts,
+    profileAutofill: autofill,
+    chatMemory: () => chatService().memory,
+    companyKnowledge: knowledge,
+  });
   // Both stores close asynchronously (Firestore client or SQLite file), as do
-  // the account database pool and profile client.
+  // the account database pool and the profile and library clients.
   app.locals.closeChat = async () => {
-    await Promise.allSettled([conversations?.close(), guestWorkspace.close(), accounts?.close()]);
+    await Promise.allSettled([
+      conversations?.close(),
+      guestWorkspace.close(),
+      accounts?.close(),
+      library?.close?.(),
+    ]);
   };
 
   // A usable account session (no forced password change) for this request, or
@@ -454,7 +512,15 @@ export function createApp({
             question.trim(),
             requestId,
             abort.signal,
-            () => answerOnce({ question, task, style, taskId, signal: abort.signal }),
+            () =>
+              answerOnce({
+                question,
+                task,
+                style,
+                taskId,
+                signal: abort.signal,
+                owner: req.chatOwner,
+              }),
           );
           if (!res.destroyed) await deliver(result);
         } catch (error) {
@@ -481,14 +547,19 @@ export function createApp({
   // One answer without conversation history, from the configured engine:
   // document search, the labelled sample answer, or single-turn Gemini. A
   // failure is an AnswerFailure carrying the response the browser receives.
-  async function answerOnce({ question, task, style, taskId, signal }) {
+  // `owner` is the account's chat owner for a signed-in turn.
+  async function answerOnce({ question, task, style, taskId, signal, owner = null }) {
     if (documentSearch) {
       const start = performance.now();
       let passages;
       try {
-        passages = await retrieve(question.trim(), signal ? { signal } : undefined);
+        passages = await quoteRetrieve(question.trim(), signal ? { signal } : undefined, owner);
       } catch (error) {
-        const failure = searchFailure(error);
+        // Company library and Drive failures are ChatErrors with fixed codes.
+        const failure =
+          error instanceof ChatError
+            ? { status: error.status, code: error.code, error: error.message }
+            : searchFailure(error);
         throw new AnswerFailure(failure.status, { code: failure.code, error: failure.error });
       }
       return {

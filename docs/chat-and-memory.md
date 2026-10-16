@@ -57,7 +57,7 @@ Every query filters on one field (`owner`, `updated`, `ns`, `checkpointId` or th
 
 ### Retention and deletion in Firestore
 
-Expired and deleted chats are hidden immediately. A sweep in the server then purges them; it is the only expiry mechanism. It runs with chat-list, new-chat and summary requests, at most once a minute per instance and ten chats at a time. A delete first hides the chat, then removes its checkpoints and messages, and the chat document (with its support observations) last. If that is interrupted, retrying the delete or the next sweep finishes it. No Firestore TTL policy is used: TTL needs a timestamp field (`updated` is a number) and deletes single documents but not their subcollections, so it would leave messages and checkpoints behind.
+Expired and deleted chats are hidden immediately. A sweep in the server then purges them; it is the only expiry mechanism. It runs with chat-list, new-chat and summary requests, at most once a minute per instance and ten chats at a time. A delete first hides the chat, then removes its checkpoints and messages, and the chat document (with its support observations) last. If that is interrupted, retrying the delete or the next sweep finishes it. Deleting an employee account removes all of that owner's chats the same way (`eraseOwner`, after hiding them all in one transaction, and `409 CHAT_BUSY` while one of its answers runs), then its `supportPreferences` document; see [Account access](account-access.md#deleting-an-employee). No Firestore TTL policy is used: TTL needs a timestamp field (`updated` is a number) and deletes single documents but not their subcollections, so it would leave messages and checkpoints behind.
 
 ### More than one api instance
 
@@ -158,6 +158,8 @@ npm run docs:import -- ./company-docs --apply
 - **Public exposure:** the web and api services are public until IAP (#10) is in place, so indexed documents can be quoted to anyone who uses the chat. Upload only approved documents.
 
 ## Information boundaries
+
+Chats owned by a signed-in account also search the company Google Docs library that HR connects (Firestore `companyDocuments`, and the optional `GOOGLE_DRIVE_FOLDER_ID` folder), interleaved with Vertex AI Search or the sample guide; see [Account access](account-access.md#account-chats-and-the-company-library). Anonymous and guest chats do not.
 
 Only documents approved for the intended employees belong in the data store. Prompt instructions cannot reliably hide PNC information that the model has already received. Exclude restricted HR records, passwords, individual salary/medical details and other material employees should not access. Employee sign-in now exists (see [Account access](account-access.md)), but every signed-in employee searches the same company documents: for multiple employee roles, apply document permissions **before retrieval**. The anonymous browser-session isolation is not employee authentication.
 

@@ -6,6 +6,7 @@ import { AIMessage } from '@langchain/core/messages';
 import { createApp } from '../../server/api-routes.mjs';
 import { createAccountService } from '../../server/account-service.mjs';
 import { createAccountStore } from '../../server/account-store.mjs';
+import { createCompanyDocumentStore } from '../../server/company-documents.mjs';
 import { createProfileStore } from '../../server/employee-profiles.mjs';
 import { createProfileAutofill } from '../../server/profile-autofill.mjs';
 import { createFirestoreChatMemory } from '../../server/firestore-chat-memory.mjs';
@@ -140,17 +141,33 @@ export class Browser {
   signIn = (username, password) => this.post('/api/auth/sign-in', { username, password });
 }
 
+// Google Drive stand-ins that refuse every request like a credential without
+// the Drive scope (403), so no test can reach Google.
+export const driveDenied = () =>
+  Object.assign(new Error('Synthetic Drive refusal'), { response: { status: 403 } });
+const refuseDoc = async () => {
+  throw driveDenied();
+};
+const refuseFolder = async () => {
+  throw driveDenied();
+};
+
 // Starts the app with accounts on. mode is the AI_MODE; `accounts: false`
 // starts it without the accounts service (DATABASE_URL unset). `autofill`, when
 // given, is passed to createProfileAutofill (model, fetchImpl, timeoutMs, ...)
 // with its log lines kept in `logs`; without it the app builds its default
-// autofill service, whose Vertex AI requests fail.
+// autofill service, whose Vertex AI requests fail. The company search is the
+// synthetic handbook (`companyRetrieve`); `loadGoogleDocument(id)` and
+// `loadDriveKnowledge(folderId)` stand in for Google Drive (both refuse by default).
 export async function startAccountsApp({
   mode = 'document-search',
   env: extraEnv = {},
   accounts: enabled = true,
   storageTimeoutMs = 300,
   autofill = undefined,
+  companyRetrieve = fakeRetrieve,
+  loadGoogleDocument = refuseDoc,
+  loadDriveKnowledge = refuseFolder,
 } = {}) {
   const database = await createTestDatabase();
   const firestore = new FakeFirestore();
@@ -163,12 +180,15 @@ export async function startAccountsApp({
   const accounts = createAccountService({ store, profiles, now: clock.now, hashing, log });
   const env = { AI_MODE: mode, ...(enabled ? accountEnv : {}), ...extraEnv };
   const memory = createFirestoreChatMemory({ firestore, log, sweepIntervalMs: Infinity });
-  const conversationService = createConversationService({
-    env,
-    memory,
-    models: fakeModels(),
-    retrieve: fakeRetrieve,
+  const companyDocuments = createCompanyDocumentStore({
+    firestore,
+    log,
+    timeoutMs: storageTimeoutMs,
   });
+  // The app passes in its retriever, which adds the company library for
+  // account-owned chats.
+  const conversationService = ({ retrieve }) =>
+    createConversationService({ env, memory, models: fakeModels(), retrieve });
   const getAccessToken = async () => 'synthetic-token';
   const fetchImpl = async () => {
     throw new Error('No Google request is expected in account tests.');
@@ -177,6 +197,10 @@ export async function startAccountsApp({
     env,
     accountService: enabled ? accounts : null,
     conversationService,
+    companyDocuments,
+    companyRetrieve,
+    loadGoogleDocument,
+    loadDriveKnowledge,
     getAccessToken,
     fetchImpl,
     ...(autofill
@@ -247,9 +271,10 @@ export async function startAccountsApp({
       return { employee, browser };
     },
     rows: database.rows,
+    memory,
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
-      await conversationService.close();
+      await memory.close();
     },
   };
 }

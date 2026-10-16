@@ -2,7 +2,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { accountErrors } from './account-errors.mjs';
 import { createAccountStore, createDatabasePool } from './account-store.mjs';
 import { createFirestoreClient } from './firestore-client.mjs';
-import { createProfileStore, profileSummary, validateProfile } from './employee-profiles.mjs';
+import {
+  createProfileStore,
+  profileStorageErrors,
+  profileSummary,
+  validateProfile,
+} from './employee-profiles.mjs';
 import {
   dummyPasswordHash,
   hashPassword,
@@ -25,6 +30,14 @@ const noAccount = '00000000-0000-0000-0000-000000000000';
 export const tokenHash = (token) => createHash('sha256').update(token).digest('hex');
 const iso = (value) => (value ? new Date(value).toISOString() : null);
 const lockedAt = (row, at) => Boolean(row.locked_until) && new Date(row.locked_until) > at;
+// Chat-store failures (ChatError STORAGE_*) on HR routes answer like the other
+// Firestore failures there; anything else (CHAT_BUSY) passes through.
+const asProfileStorageError = (error) =>
+  error?.code === 'STORAGE_TIMEOUT'
+    ? profileStorageErrors.timeout()
+    : typeof error?.code === 'string' && error.code.startsWith('STORAGE_')
+      ? profileStorageErrors.unavailable()
+      : error;
 
 // What a signed-in browser learns about its own account.
 const selfView = (row, expiresAt) => ({
@@ -279,6 +292,55 @@ export function createAccountService({
     return { account: accountView(updated, now()) };
   }
 
+  // Deletes an employee's personal data, then the account. eraseChats(owner)
+  // removes the account's chats, checkpoints and support preferences from the
+  // chat store. The account is signed out first, Firestore is cleaned next (every
+  // step is safe to repeat), and only then is the PostgreSQL account deleted,
+  // so a Firestore failure leaves the account in place and a retry finishes the
+  // job. HR accounts are never deleted here (404 EMPLOYEE_NOT_FOUND).
+  async function deleteEmployee(actor, id, { eraseChats }) {
+    const row = await employeeOrThrow(id);
+    await store.endEmployeeSessions(row.id);
+    try {
+      await eraseChats(`account:${row.id}`);
+    } catch (error) {
+      throw asProfileStorageError(error);
+    }
+    await profiles.removeAccountData(row.id);
+    const deleted = await store.deleteEmployee(actor.account.id, row.id, now());
+    if (!deleted) throw accountErrors.employeeNotFound();
+  }
+
+  // One entry per employee account, in the /employees order: the display name
+  // (preferred name, else full name, else the ID) and the support summary of
+  // the account's chats. summaryOf(owner) is the chat store's supportSummary:
+  // aggregates only, never questions, answers or document text.
+  async function supportSummaries(summaryOf) {
+    const listed = await listEmployees();
+    const employees = [];
+    for (let i = 0; i < listed.length; i += 10) {
+      const batch = listed.slice(i, i + 10);
+      employees.push(
+        ...(await Promise.all(
+          batch.map(async ({ account, profile }) => {
+            let summary;
+            try {
+              summary = await summaryOf(`account:${account.id}`);
+            } catch (error) {
+              throw asProfileStorageError(error);
+            }
+            return {
+              account,
+              name: profile?.preferredName || profile?.fullName || account.username,
+              summary,
+            };
+          }),
+        )),
+      );
+    }
+    return employees;
+  }
+
   return {
     sessionMs,
     session,
@@ -292,6 +354,8 @@ export function createAccountService({
     replaceProfile,
     resetPassword,
     setStatus,
+    deleteEmployee,
+    supportSummaries,
     close: async () => {
       await Promise.allSettled([store.close?.(), profiles.close?.()]);
     },
