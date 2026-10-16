@@ -10,6 +10,10 @@ In the cloud, OnboardAi runs as three separate Cloud Run services built from one
 
 The `tts` image carries the Kokoro model (downloaded at build time by `npm run voice:prepare`). The `web` image carries `dist/`. The `api` image carries neither.
 
+### Checking the api -> tts hop
+
+`GET /api/health/tts` on the api needs no sign-in and never renders speech. With `TTS_SERVICE_URL` set it makes one `GET /health` call to the tts service (5 second limit), carrying the api's ID token when service auth is on, and answers `200 {"ok":true,"tts":"ok"}` when that call succeeds. It answers `503 {"ok":false,"tts":"unavailable"}` on any other result, including when no ID token can be minted (nothing is sent unsigned). Without `TTS_SERVICE_URL` (in-process voice) it answers `200 {"ok":true,"tts":"local"}`. The deploy smoke test uses it because `/api/voice` needs a signed-in account.
+
 ## Settings each service reads
 
 | Service | Variable                                                                                                                                                 | Meaning                                                                                                                     |
