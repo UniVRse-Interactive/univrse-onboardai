@@ -79,9 +79,14 @@ test('summaries name each employee account and carry the chat store’s support 
     assert.equal(entry.summary.conversations, 1);
     assert.deepEqual(entry.summary.feedback, { helpful: 1, unclear: 0 });
     assert.equal(entry.summary.humanHelpRequests, 1);
-    // Exactly the chat store's supportSummary for the account owner, the value
-    // the guest workspace gives in guests[].summary.
-    assert.deepEqual(entry.summary, await app.memory.supportSummary(`account:${avery.account.id}`));
+    // The chat store's supportSummary for the account owner, the value the
+    // guest workspace gives in guests[].summary, with only its scope text replaced.
+    const stored = await app.memory.supportSummary(`account:${avery.account.id}`);
+    assert.equal(stored.scope, 'This browser’s saved conversations');
+    assert.deepEqual(entry.summary, { ...stored, scope: 'This employee’s saved conversations' });
+    assert.ok(
+      after.body.employees.every((e) => e.summary.scope === 'This employee’s saved conversations'),
+    );
     // Aggregates only: no question, answer, passage or document text.
     for (const text of [
       question,

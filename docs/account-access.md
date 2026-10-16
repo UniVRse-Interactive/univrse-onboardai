@@ -366,9 +366,10 @@ employee account, in the order of `GET /api/hr/employees` (by ID, ignoring case)
 
 - `account` is the `EmployeeAccount`.
 - `name` is the profile's `preferredName`, else its `fullName`, else the account's `username`.
-- `summary` is exactly what the chat store's `supportSummary("account:<id>")` returns: the same
-  value the guest workspace gives in `guests[].summary` (see
-  [Company uploads and live reports](guest-workspace.md)). It holds aggregates only (turns,
+- `summary` is what the chat store's `supportSummary("account:<id>")` returns, the same shape
+  the guest workspace gives in `guests[].summary` (see
+  [Company uploads and live reports](guest-workspace.md)), except that `scope` reads "This
+  employee’s saved conversations" (the store says "This browser’s…"). It holds aggregates only (turns,
   conversations, formats, requests, feedback counts, help requests, the overview text), never
   questions, answers, passages or document text. When an employee turns recording off
   (`POST /api/support-summary/settings`), `summary.recording` is `false` and new answers are not

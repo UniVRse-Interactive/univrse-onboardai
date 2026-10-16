@@ -39,6 +39,10 @@ const asProfileStorageError = (error) =>
       ? profileStorageErrors.unavailable()
       : error;
 
+// The chat store's summary scope describes a browser's chats; an account's
+// chats follow the employee, so HR's summaries say so.
+export const accountSummaryScope = 'This employee’s saved conversations';
+
 // What a signed-in browser learns about its own account.
 const selfView = (row, expiresAt) => ({
   id: row.id,
@@ -314,7 +318,8 @@ export function createAccountService({
   // One entry per employee account, in the /employees order: the display name
   // (preferred name, else full name, else the ID) and the support summary of
   // the account's chats. summaryOf(owner) is the chat store's supportSummary:
-  // aggregates only, never questions, answers or document text.
+  // aggregates only, never questions, answers or document text. Only its
+  // `scope` text is replaced.
   async function supportSummaries(summaryOf) {
     const listed = await listEmployees();
     const employees = [];
@@ -332,7 +337,7 @@ export function createAccountService({
             return {
               account,
               name: profile?.preferredName || profile?.fullName || account.username,
-              summary,
+              summary: { ...summary, scope: accountSummaryScope },
             };
           }),
         )),
