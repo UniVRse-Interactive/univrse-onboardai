@@ -37,13 +37,6 @@
   background: #add7df;
   height: 3px;
 }
-.uv-portal .uv-hero-copy h1 {
-  letter-spacing: -0.055em;
-  line-height: 1.06;
-}
-.uv-portal .uv-hero-copy > p {
-  color: #c3d2dd;
-}
 .uv-portal .uv-button.primary {
   border-radius: 7px;
   background: #bddfe5;
@@ -55,48 +48,6 @@
 }
 .uv-portal .uv-button.secondary {
   border-radius: 7px;
-}
-.uv-portal .uv-progress-strip {
-  background: #d4e7eb;
-  color: #2d4365;
-  border: 1px solid #bbd4dd;
-  border-radius: 10px;
-}
-.uv-portal .uv-progress-strip .uv-mini-label,
-.uv-portal .uv-progress-strip strong span {
-  color: #486578;
-}
-.uv-portal .uv-strip-track span {
-  background: #b5cbd5;
-  transform: none;
-  border-radius: 2px;
-}
-.uv-portal .uv-strip-track .complete {
-  background: #256a91;
-}
-.uv-portal .uv-progress-strip > a:hover {
-  color: #174c6c;
-}
-.uv-portal .uv-task-row {
-  border-color: #486078;
-}
-.uv-portal .uv-task-row:hover {
-  background: #293f5b;
-}
-.uv-portal .uv-explore-panel {
-  padding: 25px;
-  background: #293f5b;
-  border: 1px solid #486078;
-  border-radius: 10px;
-}
-.uv-portal .uv-stage-overview {
-  border-color: #486078;
-}
-.uv-portal .uv-stage-overview > a {
-  border-color: #486078;
-}
-.uv-portal .uv-stage-overview > a:hover {
-  background: #293f5b;
 }
 .uv-portal .uv-floating-assistant {
   border-radius: 10px;
@@ -155,59 +106,6 @@
 .hr-preview-page .hr-refresh {
   color: #d6ebf0;
 }
-.hr-preview-page .hr-employee-list {
-  color: #edf3f7;
-}
-.hr-preview-page .hr-employee-list .access-eyebrow,
-.hr-preview-page .hr-employee-list h2 > span,
-.hr-preview-page .hr-employee-list > p {
-  color: #b8cbd8;
-}
-.hr-preview-page .hr-employee-list > .hr-employee-row {
-  border-color: #4b6580;
-  background: #293f5b;
-  border-radius: 9px;
-}
-.hr-preview-page .hr-employee-row > button {
-  color: #edf3f7;
-}
-.hr-preview-page .hr-employee-row > button small {
-  color: #c0d1dd;
-}
-.hr-preview-page .hr-employee-row > button[aria-pressed='true'] {
-  background: #344f6b;
-  box-shadow: inset 3px 0 #b8e0e6;
-}
-.hr-preview-page .hr-employee-initial {
-  background: #c7e3e9;
-  color: #2d4365;
-}
-.hr-preview-page .hr-employee-menu > summary {
-  color: #c7e3e9;
-}
-.hr-preview-page .hr-employee-row > button > svg,
-.hr-preview-page .hr-add-guest > svg {
-  color: #c7e3e9;
-}
-.hr-preview-page .hr-employee-menu > button {
-  background: #eef3f6;
-}
-.hr-preview-page .hr-add-guest {
-  color: #d3e9ef;
-  border-color: #7a97ac;
-  border-radius: 8px;
-}
-.hr-preview-page .hr-individual-summary {
-  background: var(--reading-surface);
-  color: var(--reading-ink);
-  border: 1px solid #bbccd8;
-  border-radius: 12px;
-  padding: 29px;
-  box-shadow: 0 7px 22px #101c2d24;
-}
-.hr-preview-page .hr-individual-summary > header {
-  padding-bottom: 24px;
-}
 .hr-preview-page .hr-interaction-description {
   background: #dcebee;
   border-left: 3px solid #256a91;
@@ -219,23 +117,6 @@
 .hr-preview-page .hr-next-check-in {
   background: #e2ebf1;
   border-left-color: #718da6;
-}
-.hr-preview-page .hr-knowledge {
-  background: var(--reading-surface);
-  color: var(--reading-ink);
-  border: 1px solid #bbccd8;
-  border-radius: 12px;
-}
-.hr-preview-page .hr-knowledge-intro {
-  background: #d8e8ed;
-}
-.hr-preview-page .hr-upload-field {
-  background: #eaf1f4;
-  border-color: #7a9fb3;
-}
-.hr-preview-page .hr-file-type {
-  background: #e0edf1;
-  border-color: #b1c8d5;
 }
 .hr-preview-page .hr-icon-action {
   background: #e0edf1;
@@ -250,27 +131,11 @@
 .hr-preview-page :focus-visible {
   outline-color: #9fcfd9;
 }
-.hr-preview-page .hr-individual-summary :focus-visible,
-.hr-preview-page .hr-knowledge :focus-visible {
-  outline-color: #256a91;
-}
 
-/* Alya keeps a dark frame; the illustrated answer is a muted reading sheet. */
+/* Alya keeps a dark frame around the chat. */
 .uv-portal .alya-answer-space {
   background: #293f5b;
   border-color: #506d87;
-}
-.uv-portal .alya-view-heading {
-  background: #2d4365;
-  border-color: #506d87;
-}
-.uv-portal .alya-view-tabs {
-  background: #203249;
-  border-color: #506d87;
-}
-.uv-portal .alya-view-tabs button[aria-selected='true'] {
-  background: #bddfe5;
-  color: #203249;
 }
 .uv-portal .alya-message.user {
   background: #36536e;
@@ -291,20 +156,6 @@
 }
 .uv-portal .alya-composer textarea::placeholder {
   color: #b8cad8;
-}
-.uv-portal .alya-visual-workspace {
-  background: #e5edf1;
-}
-.uv-portal .alya-visual-workspace > header {
-  background: #dbe8ee;
-  color: #2d4365;
-}
-.uv-portal .av-answer-picker select {
-  background: #eef3f6;
-  color: #2d4365;
-}
-.uv-portal .av-outline-button[aria-selected='true'] {
-  background: #cee4e9;
 }
 
 /* Account access uses the same materials as the two workspaces. */
@@ -396,47 +247,16 @@
   .access-page .access-password button {
     top: 2px;
   }
-  .access-page .access-submit,
-  .access-page .access-guest {
+  .access-page .access-submit {
     min-height: 46px;
     padding-block: 10px;
   }
-  .access-page .access-switch-mode,
+
   .access-page .access-hr-note {
     margin-top: 13px;
   }
-  .access-page .access-guest-divider {
-    margin: 15px 0 11px;
-  }
-  .access-page .access-preview-note {
-    margin-top: 10px;
-    font-size: 10px;
-  }
   .access-page .access-form-footer {
     margin-top: 4px;
-  }
-  .access-page.is-signup .access-top-note,
-  .access-page.is-signup .access-form-footer {
-    display: none;
-  }
-  .access-page.is-signup .access-form {
-    gap: 9px;
-    margin-top: 14px;
-  }
-  .access-page.is-signup .access-role-options {
-    margin-bottom: 12px;
-  }
-  .access-page.is-signup .access-form-heading p {
-    font-size: 13px;
-  }
-  .access-page.is-signup .access-field input {
-    height: 42px;
-  }
-  .access-page.is-signup .access-password button {
-    height: 38px;
-  }
-  .access-page.is-signup .access-password-hint {
-    margin-top: -4px;
   }
 }
 @media (max-width: 760px) {
@@ -478,33 +298,16 @@
   .access-page .access-password button {
     top: 2px;
   }
-  .access-page .access-submit,
-  .access-page .access-guest {
+  .access-page .access-submit {
     min-height: 46px;
     padding-block: 10px;
   }
-  .access-page .access-switch-mode,
+
   .access-page .access-hr-note {
     margin-top: 12px;
   }
-  .access-page .access-guest-divider {
-    margin: 16px 0 12px;
-  }
   .access-page .access-form-footer {
     margin-top: 16px;
-  }
-  .access-page.is-signup .access-form-footer {
-    display: none;
-  }
-  .access-page.is-signup .access-form {
-    gap: 9px;
-    margin-top: 12px;
-  }
-  .access-page.is-signup .access-field input {
-    height: 42px;
-  }
-  .access-page.is-signup .access-password button {
-    height: 38px;
   }
 }
 
@@ -512,13 +315,7 @@
   .hr-preview-page .hr-company-overview {
     padding: 22px 18px;
   }
-  .hr-preview-page .hr-individual-summary {
-    padding: 22px 18px;
-  }
   .hr-preview-page .hr-company-stats dd {
     font-size: 34px;
-  }
-  .uv-portal .uv-explore-panel {
-    padding: 20px;
   }
 }

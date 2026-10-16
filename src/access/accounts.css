@@ -317,6 +317,10 @@
   overflow-wrap: anywhere;
 }
 .account-table thead th {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: keep-all;
+  hyphens: none;
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -421,6 +425,7 @@
   font-size: 12px;
   min-width: 0;
   max-width: 190px;
+  flex-shrink: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -429,12 +434,11 @@
   white-space: nowrap;
 }
 @media (max-width: 640px) {
-  .uv-account-prefix,
   .uv-header-actions .uv-preview-label {
     display: none;
   }
-  .uv-account-id {
-    max-width: 84px;
+  .uv-header-actions .uv-profile-top {
+    display: none;
   }
   .uv-header-actions {
     min-width: 0;

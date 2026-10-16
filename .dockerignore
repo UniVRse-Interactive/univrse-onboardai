@@ -29,3 +29,11 @@ terraform
 gha-creds-*.json
 .github
 .claude
+# The checklist agent (Python) is not part of the app images; its own image uses
+# Dockerfile.checklist-agent.dockerignore.
+agent-platform
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.venv
+**/.adk

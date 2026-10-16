@@ -4,8 +4,10 @@
 # are pushed, the migration job applies the commit's pending Cloud SQL and
 # Firestore migrations (#45); only if it succeeds are tts, then api, then web
 # deployed. On staging only, and only once its code is in the commit, the
-# intake agent is deployed to Vertex AI Agent Engine (#27, #30). One-time
-# setup, staging and rollback: terraform/onboardai/README.md.
+# intake agent is deployed to Vertex AI Agent Engine (#27, #30). The onboarding
+# checklist agent (#51) is deployed the same way, on staging and, once
+# CHECKLIST_AGENT_ENABLED is true, on production. One-time setup, staging and
+# rollback: terraform/onboardai/README.md.
 name: Deploy
 
 on:
@@ -38,9 +40,10 @@ env:
   # staging resource ID, as local.name_suffix in terraform/onboardai.
   DEPLOY_ENV: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
   NAME_SUFFIX: ${{ github.ref == 'refs/heads/staging' && '-staging' || '' }}
-  # Agent Engine region of the employee form intake agent (staging only, #30).
-  # Must equal var.intake_agent_location of terraform/onboardai (terraform test
-  # checks it). The agent calls Gemini on VERTEX_LOCATION.
+  # Agent Engine region of the employee form intake agent (staging only, #30)
+  # and of the onboarding checklist agent (#51). Must equal
+  # var.intake_agent_location of terraform/onboardai (terraform test checks
+  # it). The agents call Gemini on VERTEX_LOCATION.
   INTAKE_AGENT_LOCATION: asia-southeast1
 
 jobs:
@@ -78,6 +81,13 @@ jobs:
       VERTEX_SEARCH_LOCATION: ${{ vars.VERTEX_SEARCH_LOCATION }}
       VERTEX_SEARCH_ENGINE_ID: ${{ vars.VERTEX_SEARCH_ENGINE_ID }}
       FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
+      # Optional (#51, #52): unset means the default after ||, and an empty
+      # GEMINI_TTS_VOICE means the backend's default voice.
+      VOICE_PROVIDER: ${{ vars.VOICE_PROVIDER || 'gemini' }}
+      GEMINI_TTS_MODEL: ${{ vars.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts' }}
+      GEMINI_TTS_LOCATION: ${{ vars.GEMINI_TTS_LOCATION || 'global' }}
+      GEMINI_TTS_VOICE: ${{ vars.GEMINI_TTS_VOICE }}
+      CHECKLIST_AGENT_ENABLED: ${{ vars.CHECKLIST_AGENT_ENABLED || 'false' }}
     steps:
       - name: Check repository variables
         run: |
@@ -98,6 +108,12 @@ jobs:
           check VERTEX_SEARCH_LOCATION "$VERTEX_SEARCH_LOCATION" '^(global|us|eu)$'
           check VERTEX_SEARCH_ENGINE_ID "$VERTEX_SEARCH_ENGINE_ID" '^[a-z0-9][a-z0-9_-]{0,62}$'
           check FIRESTORE_DATABASE_ID "$FIRESTORE_DATABASE_ID" '^(\(default\)|[a-z][a-z0-9-]{2,61}[a-z0-9])$'
+          # Gemini text to speech on the api (#52); the checklist agent switch (#51).
+          check VOICE_PROVIDER "$VOICE_PROVIDER" '^(gemini|kokoro)$'
+          check GEMINI_TTS_MODEL "$GEMINI_TTS_MODEL" '^[A-Za-z0-9._-]+$'
+          check GEMINI_TTS_LOCATION "$GEMINI_TTS_LOCATION" '^(global|[a-z]+-[a-z]+[0-9]+)$'
+          check GEMINI_TTS_VOICE "$GEMINI_TTS_VOICE" '^[A-Za-z0-9_-]{0,64}$'
+          check CHECKLIST_AGENT_ENABLED "$CHECKLIST_AGENT_ENABLED" '^(true|false)$'
           # Each stack names its own resources: a staging run only ones ending
           # in -staging, a production run none of those.
           for name in GCP_WIF_PROVIDER VERTEX_SEARCH_ENGINE_ID FIRESTORE_DATABASE_ID; do
@@ -112,6 +128,7 @@ jobs:
           else
             echo "::notice::AI_MODE=$AI_MODE: no Gemini calls (sample content or document search)."
           fi
+          echo "::notice::VOICE_PROVIDER=$VOICE_PROVIDER: the api speaks with $GEMINI_TTS_MODEL on Vertex AI ($GEMINI_TTS_LOCATION) as onboardai-api-run$NAME_SUFFIX when it is gemini; tts is the Kokoro fallback."
           exit "$failed"
 
   images:
@@ -269,9 +286,113 @@ jobs:
           echo "Intake agent: $engine"
           echo "engine=$engine" >> "$GITHUB_OUTPUT"
 
+  # Creates or updates the onboarding checklist agent on Vertex AI Agent Engine
+  # (#51) with the backend's deploy command (idempotent by display name) and
+  # hands its resource name to the deploy job (CHECKLIST_AGENT_ENGINE). Same
+  # shape as the intake agent job above, in the same Agent Engine region
+  # (INTAKE_AGENT_LOCATION). It deploys on staging, and on production only
+  # when the repository variable CHECKLIST_AGENT_ENABLED is true (set it after
+  # staging is verified and var.checklist_agent_production is applied), and
+  # only when the commit has the deploy command (package.json script
+  # checklist-agent:deploy). Otherwise every step after the decision is
+  # skipped with a notice, the job succeeds with deployed=false and no engine,
+  # and the api deploys without the agent.
+  checklist_agent:
+    name: Deploy the checklist agent
+    needs: images
+    environment: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
+      CHECKLIST_AGENT_ENABLED: ${{ vars.CHECKLIST_AGENT_ENABLED }}
+    outputs:
+      deployed: ${{ steps.decide.outputs.deploy }}
+      engine: ${{ steps.agent.outputs.engine }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: repo
+
+      - name: Decide whether the checklist agent deploys
+        id: decide
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/staging && "$CHECKLIST_AGENT_ENABLED" != true ]]; then
+            echo "::notice title=Checklist agent skipped::The checklist agent is off on $DEPLOY_ENV until the repository variable CHECKLIST_AGENT_ENABLED is true; $DEPLOY_ENV deploys without it."
+            deploy=false
+          elif [[ -z "$(jq -r '.scripts["checklist-agent:deploy"] // "" | strings' package.json)" ]]; then
+            echo "::notice title=Checklist agent skipped::package.json has no checklist-agent:deploy script (#51 is not in this commit), so the api deploys without CHECKLIST_AGENT_ENGINE."
+            deploy=false
+          else
+            deploy=true
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js 22
+        if: steps.decide.outputs.deploy == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Set up uv
+        if: steps.decide.outputs.deploy == 'true'
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: 0.11.8
+          enable-cache: false
+
+      # No install scripts run, and Google credentials do not exist yet.
+      - name: Install dependencies
+        if: steps.decide.outputs.deploy == 'true'
+        working-directory: repo
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Authenticate to Google Cloud
+        if: steps.decide.outputs.deploy == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up gcloud
+        if: steps.decide.outputs.deploy == 'true'
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # The agent runs as onboardai-checklist$NAME_SUFFIX and reads and writes
+      # Firestore itself. The command's last stdout line is the reasoning
+      # engine resource name.
+      - name: Deploy the checklist agent
+        id: agent
+        if: steps.decide.outputs.deploy == 'true'
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/checklist-agent-deploy.log"
+          npm run --silent checklist-agent:deploy -- \
+            --project "$GCP_PROJECT_ID" \
+            --location "$INTAKE_AGENT_LOCATION" \
+            --display-name "OnboardAi onboarding checklist ($DEPLOY_ENV)" \
+            --service-account "onboardai-checklist$NAME_SUFFIX@$GCP_PROJECT_ID.iam.gserviceaccount.com" \
+            --firestore-database "$FIRESTORE_DATABASE_ID" | tee "$log"
+          engine=$(tail -n 1 "$log")
+          if [[ ! "$engine" =~ ^projects/[a-z0-9-]+/locations/${INTAKE_AGENT_LOCATION}/reasoningEngines/[0-9]+$ ]]; then
+            echo "::error::The deploy command's last line is not a reasoning engine in $INTAKE_AGENT_LOCATION."
+            exit 1
+          fi
+          echo "Checklist agent: $engine"
+          echo "engine=$engine" >> "$GITHUB_OUTPUT"
+
   deploy:
     name: Deploy tts, api, web
-    needs: [images, agent]
+    needs: [images, agent, checklist_agent]
     environment: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
     runs-on: ubuntu-24.04
     # The migration job may take two attempts of 600 s each (Terraform:
@@ -296,6 +417,14 @@ jobs:
       # engine is then its reasoning engine. false and empty otherwise.
       INTAKE_AGENT_DEPLOYED: ${{ needs.agent.outputs.deployed }}
       INTAKE_AGENT_ENGINE: ${{ needs.agent.outputs.engine }}
+      # The checklist agent job's result (#51), the same way.
+      CHECKLIST_AGENT_DEPLOYED: ${{ needs.checklist_agent.outputs.deployed }}
+      CHECKLIST_AGENT_ENGINE: ${{ needs.checklist_agent.outputs.engine }}
+      # Gemini text to speech on the api (#52); defaults when the variable is unset.
+      VOICE_PROVIDER: ${{ vars.VOICE_PROVIDER || 'gemini' }}
+      GEMINI_TTS_MODEL: ${{ vars.GEMINI_TTS_MODEL || 'gemini-3.8-flash-tts' }}
+      GEMINI_TTS_LOCATION: ${{ vars.GEMINI_TTS_LOCATION || 'global' }}
+      GEMINI_TTS_VOICE: ${{ vars.GEMINI_TTS_VOICE }}
       # Must equal output cloud_run_deploy_flags of terraform/onboardai; its
       # terraform test fails otherwise, so a deploy never undoes an apply or the
       # other way round. Image, env vars and traffic belong to this
@@ -472,6 +601,20 @@ jobs:
           # --set-env-vars replaces the whole set, so variables an earlier
           # revision carried and this list lacks are dropped.
           api_env="NODE_ENV=production,AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,VERTEX_SEARCH_LOCATION=$VERTEX_SEARCH_LOCATION,VERTEX_SEARCH_ENGINE_ID=$VERTEX_SEARCH_ENGINE_ID,FIRESTORE_DATABASE_ID=$FIRESTORE_DATABASE_ID,TTS_SERVICE_URL=$tts_url"
+          # Voice (#52): the api calls Gemini TTS as its own identity; the
+          # voice is passed only when set (the backend has a default).
+          api_env+=",VOICE_PROVIDER=$VOICE_PROVIDER,GEMINI_TTS_MODEL=$GEMINI_TTS_MODEL,GEMINI_TTS_LOCATION=$GEMINI_TTS_LOCATION"
+          if [[ -n "$GEMINI_TTS_VOICE" ]]; then
+            api_env+=",GEMINI_TTS_VOICE=$GEMINI_TTS_VOICE"
+          fi
+          # The checklist agent (#51), when its job deployed it.
+          if [[ "$CHECKLIST_AGENT_DEPLOYED" == true ]]; then
+            if [[ ! "$CHECKLIST_AGENT_ENGINE" =~ ^projects/[a-z0-9-]+/locations/[a-z0-9-]+/reasoningEngines/[0-9]+$ ]]; then
+              echo "::error::The checklist_agent job deployed the checklist agent but returned no reasoning engine resource name."
+              exit 1
+            fi
+            api_env+=",CHECKLIST_AGENT_ENGINE=$CHECKLIST_AGENT_ENGINE"
+          fi
           # Employee accounts, every stack (#45): the Cloud SQL connection (Unix
           # socket /cloudsql/<connection name>) and DATABASE_URL as a Secret
           # Manager reference, which Cloud Run reads as

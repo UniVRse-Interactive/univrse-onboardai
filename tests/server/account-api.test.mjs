@@ -406,10 +406,11 @@ test('HR creates, reads, lists and edits employees; every change writes an accou
     );
     assert.equal(profile.updatedBy, hrId);
     assert.equal(profile.updatedAt, '2026-10-15T01:00:00.000Z');
-    assert.deepEqual(
-      app.firestore.read(`employeeProfiles/${account.id}`).job,
-      syntheticProfile().job,
-    );
+    // job.track (issue #47) is stored as '' when not given: an employee.
+    assert.deepEqual(app.firestore.read(`employeeProfiles/${account.id}`).job, {
+      ...syntheticProfile().job,
+      track: '',
+    });
     const [row] = await app.rows(
       "SELECT password_hash, created_by FROM accounts WHERE username = 'PC-0001'",
     );
@@ -458,6 +459,10 @@ test('HR creates, reads, lists and edits employees; every change writes an accou
           department: 'People & Culture',
           startDate: '2026-11-02',
         },
+        // Issue #47: the track (employee when the profile has none) and the
+        // onboarding progress at the top level of each item.
+        track: 'employee',
+        onboarding: { percent: 0, waitingOnHr: 0, complete: false },
       },
     ]);
     // HR accounts are not in the employee list or reachable as employees.

@@ -1,0 +1,465 @@
+/* HR: People & Support sections, per-employee onboarding and first-day panels.
+   Light reading surfaces, AA contrast on #e8eff4. */
+.hrj {
+  display: grid;
+  gap: 22px;
+  color: #1f3047;
+}
+.hrj-section,
+.hrj-panel {
+  padding: 22px 26px 26px;
+  background: #e8eff4;
+  border: 1px solid #a9bfce;
+  border-radius: 8px;
+}
+.hrj-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 14px 24px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.hrj-section-heading h2 {
+  font-size: 22px;
+}
+.hrj-section-heading p {
+  font-size: 13px;
+  color: #3e5368;
+  margin-top: 6px;
+  max-width: 62ch;
+  line-height: 1.5;
+}
+.hrj-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hrj-filters button {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid #6c8995;
+  border-radius: 20px;
+  font-size: 13px;
+  color: #1f3047;
+  background: #f4f8fb;
+}
+.hrj-filters button[aria-pressed='true'] {
+  background: #1d5f84;
+  border-color: #1d5f84;
+  color: #fff;
+}
+.hrj-filters button span {
+  font-weight: 700;
+  margin-left: 4px;
+}
+.hrj button:focus-visible,
+.hrj input:focus-visible,
+.hrj select:focus-visible,
+.hrj textarea:focus-visible,
+.hrj-panel button:focus-visible,
+.hrj-panel input:focus-visible,
+.hrj-panel select:focus-visible,
+.hrj-panel textarea:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 2px;
+}
+.hrj-request-list {
+  display: grid;
+  gap: 16px;
+}
+.hrj-request {
+  padding: 18px 20px;
+  background: #f4f8fb;
+  border: 1px solid #a9bfce;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+}
+.hrj-request > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.hrj-request h3 {
+  font-size: 17px;
+}
+.hrj-request small,
+.hrj-hint {
+  font-size: 12px;
+  color: #3e5368;
+}
+.hrj-status {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 14px;
+  background: #f1e3b5;
+  color: #3d2f00;
+  white-space: nowrap;
+}
+.hrj-status.briefing_scheduled {
+  background: #cfe4ef;
+  color: #123a52;
+}
+.hrj-status.resolved {
+  background: #d3e8d9;
+  color: #17432a;
+}
+.hrj-thread {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.hrj-thread dt {
+  font-size: 12px;
+  color: #3e5368;
+  font-weight: 600;
+}
+.hrj-thread dd {
+  margin: 2px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.hrj-thread ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.hrj-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px 18px;
+  padding-top: 14px;
+  border-top: 1px solid #c3d3de;
+}
+.hrj-wide {
+  grid-column: 1 / -1;
+}
+.hrj-field {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.hrj label,
+.hrj legend,
+.hrj-panel label {
+  display: block;
+  margin-bottom: 0;
+  color: #1f3047;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0;
+}
+.hrj-briefing {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+}
+.hrj-briefing legend {
+  grid-column: 1 / -1;
+  margin-bottom: 4px;
+}
+.hrj-briefing > div {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.hrj-briefing .hrj-error {
+  grid-column: 1 / -1;
+}
+.hrj-doc {
+  justify-items: start;
+}
+.hrj-doc select {
+  max-width: 420px;
+}
+.hrj-required {
+  font-weight: 400;
+  color: #3e5368;
+}
+.hrj input[type='date'],
+.hrj input[type='time'],
+.hrj select,
+.hrj textarea,
+.hrj-panel input[type='text'],
+.hrj-panel input[type='time'],
+.hrj-panel textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 12px;
+  background: #fff;
+  color: #1f3047;
+  border: 1px solid #6c8995;
+  border-radius: 6px;
+}
+.hrj [aria-invalid='true'],
+.hrj-panel [aria-invalid='true'] {
+  border: 2px solid #9b2c2c;
+}
+.hrj-error {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8f2323;
+  line-height: 1.4;
+}
+.hrj-error:empty {
+  display: none;
+}
+.hrj label.hrj-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: auto;
+}
+.hrj-check input {
+  width: 20px;
+  height: 20px;
+}
+.hrj-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.hrj-primary {
+  min-height: 44px;
+  padding: 10px 18px;
+  background: #1d5f84;
+  border: 1px solid #1d5f84;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+.hrj-primary:hover:not(:disabled) {
+  background: #17506f;
+}
+.hrj-empty {
+  font-size: 14px;
+  color: #3e5368;
+  padding: 10px 2px;
+}
+.hrj-gaps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.hrj-gaps > li {
+  padding: 14px 18px;
+  background: #f4f8fb;
+  border: 1px solid #a9bfce;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+}
+.hrj-gaps header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+.hrj-gaps h3 {
+  font-size: 16px;
+}
+.hrj-count {
+  font-size: 13px;
+  font-weight: 700;
+  color: #123a52;
+}
+.hrj-examples {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.hrj-stats {
+  margin: 0 0 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.hrj-stats > div {
+  padding: 12px 16px;
+  background: #f4f8fb;
+  border: 1px solid #a9bfce;
+  border-radius: 8px;
+}
+.hrj-stats dt {
+  font-size: 12px;
+  color: #3e5368;
+}
+.hrj-stats dd {
+  margin: 4px 0 0;
+  font:
+    500 28px/1 'Space Grotesk',
+    sans-serif;
+}
+.hrj-breakdowns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.hrj-breakdowns h3 {
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+.hrj-breakdowns ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.hrj-breakdowns li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid #c3d3de;
+  font-size: 14px;
+}
+
+/* Per-employee panels in Employee accounts. */
+.hrj-panel {
+  margin: 20px 0;
+  background: #f4f8fb;
+}
+.hrj-panel h3 {
+  font-size: 18px;
+}
+.hrj-panel h3:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 4px;
+}
+.hrj-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.hrj-areas {
+  display: grid;
+  gap: 16px;
+}
+.hrj-area h4 {
+  font-size: 15px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.hrj-area h4 span {
+  font-size: 12px;
+  font-weight: 400;
+  color: #3e5368;
+}
+.hrj-steps {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.hrj-step {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid #c3d3de;
+  flex-wrap: wrap;
+}
+.hrj-step.submitted {
+  background: #fbf3d6;
+  border-left: 4px solid #8a6a00;
+}
+.hrj-step strong {
+  font-size: 14px;
+}
+.hrj-step small {
+  display: block;
+  font-size: 12px;
+  color: #3e5368;
+  margin-top: 3px;
+}
+.hrj-step.submitted small {
+  color: #3d2f00;
+  font-weight: 600;
+}
+.hrj-step button {
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid #1d5f84;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d5f84;
+  background: #fff;
+}
+.hrj-step.submitted button {
+  background: #1d5f84;
+  color: #fff;
+}
+.hrj-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px 18px;
+}
+.hrj-panel .hrj-field {
+  display: grid;
+  gap: 6px;
+}
+.hr-table-percent {
+  font-weight: 700;
+}
+.hr-table-percent small {
+  display: block;
+  font-weight: 400;
+}
+@media (max-width: 600px) {
+  .hrj-briefing {
+    grid-template-columns: 1fr;
+  }
+  .hrj-section,
+  .hrj-panel {
+    padding: 16px;
+  }
+  .hrj-request > header {
+    flex-direction: column;
+  }
+}
+
+.account-badge.hrj-complete {
+  background: #d3e8d9;
+  color: #17432a;
+  margin-left: 8px;
+}
+.hrj-bar {
+  position: relative;
+  display: block;
+  height: 8px;
+  margin-top: 8px;
+  background: #c3d3de;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.hrj-bar > span {
+  display: block;
+  height: 100%;
+  background: #1d5f84;
+}
+.hrj-bar > i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #1f3047;
+}

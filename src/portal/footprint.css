@@ -1,0 +1,538 @@
+/* Signed-in employee footprint: the dark portal palette, AA contrast on #293f5b. */
+.fp {
+  display: grid;
+  gap: 28px;
+  color: var(--white);
+}
+.fp h1:focus-visible {
+  outline: 2px solid #bddfe5;
+  outline-offset: 6px;
+}
+.fp-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  padding: 32px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.fp-hero h1 {
+  font-size: clamp(30px, 5vw, 46px);
+  letter-spacing: -0.045em;
+  line-height: 1.1;
+  margin: 10px 0 14px;
+}
+.fp-hero p {
+  color: #d4e1ea;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.fp-hero .fp-muted,
+.fp-muted {
+  color: #b8cad6;
+  font-size: 13px;
+}
+.fp-hero-actions {
+  margin-top: 22px;
+}
+.fp-live:empty {
+  display: none;
+}
+.fp-live {
+  font-size: 13px;
+  color: #bddfe5;
+  padding: 0 4px;
+}
+.fp-next {
+  padding: 24px 28px;
+  background: #d4e7eb;
+  color: #1f3047;
+  border-left: 5px solid #256a91;
+  display: grid;
+  gap: 10px;
+}
+.fp-next .uv-mini-label,
+.fp-next .fp-muted {
+  color: #2d4365;
+}
+.fp-next h2 {
+  font-size: 24px;
+}
+.fp-next p {
+  line-height: 1.6;
+}
+.fp-next .fp-action {
+  border-color: #1d5f84;
+  color: #1f3047;
+}
+.fp-next .fp-action.main {
+  background: #1d5f84;
+  color: #fff;
+}
+.fp-next .fp-inline-error {
+  background: #f4e6e3;
+  color: #5e1b1b;
+  border-left-color: #9b2c2c;
+}
+.fp-areas {
+  display: grid;
+  gap: 14px;
+}
+.fp-area {
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.fp-area > summary {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(80px, 1fr) auto auto;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 22px;
+  cursor: pointer;
+  list-style: none;
+}
+.fp-area > summary::-webkit-details-marker {
+  display: none;
+}
+.fp-area > summary:focus-visible {
+  outline: 2px solid #bddfe5;
+  outline-offset: -4px;
+}
+.fp-area[open] > summary svg:last-child {
+  transform: rotate(180deg);
+}
+.fp-area-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.fp-area-title strong {
+  display: block;
+  font-size: 16px;
+}
+.fp-area-title small {
+  display: block;
+  font-size: 12px;
+  color: #b8cad6;
+  margin-top: 3px;
+}
+.fp-area-number {
+  font-family: 'Space Grotesk', sans-serif;
+  color: #bddfe5;
+  font-size: 13px;
+}
+.fp-bar {
+  position: relative;
+  display: block;
+  height: 8px;
+  background: #3b5572;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.fp-bar span {
+  display: block;
+  height: 100%;
+  background: #bddfe5;
+}
+.fp-percent {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 15px;
+  min-width: 3ch;
+  text-align: right;
+}
+.fp-area-description {
+  padding: 0 22px 8px;
+  color: #b8cad6;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.fp-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0 22px 8px;
+}
+.fp-step {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px 20px;
+  padding: 16px 0;
+  border-top: 1px solid #3d5470;
+  align-items: start;
+}
+.fp-step-copy strong {
+  font-size: 15px;
+}
+.fp-step-copy p {
+  margin: 5px 0 9px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #d4e1ea;
+}
+.fp-step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.fp-next .fp-step-actions {
+  justify-content: flex-start;
+}
+.fp-action {
+  min-height: 44px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid #8fa8bb;
+  border-radius: 7px;
+  color: var(--white);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.fp-action.main {
+  background: #bddfe5;
+  border-color: #bddfe5;
+  color: #1f3047;
+}
+.fp-action:hover:not(:disabled) {
+  background: #3b5572;
+}
+.fp-action.main:hover:not(:disabled) {
+  background: #d0e9ed;
+}
+.fp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #8fa8bb;
+  border-radius: 12px;
+  color: #d4e1ea;
+}
+.fp-badge.done {
+  background: #bddfe5;
+  border-color: #bddfe5;
+  color: #1f3047;
+}
+.fp-badge.submitted {
+  background: #f1e3b5;
+  border-color: #f1e3b5;
+  color: #3d2f00;
+}
+.fp-inline-error {
+  grid-column: 1 / -1;
+  padding: 10px 14px;
+  background: #4a2f35;
+  border-left: 3px solid #ffb4ab;
+  color: #ffd9d4;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.fp-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+}
+.fp-card {
+  padding: 22px 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.fp-card h2 {
+  font-size: 22px;
+}
+.fp-card dl {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+.fp-card dt {
+  font-size: 12px;
+  color: #b8cad6;
+}
+.fp-card dd {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+.fp-requests {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+.fp-requests li {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.fp-requests small {
+  color: #b8cad6;
+  font-size: 12px;
+}
+.fp-check {
+  padding: 16px 24px 20px;
+  display: grid;
+  gap: 10px;
+}
+.fp-check .uv-form-actions {
+  margin-top: 8px;
+}
+.fp-check .uv-button {
+  min-height: 44px;
+  padding: 10px 18px;
+}
+.fp-check-step {
+  font-size: 12px;
+  color: #b8cad6;
+}
+.fp-check-scenario {
+  font-size: 15px;
+  line-height: 1.5;
+}
+.fp-check-options {
+  border: 0;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.fp-check-options legend {
+  font-weight: 600;
+  margin-bottom: 8px;
+  padding: 0;
+}
+.fp-check-options label {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 0;
+  font-size: 14px;
+  padding: 9px 12px;
+  border: 1px solid #5d7893;
+  border-radius: 7px;
+  cursor: pointer;
+  line-height: 1.5;
+}
+.fp-check-options label:has(input:checked) {
+  border-color: #bddfe5;
+  background: #2f4966;
+}
+.fp-check-options label:has(input:focus-visible) {
+  outline: 2px solid #bddfe5;
+  outline-offset: 2px;
+}
+.fp-check-options input {
+  margin-top: 4px;
+  accent-color: #bddfe5;
+}
+.fp-check-result {
+  padding: 14px 16px;
+  border-left: 4px solid #bddfe5;
+  background: #2f4966;
+  line-height: 1.6;
+}
+.fp-check-result.retry {
+  border-left-color: #f1e3b5;
+}
+.fp-check-result p {
+  margin-top: 6px;
+  font-size: 14px;
+}
+@media (max-width: 720px) {
+  .fp-hero {
+    flex-direction: column-reverse;
+    align-items: flex-start;
+    padding: 22px;
+  }
+  .fp-area > summary {
+    grid-template-columns: 1fr auto auto;
+  }
+  .fp-area > summary .fp-bar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .fp-step {
+    grid-template-columns: 1fr;
+  }
+  .fp-step-actions {
+    justify-content: flex-start;
+  }
+  .fp-next {
+    padding: 20px;
+  }
+}
+
+.fp-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #edf3f7;
+}
+.fp-optional {
+  font-size: 12px;
+  color: #b8cad6;
+  font-style: italic;
+}
+.fp-area-title small + .fp-badge {
+  margin-top: 6px;
+}
+.fp-complete {
+  margin-top: 8px;
+  font-weight: 600;
+  color: #bddfe5 !important;
+}
+
+.fp-check-options label > span {
+  flex: 1;
+}
+.fp-check-result {
+  padding: 10px 14px;
+}
+
+/* v1.4: position numbers on shuffled options, and the written answer. */
+/* The portal's bare input rule (width: 100%, padding) must not reach radios. */
+.fp-check-options input[type='radio'] {
+  flex: none;
+  width: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.fp-check-options label > .fp-option-number {
+  flex: none;
+}
+.fp-option-number {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  border: 1px solid #8fb3c4;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  color: #edf3f7;
+}
+.fp-written {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+/* Scoped over the portal's bare label rule: AA on the dialog's #1f3047. */
+.fp-check .fp-written label {
+  display: block;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #edf3f7;
+}
+.fp-check .fp-written textarea {
+  width: 100%;
+  min-height: 132px;
+  padding: 10px 12px;
+  border: 1px solid #7d94aa;
+  border-radius: 6px;
+  background: #19273b;
+  color: #edf3f7;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  resize: vertical;
+}
+.fp-check .fp-written textarea:focus-visible {
+  outline: 2px solid #bddfe5;
+  outline-offset: 2px;
+}
+.fp-check .fp-written textarea[aria-invalid='true'] {
+  border: 2px solid #ffb4ab;
+}
+.fp-written-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b8cad6;
+}
+.fp-written-meta span:last-child {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.fp-field-error {
+  font-size: 13px;
+  color: #ffd9d4;
+}
+.fp-check-checking {
+  font-size: 14px;
+  color: #d4e1ea;
+}
+.fp-check-result p + p {
+  margin-top: 6px;
+}
+@media (max-width: 480px) {
+  .fp-check {
+    padding: 12px 16px 16px;
+  }
+  .fp-written-meta {
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+/* v1.5: Alya's briefing comes first on a required step. */
+.fp-action:disabled {
+  cursor: not-allowed;
+}
+/* Readable while waiting: the dashed outline, not fading, says "not yet". */
+.fp-action.main:disabled {
+  opacity: 1;
+  background: transparent;
+  border-style: dashed;
+  border-color: #8fa8bb;
+  color: #d4e1ea;
+}
+.fp-gate-reason {
+  flex-basis: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #d4e1ea;
+  text-align: right;
+}
+/* The next-step banner is light (#d4e7eb): dark ink there, still AA. */
+.fp-next .fp-action.main:disabled {
+  background: transparent;
+  border-style: dashed;
+  border-color: #4f6b7d;
+  color: #2d4365;
+}
+.fp-next .fp-gate-reason {
+  text-align: left;
+  color: #2d4365;
+}
+.fp-next .fp-briefed {
+  color: #1d5f84;
+}
+.fp-briefed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #bddfe5;
+}
+@media (max-width: 720px) {
+  .fp-gate-reason {
+    text-align: left;
+  }
+}

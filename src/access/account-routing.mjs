@@ -1,22 +1,27 @@
 // Which screen a signed-in or signed-out browser sees for a path.
 
-export const landingPath = (account) => (account?.role === 'hr' ? '/hr' : '/mira');
+// HR lands on the workspace; an employee lands on their onboarding footprint.
+export const landingPath = (account) => (account?.role === 'hr' ? '/hr' : '/dashboard');
 
 const loginPaths = ['/', '/login'];
-// Paths whose content depends on the account, so they wait for the session check.
-const gatedPaths = ['/', '/login', '/signup', '/hr', '/hr-preview', '/profile'];
 
-// accounts: true | false | null (null while /api/config is loading).
-// account: the SessionAccount, or null when signed out.
+// Every route needs an account. Signed-out visitors are sent to /login, which
+// is also the public landing page. accounts: true | false | null (null while
+// /api/config is loading). account: the SessionAccount, or null when signed out.
+// An HR account only uses /hr; an employee account never uses /hr.
 export function routeDecision({ accounts, loading = false, account = null, path }) {
-  if (accounts === false) return { type: 'render' };
-  if (accounts === null || loading)
-    return gatedPaths.includes(path) ? { type: 'loading' } : { type: 'render' };
-  if (account?.mustChangePassword === true) return { type: 'change-password' };
-  if (path === '/signup')
-    return { type: 'redirect', to: account ? landingPath(account) : '/login' };
-  if (loginPaths.includes(path) && account) return { type: 'redirect', to: landingPath(account) };
-  if (path === '/profile' && !account) return { type: 'redirect', to: '/login' };
+  if (accounts === null || loading) return { type: 'loading' };
+  if (accounts === false) {
+    // Accounts are off: only the sign-in page exists, and it says so.
+    return loginPaths.includes(path) ? { type: 'render' } : { type: 'redirect', to: '/login' };
+  }
+  if (!account)
+    return loginPaths.includes(path) ? { type: 'render' } : { type: 'redirect', to: '/login' };
+  if (account.mustChangePassword === true) return { type: 'change-password' };
+  const landing = landingPath(account);
+  if (loginPaths.includes(path) || path === '/signup') return { type: 'redirect', to: landing };
+  if (account.role === 'hr' && path !== '/hr') return { type: 'redirect', to: landing };
+  if (account.role !== 'hr' && path === '/hr') return { type: 'redirect', to: landing };
   return { type: 'render' };
 }
 

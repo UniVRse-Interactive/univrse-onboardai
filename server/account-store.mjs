@@ -364,8 +364,10 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
       });
     },
     // Records an event for an employee and runs during(account) before the
-    // commit; returns null when no employee account has that ID.
-    async employeeChange(actorId, id, action, at, during) {
+    // commit; returns null when no employee account has that ID. `detail` is
+    // optional ID-only context for the audit row (an onboarding step id and
+    // status, a support request id), never personal values.
+    async employeeChange(actorId, id, action, at, during, detail = null) {
       return transaction(action.replaceAll('_', ' '), async (query) => {
         const found = await query(
           `SELECT ${columns} FROM accounts WHERE id = $1 AND role = 'employee'`,
@@ -373,7 +375,7 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
         );
         const account = found.rows[0];
         if (!account) return null;
-        await event(query, actorId, id, action, at);
+        await event(query, actorId, id, action, at, detail);
         await during(account);
         return account;
       });

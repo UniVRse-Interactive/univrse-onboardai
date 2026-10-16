@@ -64,6 +64,14 @@ override_resource {
 }
 
 override_resource {
+  target = google_service_account.checklist_agent[0]
+  values = {
+    email = "onboardai-checklist-staging@onboardai-test-123.iam.gserviceaccount.com"
+    name  = "projects/onboardai-test-123/serviceAccounts/onboardai-checklist-staging@onboardai-test-123.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
   target = google_service_account.intake_agent[0]
   values = {
     email = "onboardai-intake-staging@onboardai-test-123.iam.gserviceaccount.com"
@@ -591,8 +599,11 @@ run "staging_deploy_names_match_terraform" {
       for f in fileset("${path.module}/../../.github/workflows", "*.{yml,yaml}") : [
         for m in regexall("vars\\.([A-Za-z0-9_]+)", file("${path.module}/../../.github/workflows/${f}")) : m[0]
       ]
-    ])) == toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) --env staging ", output.github_variable_commands) : m[0]])
-    error_message = "The staging gh commands must cover exactly the vars.* the workflows read."
+      ])) == setunion(
+      toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) --env staging ", output.github_variable_commands) : m[0]]),
+      toset(["VOICE_PROVIDER", "GEMINI_TTS_MODEL", "GEMINI_TTS_LOCATION", "GEMINI_TTS_VOICE", "CHECKLIST_AGENT_ENABLED"])
+    )
+    error_message = "The staging gh commands must cover exactly the vars.* the workflows read, except the optional voice (#52) and CHECKLIST_AGENT_ENABLED (#51) variables, which have defaults in deploy.yml."
   }
 
   assert {

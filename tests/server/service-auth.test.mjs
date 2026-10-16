@@ -23,6 +23,7 @@ import { createWebApp } from '../../server/web-app.mjs';
 import { createRemoteVoice } from '../../server/remote-voice.mjs';
 import { createApp } from '../../server/api-routes.mjs';
 import { encodeWav } from '../../server/kokoro-voice.mjs';
+import { startAccountsApp } from './account-harness.mjs';
 
 const apiOrigin = 'https://onboardai-api-staging-abc123-as.a.run.app';
 const ttsOrigin = 'https://onboardai-tts-staging-abc123-as.a.run.app';
@@ -413,35 +414,42 @@ test('api: /api/voice signs its tts calls when ID tokens are on and keeps the vo
   const lines = captureErrors(t);
   const tts = await echoServer();
   const { provider, audiences } = stubProvider('api-to-tts-token');
-  const signed = await listen(
-    createApp({ env: { TTS_SERVICE_URL: tts.url }, idTokenProvider: provider }),
-  );
+  // /api/voice needs a signed-in account (#55): each app gets an employee who
+  // calls it with their session cookie.
+  const withEmployee = async (options) => {
+    const app = await startAccountsApp(options);
+    const hr = await app.hrBrowser();
+    const { browser } = await app.readyEmployee(hr);
+    return { app, cookie: browser.cookieHeader };
+  };
+  const signed = await withEmployee({
+    env: { TTS_SERVICE_URL: tts.url },
+    idTokenProvider: provider,
+  });
   // On Cloud Run but with an http tts URL (compose): automatic mode stays off.
-  const auto = await listen(
-    createApp({ env: { TTS_SERVICE_URL: tts.url, K_SERVICE: 'onboardai-api' } }),
-  );
-  const failing = await listen(
-    createApp({
-      env: { TTS_SERVICE_URL: tts.url },
-      idTokenProvider: async () => {
-        throw new Error(leakedSecret);
-      },
-    }),
-  );
-  const voice = (url) =>
-    fetch(`${url}/api/voice`, {
+  const auto = await withEmployee({
+    env: { TTS_SERVICE_URL: tts.url, K_SERVICE: 'onboardai-api' },
+  });
+  const failing = await withEmployee({
+    env: { TTS_SERVICE_URL: tts.url },
+    idTokenProvider: async () => {
+      throw new Error(leakedSecret);
+    },
+  });
+  const voice = ({ app, cookie }) =>
+    fetch(`${app.url}/api/voice`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', cookie },
       body: JSON.stringify({ text: 'Hello there' }),
     });
   try {
-    assert.equal((await voice(signed.url)).status, 200);
+    assert.equal((await voice(signed)).status, 200);
     assert.equal(tts.seen[0]['x-serverless-authorization'], 'Bearer api-to-tts-token');
     assert.deepEqual(audiences, [tts.url]);
-    assert.equal((await voice(auto.url)).status, 200);
+    assert.equal((await voice(auto)).status, 200);
     assert.equal(tts.seen[1]['x-serverless-authorization'], undefined);
 
-    const down = await voice(failing.url);
+    const down = await voice(failing);
     assert.equal(down.status, 503);
     const text = await down.text();
     assert.equal(JSON.parse(text).code, 'VOICE_UNAVAILABLE');
@@ -449,9 +457,9 @@ test('api: /api/voice signs its tts calls when ID tokens are on and keeps the vo
     assert.equal(tts.seen.length, 2);
     assert.deepEqual(lines, ['Service-to-service ID token for api -> tts failed: Error.']);
   } finally {
-    await signed.close();
-    await auto.close();
-    await failing.close();
+    await signed.app.close();
+    await auto.app.close();
+    await failing.app.close();
     await tts.close();
   }
   assert.throws(

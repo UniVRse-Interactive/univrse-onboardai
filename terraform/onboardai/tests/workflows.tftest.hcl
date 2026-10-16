@@ -146,8 +146,11 @@ run "repository_variables_match_terraform" {
       for f in fileset("${path.module}/../../.github/workflows", "*.{yml,yaml}") : [
         for m in regexall("vars\\.([A-Za-z0-9_]+)", file("${path.module}/../../.github/workflows/${f}")) : m[0]
       ]
-    ])) == toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) ", output.github_variable_commands) : m[0]])
-    error_message = "The vars.* the workflows read and the gh variable set commands in output github_variable_commands must be the same set."
+      ])) == setunion(
+      toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) ", output.github_variable_commands) : m[0]]),
+      toset(["VOICE_PROVIDER", "GEMINI_TTS_MODEL", "GEMINI_TTS_LOCATION", "GEMINI_TTS_VOICE", "CHECKLIST_AGENT_ENABLED"])
+    )
+    error_message = "The vars.* the workflows read and the gh variable set commands in output github_variable_commands must be the same set, except the optional voice (#52) and CHECKLIST_AGENT_ENABLED (#51) variables, which have defaults in deploy.yml."
   }
 
   assert {
@@ -204,14 +207,15 @@ run "workflows_follow_public_repo_rules" {
   }
 
   # id-token: write only on the jobs that call Google Cloud: images, agent
-  # (staging's intake agent, #30), deploy, and smoke for one ID token (#57).
+  # (staging's intake agent, #30), checklist_agent (#51), deploy, and smoke for
+  # one ID token (#57).
   assert {
     condition = (
-      length(regexall("id-token: write", file("${path.module}/../../.github/workflows/deploy.yml"))) == 4 &&
-      toset([for name, job in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs : name if try(job.permissions["id-token"], "") == "write"]) == toset(["images", "agent", "deploy", "smoke"]) &&
+      length(regexall("id-token: write", file("${path.module}/../../.github/workflows/deploy.yml"))) == 5 &&
+      toset([for name, job in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs : name if try(job.permissions["id-token"], "") == "write"]) == toset(["images", "agent", "checklist_agent", "deploy", "smoke"]) &&
       !strcontains(file("${path.module}/../../.github/workflows/ci.yml"), "id-token")
     )
-    error_message = "id-token: write belongs to the images, agent, deploy and smoke jobs of deploy.yml only."
+    error_message = "id-token: write belongs to the images, agent, checklist_agent, deploy and smoke jobs of deploy.yml only."
   }
 
   # smoke's token is for one thing: the deployer's ID token for the api, only
@@ -536,7 +540,7 @@ run "migrations_run_everywhere_and_the_agent_only_on_staging" {
   # before it deploys anything, in every stack.
   assert {
     condition = (
-      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.needs == ["images", "agent"] &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.needs == ["images", "agent", "checklist_agent"] &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env.INTAKE_AGENT_DEPLOYED == "$${{ needs.agent.outputs.deployed }}" &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env.INTAKE_AGENT_ENGINE == "$${{ needs.agent.outputs.engine }}" &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.outputs.intake_agent == "$${{ steps.deploy.outputs.intake_agent }}" &&
@@ -546,7 +550,7 @@ run "migrations_run_everywhere_and_the_agent_only_on_staging" {
       try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].if, null) == null &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[5].env.MIGRATE_OUTCOME == "$${{ steps.migrate.outcome }}"
     )
-    error_message = "deploy needs [images, agent], takes the agent job's deployed and engine, and runs 'Migrate the databases' (id migrate) in every stack, with no condition, right before the Deploy step."
+    error_message = "deploy needs [images, agent, checklist_agent], takes the agent job's deployed and engine, and runs 'Migrate the databases' (id migrate) in every stack, with no condition, right before the Deploy step."
   }
 
   # The deploy job outlasts two full migration attempts (timeout x

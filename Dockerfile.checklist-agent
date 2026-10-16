@@ -1,0 +1,34 @@
+# Local-only image of the onboarding checklist agent (#51) for compose.yaml:
+# the ADK API server on 8093, built from agent-platform/onboarding-checklist
+# with the locked dependencies. Not deployed: Cloud Run never runs it, the
+# agent runs on Vertex AI Agent Engine (npm run checklist-agent:deploy).
+#   docker build -f Dockerfile.checklist-agent .
+# Its build context is the repository root, trimmed to the agent's package by
+# Dockerfile.checklist-agent.dockerignore.
+FROM ghcr.io/astral-sh/uv:0.11.8 AS uv
+
+FROM python:3.13-slim-bookworm
+COPY --from=uv /uv /usr/local/bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+COPY agent-platform/onboarding-checklist/pyproject.toml agent-platform/onboarding-checklist/uv.lock agent-platform/onboarding-checklist/.python-version ./
+# The locked versions only (not the dev group). `package = false`: nothing to build.
+RUN uv sync --frozen --no-dev --no-install-project
+COPY agent-platform/onboarding-checklist/onboarding_checklist ./onboarding_checklist
+RUN useradd --system --uid 10001 --no-create-home agent && chown -R agent /app
+USER agent
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    GOOGLE_GENAI_USE_VERTEXAI=TRUE \
+    ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false
+EXPOSE 8093
+# No authentication on this server: compose publishes no port for it. Same
+# flags as scripts/start-checklist-agent.mjs, bound to all interfaces of the
+# compose network. Sessions, artifacts and memory stay in memory.
+CMD ["adk", "api_server", "--host", "0.0.0.0", "--port", "8093", "--no-reload", "--log_level", "warning", "--session_service_uri", "memory://", "--artifact_service_uri", "memory://", "--memory_service_uri", "memory://", "--max_llm_calls", "8", "."]

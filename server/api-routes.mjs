@@ -10,13 +10,27 @@ import { createSharedVoice, sharedVoiceName } from './kokoro-voice.mjs';
 import { createRemoteVoice } from './remote-voice.mjs';
 import { serviceIdTokenProvider } from './service-auth.mjs';
 import { parseVoiceRequest, voiceRequestError, voiceFailure } from './voice-request.mjs';
-import { randomBytes } from 'node:crypto';
-import { sessionHash } from './saved-conversations.mjs';
-import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
-import { mountGuestWorkspaceRoutes } from './guest-workspace-routes.mjs';
+import {
+  createConversationService,
+  conversationFailure,
+  journeyFieldsOf,
+  journeyMessageFields,
+} from './gemini-chat-workflow.mjs';
 import { vertexConfig, vertexGenerateContentUrl, createAccessTokenProvider } from './vertex-ai.mjs';
 import { createProfileAutofill } from './profile-autofill.mjs';
-import { ChatError } from './chat-errors.mjs';
+import { ChatError, answerNotFound } from './chat-errors.mjs';
+import { createOnboardingJourney, personalSource } from './onboarding-journey.mjs';
+import { createSupportRequests } from './support-requests.mjs';
+import { createKnowledgeGaps } from './knowledge-gaps.mjs';
+import { checklistAgentSettings, createChecklistAgent } from './checklist-agent-client.mjs';
+import { checklistSource, createAgentActions, reportsCompletion } from './agent-actions.mjs';
+import {
+  createGeminiVoice,
+  createVoiceService,
+  geminiVoiceSettings,
+  kokoroVoiceHeader,
+} from './gemini-voice.mjs';
+import { createCheckGrader } from './check-grader.mjs';
 import { accountErrors } from './account-errors.mjs';
 import { accountSettings } from './account-settings.mjs';
 import { createAccountBackends, createAccountService } from './account-service.mjs';
@@ -62,8 +76,6 @@ export function createApp({
   // The saved-chat service (gemini-chat-workflow.mjs), or a function
   // ({ retrieve }) => service that is given the app's company retriever.
   conversationService = null,
-  guestModels = null,
-  guestStore = null,
   getAccessToken = null,
   // Accounts service (account-service.mjs). By default it is built when
   // DATABASE_URL is set; pass null to turn accounts off.
@@ -76,6 +88,20 @@ export function createApp({
   companyDocuments = undefined,
   // The company search (Vertex AI Search, or the sample guide); tests replace it.
   companyRetrieve = undefined,
+  // The onboarding journey's Firestore (issues #47-#50): { firestore, now?,
+  // cacheMs?, log? }. By default the accounts' Firestore whenever accounts are
+  // on; null turns the journey routes off.
+  journeyStorage = undefined,
+  // The onboarding checklist agent (#51, checklist-agent-client.mjs). By
+  // default from CHECKLIST_AGENT_ENGINE or CHECKLIST_AGENT_URL; null is off.
+  checklistAgent = undefined,
+  // Gemini text to speech (#52, gemini-voice.mjs). By default with
+  // VOICE_PROVIDER=gemini; null keeps Kokoro only.
+  geminiVoice = undefined,
+  // The written-check grader (contract v1.4, check-grader.mjs). By default
+  // Gemini whenever Vertex AI is configured (not with document-search); null
+  // is off, and written checks then answer 503 CHECK_GRADER_UNAVAILABLE.
+  checkGrader = undefined,
 } = {}) {
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
@@ -105,7 +131,7 @@ export function createApp({
   const retrieve =
     companyRetrieve || createCompanyRetriever({ env, fetchImpl, getAccessToken: vertexToken });
   // With accounts on, HR's uploaded company knowledge library is searched too, for chats owned by an
-  // account only. Anonymous browsers and guest workspaces are unchanged.
+  // account (every chat, since issue #55).
   const library = !accounts
     ? null
     : companyDocuments !== undefined
@@ -134,6 +160,83 @@ export function createApp({
       typeof conversationService === 'function'
         ? conversationService({ retrieve: chatRetrieve })
         : createConversationService({ env, retrieve: chatRetrieve }));
+
+  // The onboarding journey: footprint, chips, first-day details, support
+  // requests and knowledge gaps, for signed-in accounts only.
+  let journeyClosed = async () => {};
+  let journeyStore = null;
+  if (accounts && journeyStorage !== undefined) journeyStore = journeyStorage;
+  else if (accounts && settings) {
+    const client = createFirestoreClient(settings.firestore);
+    let opened = false;
+    journeyStore = {
+      firestore: () => {
+        opened = true;
+        return client();
+      },
+    };
+    journeyClosed = async () => {
+      if (opened) await (await client())?.terminate?.();
+    };
+  }
+  const journey = journeyStore
+    ? {
+        onboarding: createOnboardingJourney({
+          ...journeyStore,
+          accounts,
+          grader:
+            checkGrader !== undefined
+              ? checkGrader
+              : createCheckGrader({ env, fetchImpl, getAccessToken: vertexToken }),
+        }),
+        support: createSupportRequests({
+          firestore: journeyStore.firestore,
+          now: journeyStore.now,
+          log: journeyStore.log,
+          accounts,
+          chatMemory: () => chatService().memory,
+        }),
+        gaps: createKnowledgeGaps({
+          firestore: journeyStore.firestore,
+          now: journeyStore.now,
+          log: journeyStore.log,
+        }),
+      }
+    : null;
+  // The journey's clock (tests move it).
+  const journeyNow = journeyStore?.now || (() => new Date());
+  // Proposed checklist changes need the journey (accounts) and the agent.
+  const agent =
+    checklistAgent !== undefined
+      ? checklistAgent
+      : createChecklistAgent(checklistAgentSettings(env), {
+          fetchImpl,
+          getAccessToken: vertexToken,
+        });
+  if (journey && agent)
+    journey.actions = createAgentActions({
+      firestore: journeyStore.firestore,
+      now: journeyStore.now,
+      log: journeyStore.log,
+      agent,
+      journey: journey.onboarding,
+      chatMemory: () => chatService().memory,
+    });
+  // Alya's voice: Gemini text to speech when VOICE_PROVIDER=gemini, with the
+  // Kokoro voice (in process or the tts service) as the fallback.
+  const geminiTts =
+    geminiVoice !== undefined
+      ? geminiVoice
+      : geminiVoiceSettings(env)
+        ? createGeminiVoice({ ...geminiVoiceSettings(env), fetchImpl, getAccessToken: vertexToken })
+        : null;
+  const voice = createVoiceService({ gemini: geminiTts, kokoro: sharedVoice });
+  // The configured shared voice for /api/config (QA F-3): `id` is exactly the
+  // X-Alya-Voice value of a clip in that voice, so the browser can tell when
+  // the Kokoro fallback spoke instead.
+  const configuredVoice = geminiTts
+    ? { id: geminiTts.header, label: geminiTts.name || 'Alya (Gemini)', provider: 'gemini' }
+    : { id: kokoroVoiceHeader, label: 'Alya · Heart', provider: 'kokoro' };
 
   app.disable('x-powered-by');
   // With a trusted proxy in front, req.ip and req.host are the browser's IP and host.
@@ -183,27 +286,25 @@ export function createApp({
     next();
   });
 
-  const guestWorkspace = mountGuestWorkspaceRoutes(app, {
-    env,
-    models: guestModels,
-    store: guestStore,
-    companyRetrieve: retrieve,
-  });
+  // Guest access was removed (issue #55): /api/guest-workspace/* is not
+  // served, and every chat, conversation and voice route needs a signed-in
+  // account.
   mountAccountRoutes(app, {
     env,
     accounts,
     profileAutofill: autofill,
     chatMemory: () => chatService().memory,
     companyKnowledge: knowledge,
+    journey,
   });
   // Both stores close asynchronously (Firestore client or SQLite file), as do
   // the account database pool and the profile and library clients.
   app.locals.closeChat = async () => {
     await Promise.allSettled([
       conversations?.close(),
-      guestWorkspace.close(),
       accounts?.close(),
       library?.close?.(),
+      journeyClosed(),
     ]);
   };
 
@@ -220,11 +321,11 @@ export function createApp({
     }
   }
 
-  // Public configuration. Credentials stay on the server. With accounts on, a
-  // signed-in account's chats are always saved, so conversationMemory is true
-  // for that browser in every answer mode.
+  // Public configuration. Credentials stay on the server. Saved chats need a
+  // signed-in account (issue #55), so conversationMemory is true only for a
+  // signed-in browser, in every answer mode.
   app.get('/api/config', async (req, res) => {
-    const savedChats = memoryChat || Boolean(await signedInAccount(req));
+    const savedChats = Boolean(await signedInAccount(req));
     if (accounts) res.set({ 'Cache-Control': 'no-store', Vary: 'Cookie' });
     res.json({
       aiMode: memoryChat
@@ -243,6 +344,8 @@ export function createApp({
 
       voiceName: localVoice?.name || null,
       sharedVoiceName,
+      // The configured voice: Gemini's with VOICE_PROVIDER=gemini, else Kokoro's.
+      voice: configuredVoice,
       tasks,
 
       model: env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
@@ -261,59 +364,32 @@ export function createApp({
     res.json({ ok: true });
   });
 
-  // Saved chats belong to the signed-in account (`account:<uuid>`) when an
-  // account cookie is present, in every answer mode; an expired or invalid one
-  // is 401 SESSION_EXPIRED and never falls back to the anonymous cookie.
-  // Without an account cookie, gemini-chat uses the anonymous browser cookie.
+  // Chat, saved conversations, voice and tts need a signed-in account (an
+  // employee or HR, issue #55), in every answer mode: no cookie is 401
+  // AUTH_REQUIRED, an expired or invalid one 401 SESSION_EXPIRED, a forced
+  // password change 403 PASSWORD_CHANGE_REQUIRED. There is no anonymous
+  // fallback. Saved chats belong to the account (`account:<uuid>`).
   async function chatOwner(req, res, next) {
-    if (accounts && readCookie(req, accountCookie) !== undefined) {
-      if (!sameOrigin(req))
-        return res.status(403).json({ error: 'Open chat on the website itself.' });
-      res.set('Cache-Control', 'no-store');
-      let session;
-      try {
-        session = await accounts.session(readCookie(req, accountCookie));
-      } catch (error) {
-        return chatFailure(res, error);
-      }
-      if (!session) {
-        res.clearCookie(accountCookie, accountCookieOptions(req, env));
-        return sendAccountError(res, accountErrors.sessionExpired());
-      }
-      if (session.account.mustChangePassword)
-        return sendAccountError(res, accountErrors.passwordChangeRequired());
-      req.chatOwner = `account:${session.account.id}`;
-      return next();
-    }
-    if (!memoryChat) return res.status(404).json({ error: 'Saved conversations are not enabled.' });
-    // Same-origin browser requests only; no permission is granted by a thread ID.
-    if (req.get('origin')) {
-      try {
-        if (new URL(req.get('origin')).host !== req.host)
-          return res.status(403).json({ error: 'Open chat on the website itself.' });
-      } catch {
-        return res.status(403).json({ error: 'Invalid request origin.' });
-      }
-    }
+    if (!sameOrigin(req))
+      return res.status(403).json({ error: 'Open chat on the website itself.' });
     res.set('Cache-Control', 'no-store');
-    let token = req
-      .get('cookie')
-      ?.split(';')
-      .map((c) => c.trim())
-      .find((c) => c.startsWith('alya_session='))
-      ?.slice(13);
-    if (!token || !/^[a-f0-9]{64}$/.test(token)) {
-      token = randomBytes(32).toString('hex');
+    const token = accounts ? readCookie(req, accountCookie) : undefined;
+    if (token === undefined) return sendAccountError(res, accountErrors.authRequired());
+    let session;
+    try {
+      session = await accounts.session(token);
+    } catch (error) {
+      return chatFailure(res, error);
     }
-    res.cookie('alya_session', token, {
-      httpOnly: true,
-      sameSite: 'strict',
-      secure: req.secure || env.NODE_ENV === 'production',
-      maxAge: 30 * 86400000,
-      path: '/api',
-    });
-    req.chatOwner = sessionHash(token);
-    next();
+    if (!session) {
+      res.clearCookie(accountCookie, accountCookieOptions(req, env));
+      return sendAccountError(res, accountErrors.sessionExpired());
+    }
+    if (session.account.mustChangePassword)
+      return sendAccountError(res, accountErrors.passwordChangeRequired());
+    req.chatOwner = `account:${session.account.id}`;
+    req.chatAccount = session.account;
+    return next();
   }
   function chatFailure(res, error) {
     const failure = conversationFailure(error);
@@ -334,9 +410,29 @@ export function createApp({
       chatFailure(res, error);
     }
   });
+  // Assistant messages carry coverage, category, quickQuestionId, reexplainOf
+  // and proposedAction at the top level, next to feedback (null when unknown,
+  // as for answers saved before them).
   app.get('/api/conversations/:id', chatOwner, async (req, res) => {
     try {
-      res.json(await chatService().memory.read(req.chatOwner, req.params.id));
+      const chat = await chatService().memory.read(req.chatOwner, req.params.id);
+      res.json({
+        ...chat,
+        messages: chat.messages.map((m) =>
+          m.role === 'assistant'
+            ? {
+                ...m,
+                ...Object.fromEntries(
+                  journeyMessageFields.map((key) => [key, m[key] ?? m.result?.[key] ?? null]),
+                ),
+                ...(m.proposedAction?.status === 'pending' &&
+                m.proposedAction.expiresAt <= journeyNow().toISOString()
+                  ? { proposedAction: { ...m.proposedAction, status: 'expired' } }
+                  : {}),
+              }
+            : m,
+        ),
+      });
     } catch (error) {
       chatFailure(res, error);
     }
@@ -357,8 +453,8 @@ export function createApp({
     }
   });
   app.get('/api/employee-support-summary', chatOwner, (req, res) => {
-    // A browser-session cookie and the HR guest selector are not verified HR
-    // credentials. Keep real reports closed until role-based access is connected.
+    // Named per-employee reports stay closed for everyone (D1 Option A, issue
+    // #48): HR sees team-level insights and consented support requests only.
     res
       .status(403)
       .json({ code: 'HR_ACCESS_REQUIRED', error: 'Reports require verified HR access.' });
@@ -379,6 +475,18 @@ export function createApp({
         req.body.messageId,
         req.body.rating,
       );
+      if (req.body.rating === 'helpful' && journey && req.chatAccount?.role === 'employee') {
+        try {
+          const chat = await chatService().memory.read(req.chatOwner, req.params.id);
+          await journey.onboarding.recordHelpfulAnswer(
+            req.chatAccount,
+            chat.messages,
+            req.body.messageId,
+          );
+        } catch {
+          // Best effort: the feedback itself is already saved.
+        }
+      }
       res.json({ rating: req.body.rating });
     } catch (error) {
       chatFailure(res, error);
@@ -403,16 +511,17 @@ export function createApp({
 
   // A single server-controlled voice for every visitor. No device voice,
   // cloud TTS billing, client voice override or public audio cache.
-  app.post('/api/voice', async (req, res) => {
+  app.post('/api/voice', chatOwner, async (req, res) => {
     const request = parseVoiceRequest(req.body);
     if (!request) return res.status(400).json({ error: voiceRequestError });
     try {
-      const wav = await sharedVoice.render(request.text, request.rate);
+      const { wav, voice: used } = await voice.render(request.text, request.rate);
       if (res.destroyed) return;
       res.set({
         'Content-Type': 'audio/wav',
         'Cache-Control': 'no-store',
-        'X-Alya-Voice': 'kokoro-af-heart',
+        // The voice actually used: gemini-<voice>, or kokoro-af-heart.
+        'X-Alya-Voice': used,
       });
       res.send(wav);
     } catch (error) {
@@ -423,8 +532,11 @@ export function createApp({
   });
 
   // Text chat and avatar share the explicitly selected answer engine.
-  app.post('/api/chat', async (req, res) => {
-    const { question, taskId, style = 'simple' } = req.body || {};
+  // Every question is a turn of one of the account's saved conversations, in
+  // every answer mode (gemini-chat with memory, document search, sample
+  // answers, single-turn Gemini). Signed-out calls never reach an engine.
+  app.post('/api/chat', chatOwner, async (req, res) => {
+    const { question, taskId, style = 'simple', conversationId, requestId } = req.body || {};
 
     const task = tasks.find((item) => item.id === taskId);
 
@@ -439,43 +551,14 @@ export function createApp({
         error: 'Choose a task and enter a question ' + 'of up to 1,600 characters.',
       });
     }
-
-    if (memoryChat) {
-      return chatOwner(req, res, async () => {
-        const { conversationId, requestId } = req.body;
-        if (
-          typeof conversationId !== 'string' ||
-          typeof requestId !== 'string' ||
-          !/^[0-9a-f-]{36}$/i.test(requestId)
-        )
-          return res
-            .status(400)
-            .json({ error: 'Choose a saved conversation before sending a question.' });
-        const abort = new AbortController(),
-          timer = setTimeout(() => abort.abort(), 60000);
-        const closed = () => {
-          if (!res.writableEnded) abort.abort();
-        };
-        res.on('close', closed);
-        try {
-          const result = await chatService().ask(
-            req.chatOwner,
-            conversationId,
-            question.trim(),
-            requestId,
-            abort.signal,
-            req.body.learningAction,
-          );
-          const { supportSummary, ...employeeAnswer } = result;
-          if (!res.destroyed) res.json(employeeAnswer);
-        } catch (error) {
-          if (!res.destroyed) chatFailure(res, error);
-        } finally {
-          clearTimeout(timer);
-          res.off('close', closed);
-        }
-      });
-    }
+    if (
+      typeof conversationId !== 'string' ||
+      typeof requestId !== 'string' ||
+      !/^[0-9a-f-]{36}$/i.test(requestId)
+    )
+      return res
+        .status(400)
+        .json({ error: 'Choose a saved conversation before sending a question.' });
 
     // Used by both the text chat and the avatar.
     async function deliver(result) {
@@ -494,69 +577,84 @@ export function createApp({
       res.json(result);
     }
 
-    // A signed-in account's question is saved as a turn of its conversation in
-    // every answer mode (document search, sample answers, single-turn Gemini).
-    if (accounts && readCookie(req, accountCookie) !== undefined) {
-      return chatOwner(req, res, async () => {
-        const { conversationId, requestId } = req.body;
-        if (
-          typeof conversationId !== 'string' ||
-          typeof requestId !== 'string' ||
-          !/^[0-9a-f-]{36}$/i.test(requestId)
-        )
-          return res
-            .status(400)
-            .json({ error: 'Choose a saved conversation before sending a question.' });
-        const abort = new AbortController(),
-          timer = setTimeout(() => abort.abort(), 60000);
-        const closed = () => {
-          if (!res.writableEnded) abort.abort();
-        };
-        res.on('close', closed);
-        try {
-          const result = await saveTurn(
-            req.chatOwner,
-            conversationId,
-            question.trim(),
-            requestId,
-            abort.signal,
-            () =>
-              answerOnce({
-                question,
-                task,
-                style,
-                taskId,
-                signal: abort.signal,
-                owner: req.chatOwner,
-              }),
-          );
-          if (!res.destroyed) await deliver(result);
-        } catch (error) {
-          if (res.destroyed) return;
-          if (error instanceof AnswerFailure) res.status(error.status).json(error.body);
-          else chatFailure(res, error);
-        } finally {
-          clearTimeout(timer);
-          res.off('close', closed);
-        }
-      });
-    }
-
-    let result;
+    const abort = new AbortController(),
+      timer = setTimeout(() => abort.abort(), 60000);
+    const closed = () => {
+      if (!res.writableEnded) abort.abort();
+    };
+    res.on('close', closed);
     try {
-      result = await answerOnce({ question, task, style, taskId });
+      const turn = await journeyTurn(req);
+      const personal = turn.chip?.kind === 'personal';
+      if (memoryChat) {
+        const result = personal
+          ? await saveTurn(
+              req.chatOwner,
+              conversationId,
+              question.trim(),
+              requestId,
+              abort.signal,
+              (row) => personalResult(req.chatAccount, turn, row),
+              turn,
+            )
+          : await chatService().ask(
+              req.chatOwner,
+              conversationId,
+              question.trim(),
+              requestId,
+              abort.signal,
+              req.body.learningAction,
+              {
+                quickQuestionId: turn.quickQuestionId,
+                reexplainOf: turn.reexplainOf,
+                checklist: turn.checklist,
+              },
+            );
+        const { supportSummary, journey: found, ...employeeAnswer } = result;
+        await recordGap(req.chatAccount, question.trim(), employeeAnswer, turn, found);
+        if (!res.destroyed) res.json(employeeAnswer);
+        return;
+      }
+      const result = await saveTurn(
+        req.chatOwner,
+        conversationId,
+        question.trim(),
+        requestId,
+        abort.signal,
+        personal
+          ? (row) => personalResult(req.chatAccount, turn, row, taskId)
+          : turn.checklist && reportsCompletion(question)
+            ? () => checklistResult(turn, question.trim(), abort.signal, taskId)
+            : async () =>
+                withJourneyFields(
+                  await answerOnce({
+                    question,
+                    task,
+                    style,
+                    taskId,
+                    signal: abort.signal,
+                    owner: req.chatOwner,
+                  }),
+                  turn,
+                ),
+        turn,
+      );
+      if (!res.destroyed) await deliver(result);
     } catch (error) {
-      if (!(error instanceof AnswerFailure)) throw error;
-      return res.status(error.status).json(error.body);
+      if (res.destroyed) return;
+      if (error instanceof AnswerFailure) res.status(error.status).json(error.body);
+      else chatFailure(res, error);
+    } finally {
+      clearTimeout(timer);
+      res.off('close', closed);
     }
-    return deliver(result);
   });
 
   // One answer without conversation history, from the configured engine:
   // document search, the labelled sample answer, or single-turn Gemini. A
   // failure is an AnswerFailure carrying the response the browser receives.
-  // `owner` is the account's chat owner for a signed-in turn.
-  async function answerOnce({ question, task, style, taskId, signal, owner = null }) {
+  // `owner` is the account's chat owner.
+  async function answerOnce({ question, task, style, taskId, signal, owner }) {
     if (documentSearch) {
       const start = performance.now();
       let passages;
@@ -665,12 +763,121 @@ export function createApp({
     }
   }
 
-  // Saves one question and its answer in a saved conversation, as the guest
-  // workspace does for document-search turns. The chat is leased while the
+  // The journey context of a saved-chat turn (issues #48-#50):
+  //   quickQuestionId  a chip id from GET /api/me/quick-questions; only an
+  //                    employee's own chips count, anything else is null
+  //   reexplainOf      the assistant message id being re-explained (it must be
+  //                    in the same chat: 404 ANSWER_NOT_FOUND otherwise)
+  //   chip             the resolved chip; personal chips skip the documents
+  async function journeyTurn(req) {
+    const { quickQuestionId = null, reexplainOf = null } = req.body;
+    if (
+      reexplainOf !== null &&
+      (typeof reexplainOf !== 'string' || !/^[0-9a-f-]{36}-a$/i.test(reexplainOf))
+    )
+      throw answerNotFound();
+    const chip =
+      journey && req.chatAccount?.role === 'employee' && quickQuestionId !== null
+        ? await journey.onboarding.resolveChip(req.chatAccount, quickQuestionId)
+        : null;
+    // An employee's completion report goes to the checklist agent (#51).
+    const { conversationId, requestId } = req.body;
+    const account = req.chatAccount;
+    const checklist =
+      journey?.actions && account?.role === 'employee' && !chip
+        ? ({ query, question, signal }) =>
+            journey.actions.propose({
+              account,
+              conversationId,
+              messageId: `${requestId}-a`,
+              text: query || question,
+              signal,
+            })
+        : null;
+    return { quickQuestionId: chip?.id ?? null, reexplainOf, chip, checklist };
+  }
+  // A completion report in the modes without the Gemini plan step, answered by
+  // the checklist agent: its reply, and the proposed change if any.
+  async function checklistResult(turn, question, signal, taskId) {
+    const proposal = await turn.checklist({ question, signal });
+    return {
+      answer: proposal.answer,
+      mode: documentSearch ? 'document-search' : vertexConfig(env) ? 'gemini' : 'demo',
+      passages: [],
+      source: checklistSource,
+      card: null,
+      taskId,
+      coverage: null,
+      category: 'onboarding',
+      quickQuestionId: null,
+      reexplainOf: turn.reexplainOf,
+      proposedAction: proposal.proposedAction,
+    };
+  }
+  // A personal chip's answer: the employee's first-day details and start date
+  // only, never the company documents. Shaped like the mode's normal answers.
+  async function personalResult(account, turn, row, taskId) {
+    const reply = await journey.onboarding.personalAnswer(account, turn.chip);
+    return {
+      answer: reply.answer,
+      mode: memoryChat
+        ? 'gemini-memory'
+        : documentSearch
+          ? 'document-search'
+          : vertexConfig(env)
+            ? 'gemini'
+            : 'demo',
+      ...(documentSearch ? { matched: reply.coverage === 'full' } : {}),
+      passages: [],
+      source: personalSource,
+      card: null,
+      ...(memoryChat ? { learning: row.learning } : { taskId }),
+      coverage: reply.coverage,
+      category: 'onboarding',
+      quickQuestionId: turn.quickQuestionId,
+      reexplainOf: turn.reexplainOf,
+      proposedAction: null,
+    };
+  }
+  // A document-search, sample or single-turn Gemini answer of an account chat
+  // with the journey fields: document search covers a question fully when a
+  // passage matched and not at all otherwise; the other modes are unknown.
+  const withJourneyFields = (result, turn) => ({
+    ...result,
+    coverage: documentSearch ? (result.matched ? 'full' : 'none') : null,
+    category: null,
+    quickQuestionId: turn.quickQuestionId,
+    reexplainOf: turn.reexplainOf,
+    proposedAction: null,
+  });
+  // Logs an anonymous knowledge gap (issue #49) for a fresh employee turn that
+  // the documents could not answer: category onboarding, coverage none, not a
+  // personal chip and not a re-explanation of an earlier answer. Best effort:
+  // the answer is delivered even if this write fails.
+  async function recordGap(account, question, answer, turn, found) {
+    if (!journey || !found || account?.role !== 'employee') return;
+    if (answer.category !== 'onboarding' || answer.coverage !== 'none') return;
+    if (turn.chip?.kind === 'personal' || turn.reexplainOf) return;
+    try {
+      await journey.gaps.record({
+        question,
+        topic: found.topic,
+        track: await journey.onboarding.trackFor(account),
+        nearestSource: found.nearestSource,
+      });
+    } catch {
+      console.warn('A knowledge gap could not be recorded.');
+    }
+  }
+
+  // Saves one question and its answer in a saved conversation (the turn of a
+  // non-memory answer mode). The chat is leased while the
   // answer is prepared; repeating a request ID returns the saved answer.
-  async function saveTurn(owner, id, question, requestId, signal, compute) {
-    const turn = await chatService().memory.acquire(owner, id),
-      row = turn.row;
+  // compute(row) makes the answer; `turn` (journeyTurn) adds the journey
+  // fields to the saved assistant message.
+  async function saveTurn(owner, id, question, requestId, signal, compute, turn = null) {
+    const lease = await chatService().memory.acquire(owner, id),
+      row = lease.row;
     try {
       const completed = row.messages.find(
         (m) => m.requestId === requestId && m.role === 'assistant',
@@ -691,23 +898,35 @@ export function createApp({
           'CHAT_FULL',
           'This conversation has reached 80 questions. Start a new chat; you can still read this one.',
         );
-      const result = { ...(await compute()), conversationId: id };
+      if (
+        turn?.reexplainOf != null &&
+        !row.messages.some((m) => m.id === turn.reexplainOf && m.role === 'assistant')
+      )
+        throw answerNotFound();
+      const result = { ...(await compute(row)), conversationId: id };
       signal?.throwIfAborted();
-      await turn.save(
+      await lease.save(
         [
           { id: requestId + '-u', requestId, role: 'user', text: question },
-          { id: requestId + '-a', requestId, role: 'assistant', text: result.answer, result },
+          {
+            id: requestId + '-a',
+            requestId,
+            role: 'assistant',
+            text: result.answer,
+            result,
+            ...(turn ? journeyFieldsOf(result) : {}),
+          },
         ],
         row.learning,
       );
       return result;
     } finally {
-      await turn.release();
+      await lease.release();
     }
   }
 
   // LOCAL WINDOWS VOICE
-  app.post('/api/tts/local', async (req, res) => {
+  app.post('/api/tts/local', chatOwner, async (req, res) => {
     if (!localVoice) {
       return res.status(503).json({
         error:
@@ -739,7 +958,7 @@ export function createApp({
   });
 
   // GOOGLE TEXT-TO-SPEECH
-  app.post('/api/tts', async (req, res) => {
+  app.post('/api/tts', chatOwner, async (req, res) => {
     if (!cloudTts) {
       return res.status(503).json({
         error: 'Google voice is not configured. ' + 'Use the local preview voice.',
@@ -816,6 +1035,12 @@ export function createApp({
       });
     }
   });
+
+  // Unknown /api paths, including the removed /api/guest-workspace/* (issue
+  // #55), are a JSON 404: never the web app's index.html.
+  app.use('/api', (req, res) =>
+    res.status(404).json({ code: 'NOT_FOUND', error: 'This API route is unavailable.' }),
+  );
 
   app.use((err, req, res, next) => {
     res.status(err.status || 500).json({

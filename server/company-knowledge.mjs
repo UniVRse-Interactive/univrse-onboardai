@@ -5,7 +5,6 @@ import {
   createUploadedDocumentIndex,
   quoteUploadedDocuments,
 } from './uploaded-document-search.mjs';
-import { interleavePassages } from './workspace-company-knowledge.mjs';
 import { workspaceLimits } from './workspace-limits.mjs';
 
 // Company knowledge for signed-in accounts (issues #32 and #35):
@@ -16,8 +15,19 @@ import { workspaceLimits } from './workspace-limits.mjs';
 //   metadata are kept; the original file never is.
 // - Retrieval for chats owned by an account (`account:<id>`): the library,
 //   interleaved with the existing company retriever (Vertex AI Search, or the
-//   sample guide). Guest workspaces and anonymous browsers never see it.
+//   sample guide).
 export const isAccountOwner = (owner) => typeof owner === 'string' && owner.startsWith('account:');
+
+// Up to `limit` passages, alternating between two ranked lists (first list first),
+// so each source keeps its own rank order and neither crowds out the other.
+export function interleavePassages(first, second, limit) {
+  const merged = [];
+  for (let i = 0; merged.length < limit && (i < first.length || i < second.length); i++) {
+    if (i < first.length) merged.push(first[i]);
+    if (merged.length < limit && i < second.length) merged.push(second[i]);
+  }
+  return merged;
+}
 
 const requestErrors = {
   fileRequired: () =>

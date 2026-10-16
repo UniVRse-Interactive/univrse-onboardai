@@ -1,11 +1,61 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { visualAnswer, simpleAnswer } from '../src/avatar/visual-answer-content.mjs';
+import {
+  visualAnswer,
+  simpleAnswer,
+  visualTopicTitle,
+  visualPointLabel,
+} from '../src/avatar/visual-answer-content.mjs';
 
 const sourced = (text) => ({
   text,
   mode: 'gemini-chat',
   passages: [{ title: 'Synthetic handbook' }],
+});
+
+test('visual point labels identify the rule, clothing choice and restriction without inventing instructions', () => {
+  const guide = visualAnswer(
+    sourced(
+      'The dress code is smart casual. Clean, neat clothing is acceptable. Ripped jeans are not allowed on weekdays.',
+    ),
+  );
+  assert.deepEqual(guide.items.map(visualPointLabel), [
+    'Dress code',
+    'Everyday clothing',
+    'What to avoid',
+  ]);
+  assert.equal(visualPointLabel({ body: 'Ask HR for help.', index: 0 }), 'Who can help');
+  assert.equal(visualPointLabel({ body: 'An unfamiliar explanation.', index: 2 }), 'Key point 3');
+});
+test('visual titles are concise topic labels rather than repeated question or answer sentences', () => {
+  assert.equal(
+    visualTopicTitle({
+      referenceQuestion: 'What should I wear to the office?',
+      text: 'The Company is a professional business office, where clients often visit.',
+    }),
+    'Office attire',
+  );
+  assert.equal(
+    visualTopicTitle({
+      referenceQuestion: 'What are the working hours?',
+      text: 'Lunch is one hour.',
+    }),
+    'Working hours',
+  );
+  assert.equal(
+    visualTopicTitle({ referenceQuestion: 'How do I prepare for meetings?' }),
+    'Meeting preparation',
+  );
+  assert.equal(
+    visualTopicTitle({ referenceQuestion: 'How can I apply for leave?' }),
+    'Leave & time off',
+  );
+  assert.equal(
+    visualTopicTitle({
+      text: 'An unfamiliar policy sentence that should never become a long heading.',
+    }),
+    'Company guidance',
+  );
 });
 test('visual steps preserve the complete wording and conditions, including decimal values', () => {
   const answer =

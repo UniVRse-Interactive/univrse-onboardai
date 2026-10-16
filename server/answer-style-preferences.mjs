@@ -58,10 +58,12 @@ export function supportRequest(question) {
   )
     return { format: 'standard', reason: 'understood' };
   if (
-    /\b(?:make (?:it|the answer) (?:brief|shorter)|summari[sz]e|keep it short|answer briefly|short answer|jawapan ringkas|ringkaskan)\b/.test(
+    /\b(?:(?:make|keep) (?:it|this|that|the answers?|your answers?) (?:brief|briefer|short|shorter)|summari[sz]e|answer briefly|short answer|jawapan ringkas|ringkaskan)\b/.test(
       text,
     ) &&
-    !/\b(?:don't|do not|not) (?:make it |keep it )?(?:brief|shorter|short|ringkas)\b/.test(text)
+    !/\b(?:don't|do not|not) (?:(?:make|keep) (?:it|this|that|the answers?|your answers?) )?(?:brief|briefer|shorter|short|ringkas)\b/.test(
+      text,
+    )
   )
     return { format: 'brief', reason: 'brief-request' };
   if (

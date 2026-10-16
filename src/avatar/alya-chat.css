@@ -696,6 +696,16 @@
 .alya-shared-voice-label p {
   margin-top: 8px;
 }
+/* The Gemini voice has no speed setting: a quiet line takes its place. */
+.alya-voice-options p.alya-natural-pace {
+  margin: 0 0 14px;
+  font-size: 11px;
+}
+/* Shown only while the fallback voice speaks (X-Alya-Voice differs). */
+.alya-shared-voice-label p.alya-backup-voice {
+  font-size: 12px;
+  color: #f1e3b5;
+}
 .alya-voice-preparing {
   font-size: 8px;
   color: #c1d1d6;

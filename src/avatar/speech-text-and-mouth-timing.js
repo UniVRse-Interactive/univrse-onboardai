@@ -1,12 +1,22 @@
 import { LipsyncEn } from '@met4citizen/talkinghead/modules/lipsync-en.mjs';
 
 const lipsync = new LipsyncEn();
+// The text Alya says, from the text the chat shows. Web addresses are skipped,
+// with the "at", "via", "from" or "on" that introduced them (never replaced
+// with words that are not in the answer), markdown marks are
+// dropped, bullets become sentence breaks, and spacing is tidied. Each rule is
+// a literal replacement so presentation-cues.mjs can follow the same steps.
+export const speechCleanup = [
+  [/(?:\b(?:at|via|from|on) )?(?:https?:\/\/|www\.)\S*?(?=[.,;:!?)\]]*(?:\s|$))/gi, ''],
+  [/\(\s*\)|\[\s*\]/g, ''],
+  [/[*#`]/g, ''],
+  [/\n\s*[-•]\s*/g, '. '],
+  [/\s+/g, ' '],
+  [/ (?=[.,;:!?])/g, ''],
+];
 export function spokenText(text) {
-  return String(text)
-    .replace(/https?:\/\/\S+/g, 'the linked resource')
-    .replace(/[*#`]/g, '')
-    .replace(/\n\s*[-•]\s*/g, '. ')
-    .replace(/\s+/g, ' ')
+  return speechCleanup
+    .reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), String(text))
     .trim();
 }
 export function speechChunks(text) {

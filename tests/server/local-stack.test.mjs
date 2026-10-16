@@ -3,15 +3,17 @@ import assert from 'node:assert/strict';
 import {
   commands,
   ensureDocker,
+  missingProjectMessage,
   placeholderFile,
   renderSummary,
   resolveAdcFile,
+  resolveProject,
   runLocal,
 } from '../../scripts/local-stack.mjs';
 
 // A fake runner: docker info answers according to `daemon`, which a test can
 // flip (as if Docker Desktop finished starting). Every call is recorded.
-function fakeRun({ daemon = { up: true }, fail = [], missing = false } = {}) {
+function fakeRun({ daemon = { up: true }, fail = [], missing = false, gcloud = null } = {}) {
   const calls = [];
   const envs = [];
   const run = (command, args, options = {}) => {
@@ -21,14 +23,18 @@ function fakeRun({ daemon = { up: true }, fail = [], missing = false } = {}) {
       return { status: daemon.up ? 0 : 1, stdout: '' };
     if (args[0] === 'image') return { status: missing ? 1 : 0, stdout: '' };
     if (command === 'open') return { status: daemon.openFails ? 1 : 0, stdout: '' };
+    if (command === 'gcloud')
+      return gcloud === null ? { status: 127, stdout: '' } : { status: 0, stdout: gcloud };
     return { status: fail.includes(args[1]) ? 1 : 0, stdout: '' };
   };
   return { run, calls, daemon, envs };
 }
 
-// Keeps tests off the real home directory and file system.
+// Keeps tests off the real home directory, file system, .env and gcloud.
+const projectStub = { env: { GOOGLE_CLOUD_PROJECT: 'synthetic-project' }, dotEnv: () => ({}) };
 const adcStub = {
   adcOptions: { env: {}, home: '/h', exists: () => true, writeText: async () => {} },
+  projectOptions: projectStub,
 };
 
 const login = {
@@ -162,7 +168,7 @@ test('reset runs the setup service with LOCAL_HR_RESET=1 and prints the summary'
   assert.ok(out.join('\n').includes('abcde-fghjk-mnpqr-stuvw'));
 });
 
-test('down stops only web, api and tts; logs follows them; neither removes anything', async () => {
+test('down stops only web, api, tts and the checklist agent; logs follows them; neither removes anything', async () => {
   const f = fakeRun();
   const out = [];
   assert.equal(
@@ -173,9 +179,9 @@ test('down stops only web, api and tts; logs follows them; neither removes anyth
   assert.equal((await runLocal('logs', { ...adcStub, run: f.run, platform: 'linux' })).exitCode, 0);
   assert.deepEqual(f.calls, [
     'docker info',
-    'docker compose stop web api tts',
+    'docker compose stop web api tts checklist-agent',
     'docker info',
-    'docker compose logs -f web api tts setup',
+    'docker compose logs -f web api tts checklist-agent setup',
   ]);
   for (const args of Object.values(commands)) {
     assert.ok(!args.includes('down'));
@@ -271,6 +277,7 @@ test('every compose call gets LOCAL_ADC_FILE, and the summary reports Gemini aut
         read: async () => JSON.stringify(login),
         out: (l) => out.push(l),
         adcOptions: { env: {}, home: '/h', exists: () => found, writeText: async () => {} },
+        projectOptions: projectStub,
       });
       const composeEnvs = f.calls
         .map((call, i) => [call, f.envs[i]])
@@ -322,4 +329,100 @@ test('the summary App line uses the current web port, not the stored URL', () =>
   assert.match(text, /App\s+http:\/\/localhost:3150/);
   assert.ok(!text.includes('http://localhost:3100'));
   assert.match(renderSummary(null, { webPort: '3150' }), /App\s+http:\/\/localhost:3150/);
+});
+
+test('GOOGLE_CLOUD_PROJECT comes from the environment, then .env, then gcloud', () => {
+  const never = () => assert.fail('not asked');
+  assert.deepEqual(
+    resolveProject({ env: { GOOGLE_CLOUD_PROJECT: ' from-env ' }, dotEnv: never, run: never }),
+    { project: 'from-env', source: 'environment' },
+  );
+  assert.deepEqual(
+    resolveProject({
+      env: {},
+      dotEnv: () => ({ GOOGLE_CLOUD_PROJECT: 'from-dotenv' }),
+      run: never,
+    }),
+    { project: 'from-dotenv', source: '.env' },
+  );
+  const f = fakeRun({ gcloud: 'from-gcloud\n' });
+  assert.deepEqual(
+    resolveProject({ env: { GOOGLE_CLOUD_PROJECT: '' }, dotEnv: () => ({}), run: f.run }),
+    {
+      project: 'from-gcloud',
+      source: 'gcloud',
+    },
+  );
+  assert.deepEqual(f.calls, ['gcloud config get-value project']);
+  // gcloud with no project set, gcloud not installed, an unreadable .env.
+  for (const run of [fakeRun({ gcloud: '(unset)\n' }).run, fakeRun().run])
+    assert.deepEqual(
+      resolveProject({
+        env: {},
+        dotEnv: () => {
+          throw new Error('unreadable');
+        },
+        run,
+      }),
+      { project: null, source: null },
+    );
+});
+
+test('start passes the project to every compose call, or stops before building without one', async () => {
+  const base = {
+    adcOptions: adcStub.adcOptions,
+    platform: 'linux',
+    mkdirp: async () => {},
+    read: async () => JSON.stringify(login),
+  };
+  // A checkout without .env, with the project only in gcloud's config.
+  const f = fakeRun({ gcloud: 'gcloud-project\n' });
+  const out = [];
+  const started = await runLocal('start', {
+    ...base,
+    run: f.run,
+    projectOptions: { env: {}, dotEnv: () => ({}) },
+    out: (l) => out.push(l),
+    err: () => assert.fail('no error expected'),
+  });
+  assert.equal(started.exitCode, 0);
+  assert.ok(out.includes('Gemini project: gcloud-project (from gcloud).'));
+  const composeEnvs = f.calls
+    .map((call, i) => [call, f.envs[i]])
+    .filter(([call]) => call.startsWith('docker compose'))
+    .map(([, env]) => env);
+  assert.equal(composeEnvs.length, 2);
+  assert.ok(composeEnvs.every((env) => env.GOOGLE_CLOUD_PROJECT === 'gcloud-project'));
+
+  // Nowhere: a clear message, and nothing is built or started.
+  const none = fakeRun({ gcloud: '' });
+  const errors = [];
+  const stopped = await runLocal('start', {
+    ...base,
+    run: none.run,
+    projectOptions: { env: {}, dotEnv: () => ({}) },
+    out: () => {},
+    err: (l) => errors.push(l),
+  });
+  assert.equal(stopped.exitCode, 1);
+  assert.deepEqual(errors, [missingProjectMessage]);
+  assert.equal(
+    missingProjectMessage,
+    'GOOGLE_CLOUD_PROJECT is not set: add it to .env (Gemini on Vertex AI needs it)',
+  );
+  assert.ok(!none.calls.some((call) => call.startsWith('docker compose')));
+  // down, logs and reset do not need a project.
+  for (const command of ['down', 'logs', 'reset'])
+    assert.equal(
+      (
+        await runLocal(command, {
+          ...base,
+          run: fakeRun({ gcloud: '' }).run,
+          projectOptions: { env: {}, dotEnv: () => ({}) },
+          out: () => {},
+        })
+      ).exitCode,
+      0,
+      command,
+    );
 });

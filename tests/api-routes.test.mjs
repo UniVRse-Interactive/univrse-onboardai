@@ -1,22 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { createApp } from '../server/api-routes.mjs';
+import { signedInFetch, stubAccounts } from './server/signed-in.mjs';
+// Chat and voice need a signed-in account (issue #55): every request here is
+// signed in as a synthetic employee, and chats are saved in an in-memory store.
+const fetch = signedInFetch();
 const fakeToken = async () => 'test-access-token';
 async function server(env = {}, fetchImpl, localVoice, getAccessToken = fakeToken) {
-  const s = createApp({ env, fetchImpl, localVoice, getAccessToken }).listen(0, '127.0.0.1');
+  const app = createApp({
+    env: { CHAT_DATABASE_PATH: ':memory:', ...env },
+    fetchImpl,
+    localVoice,
+    getAccessToken,
+    accountService: stubAccounts(),
+  });
+  const s = app.listen(0, '127.0.0.1');
   await once(s, 'listening');
   return {
     url: `http://127.0.0.1:${s.address().port}`,
-    close: () => new Promise((r) => s.close(r)),
+    close: async () => {
+      await new Promise((r) => s.close(r));
+      await app.locals.closeChat();
+    },
   };
 }
-const post = (url, path, body) =>
-  fetch(url + path, {
+// A chat question is a turn of a new saved conversation unless one is named.
+const post = async (url, path, body) => {
+  if (path === '/api/chat' && body.conversationId === undefined) {
+    const chat = await (await fetch(url + '/api/conversations', { method: 'POST' })).json();
+    body = { ...body, conversationId: chat.id, requestId: randomUUID() };
+  }
+  return fetch(url + path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+};
 test('local demo is labelled and does not invent policies, links or approvals', async () => {
   const s = await server();
   try {

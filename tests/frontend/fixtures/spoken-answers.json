@@ -1,0 +1,375 @@
+{
+  "note": "Chat payloads for the speech tests. Real entries are copied from the local QA runs of #47-#52 and #61 (a person named in one handbook passage is replaced with a role); synthetic entries cover each interface hint and label case.",
+  "answers": [
+    {
+      "name": "real: conversation answer 1 (standard)",
+      "question": "Can I wear shorts to the office on Friday?",
+      "result": {
+        "answer": "Short pants of any kind are not allowed on any working day, including Fridays. An exception is made only for company sports days and outings if the event invitation states so.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday. Short pants of any kind, including short jeans\nand denim shorts, are not allowed on any working day.\n2 / 8"
+          },
+          {
+            "title": "First-Day & First-Week Guide",
+            "heading": "This year's company goals",
+            "text": "2. Policy walk-through    11  30, 1 hour)\nA People & Culture partner covers the policies people ask about most.\nWorking hours, flexible start and hybrid work\nDress code: smart casual on weekdays, casual Friday, no short pants on any working day"
+          },
+          {
+            "title": "Employee Handbook",
+            "heading": "Business",
+            "text": "attire\nLong-sleeved shirt or blouse, formal trousers or skirt, formal shoes\nNot allowed on working days:   short pants and short jeans, flip-flops and bathroom slippers,\nsleeveless singlets, sportswear (except at company sports events), and clothing with offensive words\nor pictures.\nAlways welcome:   cultural and religious attire such as baju kurung, baju Melayu, cheongsam, saree,\ntudung and turban. Traditional attire is encouraged on festive days.\nExceptions:   company sports days and outings may allow shorts. The event invitation will say so.\nSensory or medical needs:   if a fabric, fit or type of shoe causes you discomfort, tell People &\nCulture. We will agree an alternative with you privately.\nIf you are unsure whether something is suitable, ask your manager or People & Culture before\nwearing it."
+          }
+        ],
+        "learning": {
+          "format": "standard"
+        },
+        "coverage": "full",
+        "category": "onboarding"
+      }
+    },
+    {
+      "name": "real: conversation answer 3 (brief)",
+      "question": "Please keep the answer brief for this question: Can I wear shorts to the office on Friday?",
+      "result": {
+        "answer": "Short pants of any kind are not allowed on any working day. Exceptions apply only for company sports days and outings if stated in the invitation.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday. Short pants of any kind, including short jeans\nand denim shorts, are not allowed on any working day.\n2 / 8"
+          },
+          {
+            "title": "Employee Handbook",
+            "heading": "Business",
+            "text": "attire\nLong-sleeved shirt or blouse, formal trousers or skirt, formal shoes\nNot allowed on working days:   short pants and short jeans, flip-flops and bathroom slippers,\nsleeveless singlets, sportswear (except at company sports events), and clothing with offensive words\nor pictures.\nAlways welcome:   cultural and religious attire such as baju kurung, baju Melayu, cheongsam, saree,\ntudung and turban. Traditional attire is encouraged on festive days.\nExceptions:   company sports days and outings may allow shorts. The event invitation will say so.\nSensory or medical needs:   if a fabric, fit or type of shoe causes you discomfort, tell People &\nCulture. We will agree an alternative with you privately.\nIf you are unsure whether something is suitable, ask your manager or People & Culture before\nwearing it."
+          }
+        ],
+        "learning": {
+          "format": "brief"
+        },
+        "coverage": "full",
+        "category": "onboarding",
+        "reexplainOf": "238fb7f2-f286-4e0a-9b69-007ca942e70a-a"
+      }
+    },
+    {
+      "name": "real: brief re-explanation response",
+      "question": "Please keep the answer brief for this question: Can I wear shorts to the office on Friday?",
+      "result": {
+        "answer": "Short pants of any kind are not allowed on any working day. Exceptions apply only for company sports days and outings if stated in the invitation.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday. Short pants of any kind, including short jeans\nand denim shorts, are not allowed on any working day.\n2 / 8"
+          },
+          {
+            "title": "Employee Handbook",
+            "heading": "Business",
+            "text": "attire\nLong-sleeved shirt or blouse, formal trousers or skirt, formal shoes\nNot allowed on working days:   short pants and short jeans, flip-flops and bathroom slippers,\nsleeveless singlets, sportswear (except at company sports events), and clothing with offensive words\nor pictures.\nAlways welcome:   cultural and religious attire such as baju kurung, baju Melayu, cheongsam, saree,\ntudung and turban. Traditional attire is encouraged on festive days.\nExceptions:   company sports days and outings may allow shorts. The event invitation will say so.\nSensory or medical needs:   if a fabric, fit or type of shoe causes you discomfort, tell People &\nCulture. We will agree an alternative with you privately.\nIf you are unsure whether something is suitable, ask your manager or People & Culture before\nwearing it."
+          }
+        ],
+        "learning": {
+          "format": "brief"
+        },
+        "coverage": "full",
+        "category": "onboarding",
+        "reexplainOf": "238fb7f2-f286-4e0a-9b69-007ca942e70a-a"
+      }
+    },
+    {
+      "name": "real: F5 answer",
+      "question": "I have done a checklist step",
+      "result": {
+        "answer": "Shall I mark “Meet your buddy” as done?",
+        "mode": "gemini-memory",
+        "passages": [],
+        "learning": {
+          "format": "standard"
+        },
+        "category": "onboarding"
+      }
+    },
+    {
+      "name": "real: F5 answer",
+      "question": "I have done a checklist step",
+      "result": {
+        "answer": "Shall I mark “Meet your manager” as done?",
+        "mode": "gemini-memory",
+        "passages": [],
+        "learning": {
+          "format": "standard"
+        },
+        "category": "onboarding"
+      }
+    },
+    {
+      "name": "real: F5 answer",
+      "question": "I have done a checklist step",
+      "result": {
+        "answer": "Shall I mark “Sign your employment contract” as submitted? HR then verifies it.",
+        "mode": "gemini-memory",
+        "passages": [],
+        "learning": {
+          "format": "standard"
+        },
+        "category": "onboarding"
+      }
+    },
+    {
+      "name": "real: F5 answer",
+      "question": "I have done a checklist step",
+      "result": {
+        "answer": "This step is a short scenario check that you can take on your onboarding dashboard. Nothing was marked on your checklist.",
+        "mode": "gemini-memory",
+        "passages": [],
+        "learning": {
+          "format": "standard"
+        },
+        "category": "onboarding"
+      }
+    },
+    {
+      "name": "real: F5 answer",
+      "question": "I have done a checklist step",
+      "result": {
+        "answer": "Did you mean Meet your manager or Meet your teammates? Let me know so I can update the right step for you.",
+        "mode": "gemini-memory",
+        "passages": [],
+        "learning": {
+          "format": "standard"
+        },
+        "category": "onboarding"
+      }
+    },
+    {
+      "name": "real: F5 answer",
+      "question": "I have done a checklist step",
+      "result": {
+        "answer": "Shall I mark “Meet your teammates” as done?",
+        "mode": "gemini-memory",
+        "passages": [],
+        "learning": {
+          "format": "standard"
+        },
+        "category": "onboarding"
+      }
+    },
+    {
+      "name": "real: sentences from the TTS repro (without the hint)",
+      "question": "What happens on my first day?",
+      "result": {
+        "answer": "Welcome to your first day at UniVRse. Please arrive at Reception, Level 12, Tower B by 08:45. Casual Friday allows long jeans and clean sneakers. Use only approved AI tools. Yes. Your next step is to sign your employment contract. Never share your password, including with IT.",
+        "mode": "gemini-memory",
+        "passages": [],
+        "learning": {
+          "format": "standard"
+        }
+      }
+    },
+    {
+      "name": "synthetic: long condition triggers the details hint",
+      "question": "When do I submit documents?",
+      "result": {
+        "answer": "Submit the requested documents only after your manager has checked and approved every required item, unless HR has explicitly confirmed a different process for your team and provided the correct instructions in writing before your first day at the office. This further explanation contains many more words that are available in the complete company policy for employees to read carefully, including the background, the history of the policy and several examples from previous years, which most new employees do not need on their first day.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday."
+          }
+        ],
+        "learning": {
+          "format": "standard"
+        }
+      }
+    },
+    {
+      "name": "synthetic: only list introductions trigger the source fallback",
+      "question": "What do I bring?",
+      "result": {
+        "answer": "The documents are as follows:\nBring these items on the day as specified in the table below:",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday."
+          }
+        ],
+        "learning": {
+          "format": "standard"
+        }
+      }
+    },
+    {
+      "name": "synthetic: missing worked example hint",
+      "question": "Show me an example of leave",
+      "result": {
+        "answer": "Apply for leave through the employee portal. Wait for manager approval.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday."
+          }
+        ],
+        "exampleUnavailable": true,
+        "learning": {
+          "format": "example"
+        }
+      }
+    },
+    {
+      "name": "synthetic: backend example label line",
+      "question": "Give me a worked example",
+      "result": {
+        "answer": "Fictional worked example:\nFor example, a new hire called Sam arrives at reception at 08:45. Sam signs the visitor book and waits for the buddy.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday."
+          }
+        ],
+        "learning": {
+          "format": "example"
+        }
+      }
+    },
+    {
+      "name": "synthetic: markdown heading and bold label lines",
+      "question": "What should I wear?",
+      "result": {
+        "answer": "## Dress code\n\n**Weekdays**\nWear smart casual clothes from Monday to Thursday.\n**Casual Friday:**\nLong jeans and clean sneakers are fine on Friday.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday."
+          }
+        ],
+        "learning": {
+          "format": "standard"
+        }
+      }
+    },
+    {
+      "name": "synthetic: web addresses",
+      "question": "Where is the handbook?",
+      "result": {
+        "answer": "Read the handbook at https://intranet.example.com/handbook before orientation. Report IT issues at www.example.com/help, then sign in again.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday."
+          }
+        ],
+        "learning": {
+          "format": "standard"
+        }
+      }
+    },
+    {
+      "name": "synthetic: document search with page counters and headings",
+      "question": "Can I wear shorts?",
+      "result": {
+        "answer": "Search results",
+        "mode": "document-search",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Dress code\nOur dress code is smart casual from Monday to Friday. Short pants are not allowed on any working day.\n2 / 8"
+          }
+        ],
+        "learning": {
+          "format": "standard"
+        }
+      }
+    },
+    {
+      "name": "synthetic: numbered steps in the Steps format",
+      "question": "How do I request leave? Explain it step by step",
+      "result": {
+        "answer": "1. Open the employee portal. 2. Choose the leave type and dates. 3. Submit the request for manager approval.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday."
+          }
+        ],
+        "learning": {
+          "format": "steps"
+        }
+      }
+    },
+    {
+      "name": "synthetic: clothing answer with contrasting rules",
+      "question": "What can I wear on my first day?",
+      "result": {
+        "answer": "Wear a smart shirt with trousers, but avoid ripped jeans; check your dress code first. Clean sneakers are fine on Friday.",
+        "mode": "gemini-memory",
+        "passages": [
+          {
+            "title": "Employee Handbook",
+            "heading": "Dress code",
+            "text": "Our dress code is smart casual from Monday to Friday."
+          }
+        ],
+        "learning": {
+          "format": "standard"
+        }
+      }
+    },
+    {
+      "name": "synthetic: no-answer note",
+      "question": "Where can I park?",
+      "result": {
+        "answer": "I couldn’t find this in the company documents. HR can help with parking.",
+        "mode": "gemini-memory",
+        "passages": [],
+        "coverage": "none",
+        "learning": {
+          "format": "standard"
+        }
+      }
+    }
+  ],
+  "plainReplies": [
+    {
+      "name": "real: F5 approval reply",
+      "text": "I have marked \"Meet your buddy\" as done. Your next step is to sign your employment contract."
+    },
+    {
+      "name": "real: F5 approval reply",
+      "text": "Nothing was changed on your checklist. Let me know if you would like to update this step later!"
+    },
+    {
+      "name": "real: F5 approval reply",
+      "text": "I have sent your signed contract to HR to verify. Your next step is to submit your personal and bank details."
+    },
+    {
+      "name": "real: F5 approval reply",
+      "text": "I have marked \"Meet your teammates\" as complete. Your next step is to submit your personal and bank details."
+    },
+    {
+      "name": "synthetic: plain reply with a web address",
+      "text": "Done. Your contract is at https://intranet.example.com/contract for reference."
+    }
+  ]
+}

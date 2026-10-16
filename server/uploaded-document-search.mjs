@@ -1,7 +1,6 @@
-// Local lexical search over one guest workspace's uploaded documents. Uploads stay
-// in the browser workspace that owns them, so they are searched here instead of
-// being imported into the shared Vertex AI Search data store. This is the ranking
-// the guest workspace used before company documents moved to Vertex AI Search.
+// Local lexical search over HR's uploaded company documents (the company
+// knowledge library), searched here instead of being imported into the shared
+// Vertex AI Search data store.
 // It quotes or ranks source text; it never generates answers or follows
 // instructions inside a document. It is not vector search.
 

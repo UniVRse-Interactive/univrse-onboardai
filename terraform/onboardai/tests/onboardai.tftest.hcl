@@ -254,20 +254,23 @@ run "api_runtime_holds_exactly_three_project_roles" {
     error_message = "Every project-level binding is for onboardai-api-run, on this project."
   }
 
-  # Exactly three project-level IAM resource blocks of any flavour: the
-  # api's roles (above), and staging's intake agent runtime and Agent Engine
-  # deploy roles (intake_agent.tf, #30), which have no instance in production.
+  # Exactly four project-level IAM resource blocks of any flavour: the
+  # api's roles (above), staging's intake agent runtime and Agent Engine
+  # deploy roles (intake_agent.tf, #30), and the checklist agent's runtime
+  # roles (checklist_agent.tf, #51), which have no instance in production
+  # unless var.checklist_agent_production is set.
   assert {
     condition = (
-      sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 3 &&
+      sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 4 &&
       alltrue([
-        for name in ["api_runtime", "intake_agent_runtime", "deployer_deploys_agents"] :
+        for name in ["api_runtime", "intake_agent_runtime", "deployer_deploys_agents", "checklist_agent_runtime"] :
         sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"${name}\"", file("${path.module}/${f}")))]) == 1
       ]) &&
       length(google_project_iam_member.intake_agent_runtime) == 0 &&
+      length(google_project_iam_member.checklist_agent_runtime) == 0 &&
       length(google_project_iam_member.deployer_deploys_agents) == 0
     )
-    error_message = "The only project-level IAM resources are google_project_iam_member.api_runtime and staging's intake_agent_runtime and deployer_deploys_agents (no binding, policy, audit config or custom role); production has only api_runtime."
+    error_message = "The only project-level IAM resources are google_project_iam_member.api_runtime, the checklist agent's checklist_agent_runtime and staging's intake_agent_runtime and deployer_deploys_agents (no binding, policy, audit config or custom role); production has only api_runtime."
   }
 
   assert {

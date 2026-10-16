@@ -1,59 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from './Icon';
 import OnboardAiBrand from '../brand/OnboardAiBrand';
-import DecorativeWebsiteIllustration from './DecorativeWebsiteIllustration';
-import { navigation, stages, stageIntros, tasks, supportTeams } from './website-content';
+import { navigation, supportTeams } from './website-content';
 import LoginPage from '../access/LoginPage';
 import HrWorkspace from '../access/HrWorkspace';
-import GuestEmployeeEntry from '../access/GuestEmployeeEntry';
 import ChangePasswordPage from '../access/ChangePasswordPage';
 import MyProfilePage from '../access/MyProfilePage';
+import EmployeeFootprint from './EmployeeFootprint';
 import useAccountSession from '../access/use-account-session';
 import { landingPath, routeDecision } from '../access/account-routing.mjs';
+import { readNotes, writeNotes } from './support-notes.mjs';
 import './website.css';
 
 const AlyaChatPage = React.lazy(() => import('../avatar/AlyaChatPage'));
 
-const storageKey = 'univrse-onboardai-portal-v1';
-const emptyState = {
-  profile: { name: '', pathway: 'Employee', startDate: '' },
-  completed: [],
-  notes: [],
-};
-function readState() {
-  try {
-    const value = JSON.parse(localStorage.getItem(storageKey));
-    if (!value || typeof value !== 'object') return emptyState;
-    return {
-      profile: {
-        name: typeof value.profile?.name === 'string' ? value.profile.name.slice(0, 40) : '',
-        pathway: ['Employee', 'Intern', 'Contractor'].includes(value.profile?.pathway)
-          ? value.profile.pathway
-          : 'Employee',
-        startDate:
-          typeof value.profile?.startDate === 'string' &&
-          /^\d{4}-\d{2}-\d{2}$/.test(value.profile.startDate)
-            ? value.profile.startDate
-            : '',
-      },
-      completed: Array.isArray(value.completed)
-        ? [...new Set(value.completed)].filter((id) => tasks.some((task) => task.id === id))
-        : [],
-      notes: Array.isArray(value.notes)
-        ? value.notes
-            .filter(
-              (note) =>
-                typeof note?.id === 'string' &&
-                typeof note?.text === 'string' &&
-                supportTeams.some((team) => team.id === note.team),
-            )
-            .slice(0, 10)
-        : [],
-    };
-  } catch {
-    return emptyState;
-  }
-}
 function Link({ to, navigate, children, ...props }) {
   return (
     <a
@@ -139,376 +99,7 @@ function Modal({ title, children, onClose, wide = false }) {
     </dialog>
   );
 }
-function TaskRow({ task, done, onOpen, number }) {
-  return (
-    <button className={'uv-task-row ' + (done ? 'done' : '')} onClick={() => onOpen(task)}>
-      <span className="uv-task-number">
-        {done ? (
-          <Icon name="check" size={19} />
-        ) : (
-          String(number || tasks.indexOf(task) + 1).padStart(2, '0')
-        )}
-      </span>
-      <span className="uv-task-copy">
-        <strong>{task.title}</strong>
-        <small>
-          {task.owner} <span>·</span> {task.time}
-        </small>
-      </span>
-      <span className="uv-task-end">
-        {done ? <span className="uv-done-label">Done</span> : <Icon name="arrow" size={20} />}
-      </span>
-    </button>
-  );
-}
-function ProgressRing({ count }) {
-  const percent = Math.round((count / tasks.length) * 100);
-  return (
-    <div
-      className="uv-progress-ring"
-      role="progressbar"
-      aria-label="Onboarding tasks marked done"
-      aria-valuemin={0}
-      aria-valuemax={tasks.length}
-      aria-valuenow={count}
-    >
-      <svg viewBox="0 0 160 160" aria-hidden="true">
-        <circle cx="80" cy="80" r="66" />
-        <circle
-          className="uv-ring-fill"
-          cx="80"
-          cy="80"
-          r="66"
-          pathLength="100"
-          strokeDasharray={`${percent} 100`}
-        />
-      </svg>
-      <div>
-        <strong>
-          {percent}
-          <span>%</span>
-        </strong>
-        <small>YOUR PROGRESS</small>
-      </div>
-    </div>
-  );
-}
-
-function Dashboard({ state, navigate, onTask, onProfile, chatPath }) {
-  const pending = tasks.filter((task) => !state.completed.includes(task.id)),
-    next = pending[0];
-  return (
-    <>
-      <div className="uv-dashboard-meta">
-        <span>
-          <span className="uv-live-dot" /> YOUR NEXT CHAPTER
-        </span>
-        <span>
-          UNI / MY <i />{' '}
-          {new Intl.DateTimeFormat('en-GB', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-            timeZone: 'Asia/Kuala_Lumpur',
-          })
-            .format(new Date())
-            .toUpperCase()}
-        </span>
-      </div>
-      <section className="uv-welcome-hero">
-        <div className="uv-hero-copy">
-          <Label>WELCOME TO YOUR WORKSPACE</Label>
-          <h1>
-            {state.profile.name ? (
-              <>
-                Hey, {state.profile.name}.<br />
-                Your next <em>move.</em>
-              </>
-            ) : (
-              <>
-                New universe.
-                <br />
-                Your next <em>move.</em>
-              </>
-            )}
-          </h1>
-          <p>
-            Find your people. Get your bearings.
-            <br />
-            Build something that matters.
-          </p>
-          <div className="uv-hero-actions">
-            <button
-              className="uv-button primary"
-              onClick={() => (next ? onTask(next) : navigate('/onboarding'))}
-            >
-              {state.completed.length ? 'Continue your journey' : 'Let’s get you started'}
-              <Icon name="arrow" size={19} />
-            </button>
-            <button className="uv-round-link" aria-label="Edit my profile" onClick={onProfile}>
-              <Icon name="user" size={21} />
-            </button>
-          </div>
-          <span className="uv-hero-footnote">A CLEARER START. AT YOUR OWN PACE.</span>
-        </div>
-        <DecorativeWebsiteIllustration />
-      </section>
-      <section className="uv-progress-strip">
-        <div>
-          <span className="uv-mini-label">YOUR JOURNEY</span>
-          <strong>
-            {String(state.completed.length).padStart(2, '0')}
-            <span> / {tasks.length} steps</span>
-          </strong>
-        </div>
-        <div
-          className="uv-strip-track"
-          role="progressbar"
-          aria-label="Checklist progress"
-          aria-valuemin={0}
-          aria-valuemax={tasks.length}
-          aria-valuenow={state.completed.length}
-        >
-          {tasks.map((task) => (
-            <span key={task.id} className={state.completed.includes(task.id) ? 'complete' : ''} />
-          ))}
-        </div>
-        <Link to="/onboarding" navigate={navigate}>
-          View your roadmap <Icon name="arrow" size={18} />
-        </Link>
-      </section>
-      <div className="uv-dashboard-lower">
-        <section className="uv-next-steps">
-          <div className="uv-section-heading">
-            <div>
-              <Label>SMALL STEPS. REAL MOMENTUM.</Label>
-              <h2>Up next.</h2>
-            </div>
-            <span className="uv-index-note">{pending.length} TO GO</span>
-          </div>
-          {pending.length ? (
-            pending
-              .slice(0, 3)
-              .map((task) => <TaskRow task={task} key={task.id} done={false} onOpen={onTask} />)
-          ) : (
-            <div className="uv-empty">
-              <TileIcon icon="check" color="mint" />
-              <h3>Your checklist is complete.</h3>
-              <p>Confirm official completion and any remaining requirements with HR.</p>
-            </div>
-          )}
-          <p className="uv-caption">
-            <Icon name="info" size={14} />
-            Suggested steps. HR confirms your assigned activities.
-          </p>
-        </section>
-        <aside className="uv-explore-panel">
-          <Label>TAKE A LOOK AROUND</Label>
-          <Link to={chatPath} navigate={navigate}>
-            <span>01</span>
-            <div>
-              <h3>Ask Alya</h3>
-              <p>Company guidance, clear cards and a familiar voice.</p>
-            </div>
-            <Icon name="arrow" />
-          </Link>
-          <Link to="/support" navigate={navigate}>
-            <span>02</span>
-            <div>
-              <h3>Find your people</h3>
-              <p>A good question starts a conversation.</p>
-            </div>
-            <Icon name="arrow" />
-          </Link>
-        </aside>
-      </div>
-      <div className="uv-stage-overview">
-        {stageIntros.map((stage, index) => (
-          <Link to="/onboarding" navigate={navigate} key={stage.title}>
-            <span>
-              0{index + 1} / {stages[index]}
-            </span>
-            <h3>{stage.title}</h3>
-            <p>{stage.text}</p>
-            <Icon name="arrow" size={18} />
-          </Link>
-        ))}
-      </div>
-    </>
-  );
-}
-
-function Onboarding({ state, onTask, notify }) {
-  const [stage, setStage] = useState(-1),
-    [status, setStatus] = useState('all');
-  const shown = tasks.filter(
-    (task) =>
-      (stage === -1 || task.stage === stage) &&
-      (status === 'all' ||
-        (status === 'done'
-          ? state.completed.includes(task.id)
-          : !state.completed.includes(task.id))),
-  );
-  function download() {
-    const body = [
-      'OnboardAi — MY ONBOARDING',
-      'Suggested checklist. HR confirms assigned activities.',
-      '',
-      ...tasks.map(
-        (task) =>
-          `${state.completed.includes(task.id) ? '[x]' : '[ ]'} ${task.title} — ${stages[task.stage]}`,
-      ),
-    ].join('\n');
-    const url = URL.createObjectURL(new Blob([body], { type: 'text/plain' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'my-onboarding-checklist.txt';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notify('Your checklist has been downloaded.');
-  }
-  return (
-    <>
-      <PageHeading
-        number="01"
-        eyebrow="YOUR ROADMAP"
-        title={
-          <>
-            A great start.
-            <br />
-            <em>One step at a time.</em>
-          </>
-        }
-        description="You don’t have to figure it all out on day one."
-      >
-        <button className="uv-button secondary" onClick={download}>
-          <Icon name="download" size={17} />
-          Download checklist
-        </button>
-      </PageHeading>
-      <div className="uv-journey-layout">
-        <aside className="uv-journey-sidebar">
-          <div className="uv-journey-progress">
-            <ProgressRing count={state.completed.length} />
-            <p>
-              {state.completed.length} of {tasks.length} steps marked done
-            </p>
-            <small>Your own progress record.</small>
-          </div>
-          <nav className="uv-stage-list" aria-label="Onboarding stages">
-            <button
-              className={stage === -1 ? 'active' : ''}
-              aria-pressed={stage === -1}
-              onClick={() => setStage(-1)}
-            >
-              <Icon name="checklist" size={19} />
-              <span>The full journey</span>
-              <small>{tasks.length}</small>
-            </button>
-            {stages.map((name, index) => {
-              const group = tasks.filter((task) => task.stage === index),
-                done = group.filter((task) => state.completed.includes(task.id)).length;
-              return (
-                <button
-                  className={stage === index ? 'active' : ''}
-                  aria-pressed={stage === index}
-                  onClick={() => setStage(index)}
-                  key={name}
-                >
-                  <span className="uv-stage-id">0{index + 1}</span>
-                  <span>{name}</span>
-                  <small>
-                    {done}/{group.length}
-                  </small>
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
-        <section className="uv-journey-content">
-          <div className="uv-journey-filter">
-            <div>
-              <Label>{stage === -1 ? 'THE FULL JOURNEY' : stages[stage]}</Label>
-              <h2>{stage === -1 ? 'Let’s make a start.' : stageIntros[stage].title}</h2>
-            </div>
-            <div className="uv-filter-chips" aria-label="Task status">
-              {[
-                ['all', 'All'],
-                ['todo', 'To do'],
-                ['done', 'Done'],
-              ].map(([value, label]) => (
-                <button
-                  key={value}
-                  className={status === value ? 'active' : ''}
-                  aria-pressed={status === value}
-                  onClick={() => setStatus(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          {shown.length ? (
-            stage === -1 ? (
-              stages.map((name, index) => {
-                const group = shown.filter((task) => task.stage === index);
-                return group.length ? (
-                  <div className="uv-task-group" key={name}>
-                    <div className="uv-group-heading">
-                      <span>0{index + 1}</span>
-                      <h3>{name}</h3>
-                      <small>{stageIntros[index].text}</small>
-                    </div>
-                    {group.map((task) => (
-                      <TaskRow
-                        key={task.id}
-                        task={task}
-                        done={state.completed.includes(task.id)}
-                        onOpen={onTask}
-                      />
-                    ))}
-                  </div>
-                ) : null;
-              })
-            ) : (
-              <div className="uv-task-group">
-                {shown.map((task) => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    done={state.completed.includes(task.id)}
-                    onOpen={onTask}
-                  />
-                ))}
-              </div>
-            )
-          ) : (
-            <div className="uv-empty">
-              <Icon name="checklist" size={34} />
-              <h3>No steps in this view.</h3>
-              <p>Choose a different stage or status.</p>
-              <button
-                className="uv-button secondary"
-                onClick={() => {
-                  setStage(-1);
-                  setStatus('all');
-                }}
-              >
-                Show all steps
-              </button>
-            </div>
-          )}
-          <p className="uv-caption">
-            <Icon name="info" size={15} />
-            Times are estimates. Marking a step done does not submit it for HR approval.
-          </p>
-        </section>
-      </div>
-    </>
-  );
-}
-
-function Support({ state, onNote, onDelete, notify, initialTeam }) {
+function Support({ notes, onNote, onDelete, notify, initialTeam }) {
   const [team, setTeam] = useState(initialTeam || 'manager'),
     [text, setText] = useState(''),
     [expanded, setExpanded] = useState(initialTeam || 'manager');
@@ -658,10 +249,10 @@ function Support({ state, onNote, onDelete, notify, initialTeam }) {
         <aside className="uv-saved-notes">
           <div className="uv-section-heading">
             <h2>Your notes.</h2>
-            <span>{state.notes.length.toString().padStart(2, '0')}</span>
+            <span>{notes.length.toString().padStart(2, '0')}</span>
           </div>
-          {state.notes.length ? (
-            state.notes.map((note) => (
+          {notes.length ? (
+            notes.map((note) => (
               <article className="uv-saved-note" key={note.id}>
                 <Label>{supportTeams.find((item) => item.id === note.team)?.title}</Label>
                 <p>{note.text}</p>
@@ -690,7 +281,7 @@ function Support({ state, onNote, onDelete, notify, initialTeam }) {
   );
 }
 
-function AssistantPage({ navigate, guestId, accountId = '' }) {
+function AssistantPage({ navigate, accountId = '' }) {
   return (
     <React.Suspense
       fallback={
@@ -700,74 +291,12 @@ function AssistantPage({ navigate, guestId, accountId = '' }) {
         </div>
       }
     >
-      <AlyaChatPage
-        key={(guestId || 'company') + (accountId || '')}
-        navigate={navigate}
-        guestId={guestId}
-      />
+      <AlyaChatPage key={accountId} navigate={navigate} />
     </React.Suspense>
   );
 }
 
-function ProfileModal({ profile, onSave, onClose }) {
-  const [draft, setDraft] = useState({ ...profile });
-  return (
-    <Modal title="Make this space yours" onClose={onClose}>
-      <p className="uv-dialog-intro">
-        Use your preferred name and confirm your joining details with HR. Your profile stays on this
-        device.
-      </p>
-      <form
-        className="uv-profile-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSave({ ...draft, name: draft.name.trim() });
-        }}
-      >
-        <label>
-          Preferred name
-          <input
-            value={draft.name}
-            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-            maxLength={40}
-            placeholder="How should we welcome you?"
-            autoComplete="off"
-            autoFocus
-          />
-        </label>
-        <label>
-          Onboarding pathway
-          <select
-            value={draft.pathway}
-            onChange={(event) => setDraft({ ...draft, pathway: event.target.value })}
-          >
-            <option>Employee</option>
-            <option>Intern</option>
-            <option>Contractor</option>
-          </select>
-        </label>
-        <label>
-          Joining date
-          <input
-            type="date"
-            value={draft.startDate}
-            onInput={(event) => setDraft({ ...draft, startDate: event.target.value })}
-            onChange={(event) => setDraft({ ...draft, startDate: event.target.value })}
-          />
-        </label>
-        <div className="uv-form-actions">
-          <button type="button" className="uv-button secondary" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="uv-button primary">
-            Save my profile <Icon name="check" size={17} />
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-function SearchModal({ onClose, navigate, onTask }) {
+function SearchModal({ onClose, navigate }) {
   const [query, setQuery] = useState('');
   const entries = [
     ...navigation.map((item) => ({
@@ -775,13 +304,6 @@ function SearchModal({ onClose, navigate, onTask }) {
       type: 'Page',
       icon: item.icon,
       path: item.path,
-    })),
-    ...tasks.map((task) => ({
-      title: task.title,
-      type: 'Task',
-      icon: 'checklist',
-      task,
-      keywords: task.description,
     })),
   ];
   const results = query.trim()
@@ -798,7 +320,7 @@ function SearchModal({ onClose, navigate, onTask }) {
       <div className="uv-command-input">
         <Icon name="search" />
         <input
-          aria-label="Search tasks and pages"
+          aria-label="Search pages"
           placeholder="Search your workspace…"
           autoFocus
           value={query}
@@ -808,10 +330,7 @@ function SearchModal({ onClose, navigate, onTask }) {
       <p className="uv-search-caption">{query ? 'MATCHING RESULTS' : 'QUICK NAVIGATION'}</p>
       <div className="uv-search-results">
         {results.map((item) => (
-          <button
-            key={item.type + item.title}
-            onClick={() => (item.task ? onTask(item.task) : navigate(item.path))}
-          >
+          <button key={item.type + item.title} onClick={() => navigate(item.path)}>
             <TileIcon icon={item.icon} />
             <span>
               {item.title}
@@ -833,16 +352,25 @@ function SearchModal({ onClose, navigate, onTask }) {
 
 export default function OnboardingWebsite() {
   const [path, setPath] = useState(window.location.pathname),
-    [state, setState] = useState(readState),
+    [notes, setNotes] = useState([]),
     [dialog, setDialog] = useState(null),
     [mobile, setMobile] = useState(false),
     [toast, setToast] = useState(''),
-    [supportTeam, setSupportTeam] = useState(null),
-    [guestPreview, setGuestPreview] = useState('');
+    [supportTeam, setSupportTeam] = useState(null);
   const mainRef = useRef(null),
     toastTimer = useRef(null);
   const session = useAccountSession({ onNavigate: (to) => navigate(to) });
   const account = session.account;
+  // Private support notes: this browser only, keyed by account (see support-notes.mjs).
+  useEffect(() => {
+    setNotes(
+      readNotes(
+        localStorage,
+        account?.id,
+        supportTeams.map((team) => team.id),
+      ),
+    );
+  }, [account?.id]);
   const navItems =
     account?.role === 'employee'
       ? [...navigation, { path: '/profile', label: 'My profile', short: 'Profile', icon: 'user' }]
@@ -853,19 +381,18 @@ export default function OnboardingWebsite() {
     account,
     path,
   });
-  const guestId = path.match(/^\/(?:guest\/employee|employee)\/([a-f0-9-]{36})$/i)?.[1];
-  const assistantPath = path === '/mira' || !!guestId;
-  const chatPath = guestId || path === '/mira' ? path : account ? '/mira' : '/employee';
-  const active = navItems.find((item) => item.path === (assistantPath ? '/mira' : path));
+  const assistantPath = path === '/alya';
+  const chatPath = '/alya';
+  const active = navItems.find((item) => item.path === (assistantPath ? '/alya' : path));
   useEffect(() => {
     const pop = () => {
       let next = window.location.pathname;
       if (next === '/guide' || next.startsWith('/guide/')) {
-        next = '/mira';
+        next = '/alya';
         window.history.replaceState({}, '', next);
       }
       if (['/chat', '/avatar-preview', '/about', '/resources'].includes(next)) {
-        next = '/mira';
+        next = '/alya';
         window.history.replaceState({}, '', next);
       }
       setPath(next);
@@ -885,7 +412,7 @@ export default function OnboardingWebsite() {
         ? 'Welcome'
         : path === '/signup'
           ? 'Create an employee account'
-          : ['/hr', '/hr-preview'].includes(path)
+          : path === '/hr'
             ? 'HR workspace'
             : null;
     document.title = (accessTitle || active?.label || 'Page not found') + ' · OnboardAi';
@@ -895,7 +422,6 @@ export default function OnboardingWebsite() {
     if (decision.type !== 'redirect' || decision.to === path) return;
     window.history.replaceState({}, '', decision.to);
     setPath(decision.to);
-    setGuestPreview('');
   }, [decision.type, decision.to, path]);
   useEffect(() => {
     const keys = (event) => {
@@ -913,13 +439,10 @@ export default function OnboardingWebsite() {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(''), 6000);
   }
-  function update(next) {
-    setState(next);
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(next));
-    } catch {
-      notify('Your changes are visible, but this browser could not save them.');
-    }
+  function updateNotes(next) {
+    setNotes(next);
+    if (!writeNotes(localStorage, account?.id, next))
+      notify('Your note is visible, but this browser could not save it.');
   }
   function navigate(next) {
     if (next !== path) window.history.pushState({}, '', next);
@@ -927,27 +450,9 @@ export default function OnboardingWebsite() {
     setMobile(false);
     setDialog(null);
     setSupportTeam(null);
-    if (['/', '/login', '/signup'].includes(next)) setGuestPreview('');
     window.scrollTo({ top: 0, behavior: 'instant' });
     mainRef.current?.focus({ preventScroll: true });
   }
-  function toggleTask(task) {
-    const done = state.completed.includes(task.id);
-    update({
-      ...state,
-      completed: done
-        ? state.completed.filter((id) => id !== task.id)
-        : [...state.completed, task.id],
-    });
-    setDialog(null);
-    notify(
-      done
-        ? 'Step moved back to your to-do list.'
-        : 'Marked done on this device. HR verifies official completion.',
-    );
-  }
-  const onTask = (task) => setDialog({ type: 'task', task }),
-    name = state.profile.name || 'Your profile';
   if (decision.type === 'loading' || decision.type === 'redirect')
     return (
       <main className="uv-empty" aria-busy="true">
@@ -968,28 +473,13 @@ export default function OnboardingWebsite() {
   if (['/', '/login', '/signup'].includes(path))
     return (
       <LoginPage
-        signup={path === '/signup'}
         accounts={session.accounts === true}
         onSignIn={session.signIn}
         sessionNotice={session.notice}
         navigate={navigate}
-        onGuest={(role) => {
-          setGuestPreview(role);
-          navigate(role === 'hr' ? '/hr' : '/dashboard');
-        }}
       />
     );
-  if (['/hr', '/hr-preview'].includes(path))
-    return (
-      <HrWorkspace
-        navigate={navigate}
-        account={account}
-        accounts={session.accounts === true}
-        onSignOut={session.signOut}
-      />
-    );
-  if (['/employee', '/guest/employee'].includes(path))
-    return <GuestEmployeeEntry navigate={navigate} />;
+  if (path === '/hr') return <HrWorkspace account={account} onSignOut={session.signOut} />;
   return (
     <div className={'uv-portal' + (assistantPath ? ' uv-assistant-workspace' : '')}>
       <a className="uv-skip-link" href="#uv-main">
@@ -1009,7 +499,7 @@ export default function OnboardingWebsite() {
           <div className="uv-header-actions">
             <span className="uv-preview-label">
               <span className="uv-small-dot mint" />
-              {guestId || guestPreview === 'employee' || account ? 'EMPLOYEE' : 'WORKSPACE'}
+              EMPLOYEE
             </span>
             {account ? (
               <>
@@ -1017,7 +507,11 @@ export default function OnboardingWebsite() {
                   <span className="uv-account-prefix">Signed in as </span>
                   <strong>{account.username}</strong>
                 </span>
-                <button type="button" className="uv-access-link" onClick={session.signOut}>
+                <button
+                  type="button"
+                  className="uv-access-link uv-sign-out"
+                  onClick={session.signOut}
+                >
                   Sign out
                 </button>
               </>
@@ -1033,18 +527,15 @@ export default function OnboardingWebsite() {
             >
               <Icon name="search" size={21} />
             </button>
-            <button
+            <Link
+              to="/profile"
+              navigate={navigate}
               className="uv-profile-top"
-              aria-label="Edit my profile"
-              title={name}
-              onClick={() => setDialog({ type: 'profile' })}
+              aria-label="My profile"
+              title="My profile"
             >
-              {state.profile.name ? (
-                state.profile.name[0].toUpperCase()
-              ) : (
-                <Icon name="user" size={18} />
-              )}
-            </button>
+              <Icon name="user" size={18} />
+            </Link>
             <button
               className="uv-icon-button uv-menu-button"
               aria-label={mobile ? 'Close navigation' : 'Open navigation'}
@@ -1063,7 +554,7 @@ export default function OnboardingWebsite() {
         >
           {navItems.map((item, index) => (
             <Link
-              to={item.path === '/mira' ? chatPath : item.path}
+              to={item.path === '/alya' ? chatPath : item.path}
               navigate={navigate}
               key={item.path}
               aria-current={active?.path === item.path ? 'page' : undefined}
@@ -1075,34 +566,42 @@ export default function OnboardingWebsite() {
               <Icon name="arrow" size={15} />
             </Link>
           ))}
+          {account && (
+            // Where the header has no room, the account and Sign out sit in the menu.
+            <div className="uv-nav-account">
+              <span className="uv-nav-account-id">
+                Signed in as <strong>{account.username}</strong>
+              </span>
+              <button type="button" className="uv-access-link" onClick={session.signOut}>
+                Sign out
+              </button>
+            </div>
+          )}
         </nav>
       </header>
       <main className="uv-main" id="uv-main" tabIndex={-1} ref={mainRef}>
-        {path === '/dashboard' ? (
-          <Dashboard
-            chatPath={chatPath}
-            state={state}
+        {['/dashboard', '/onboarding'].includes(path) ? (
+          <EmployeeFootprint
             navigate={navigate}
-            onTask={onTask}
-            onProfile={() => setDialog({ type: 'profile' })}
+            chatPath={chatPath}
+            account={account}
+            expanded={path === '/onboarding'}
           />
-        ) : path === '/onboarding' ? (
-          <Onboarding state={state} onTask={onTask} notify={notify} />
         ) : path === '/support' ? (
           <Support
-            state={state}
+            notes={notes}
             initialTeam={supportTeam}
-            onNote={(note) => update({ ...state, notes: [note, ...state.notes].slice(0, 10) })}
+            onNote={(note) => updateNotes([note, ...notes].slice(0, 10))}
             onDelete={(id) => {
-              update({ ...state, notes: state.notes.filter((note) => note.id !== id) });
+              updateNotes(notes.filter((note) => note.id !== id));
               notify('Support note deleted.');
             }}
             notify={notify}
           />
-        ) : path === '/profile' && account ? (
+        ) : path === '/profile' ? (
           <MyProfilePage account={account} />
         ) : assistantPath ? (
-          <AssistantPage navigate={navigate} guestId={guestId} accountId={account?.id} />
+          <AssistantPage navigate={navigate} accountId={account?.id} />
         ) : (
           <div className="uv-empty">
             <Label>404 / UNEXPLORED SPACE</Label>
@@ -1138,72 +637,8 @@ export default function OnboardingWebsite() {
           </button>
         </div>
       )}
-      {dialog?.type === 'profile' && (
-        <ProfileModal
-          profile={state.profile}
-          onClose={() => setDialog(null)}
-          onSave={(profile) => {
-            update({ ...state, profile });
-            setDialog(null);
-            notify('Your profile is saved on this device.');
-          }}
-        />
-      )}
       {dialog?.type === 'search' && (
-        <SearchModal onClose={() => setDialog(null)} navigate={navigate} onTask={onTask} />
-      )}
-      {dialog?.type === 'task' && (
-        <Modal title="Your next step" onClose={() => setDialog(null)}>
-          <div className="uv-task-detail">
-            <Label>{stages[dialog.task.stage]}</Label>
-            <h3>{dialog.task.title}</h3>
-            <p>{dialog.task.description}</p>
-            <div className="uv-task-metadata">
-              <span>
-                <Icon name="clock" size={16} />
-                {dialog.task.time} estimated
-              </span>
-              <span>
-                <Icon name="user" size={16} />
-                {dialog.task.owner}
-              </span>
-            </div>
-            <h4>WHAT TO DO</h4>
-            <ol>
-              {dialog.task.steps.map((step, index) => (
-                <li key={step}>
-                  <span>0{index + 1}</span>
-                  <p>{step}</p>
-                </li>
-              ))}
-            </ol>
-            <button
-              className="uv-button secondary"
-              onClick={() =>
-                dialog.task.target === 'profile'
-                  ? setDialog({ type: 'profile' })
-                  : navigate(dialog.task.target)
-              }
-            >
-              {dialog.task.action}
-              <Icon name="arrow" size={17} />
-            </button>
-            <div className="uv-task-detail-bottom">
-              <p>
-                Your own progress record.
-                <br />
-                HR verifies official completion.
-              </p>
-              <button className="uv-button primary" onClick={() => toggleTask(dialog.task)}>
-                <Icon
-                  name={state.completed.includes(dialog.task.id) ? 'checklist' : 'check'}
-                  size={17}
-                />
-                {state.completed.includes(dialog.task.id) ? 'Move back to to do' : 'Mark as done'}
-              </button>
-            </div>
-          </div>
-        </Modal>
+        <SearchModal onClose={() => setDialog(null)} navigate={navigate} />
       )}
     </div>
   );

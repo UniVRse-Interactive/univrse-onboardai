@@ -1,10 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  createKnowledgeApi,
-  guestKnowledgeBase,
-  hrKnowledgeBase,
-} from '../../src/access/company-knowledge-api.mjs';
+import { createKnowledgeApi, hrKnowledgeBase } from '../../src/access/company-knowledge-api.mjs';
 
 function recorder() {
   const calls = [];
@@ -13,7 +9,6 @@ function recorder() {
 
 test('base paths', () => {
   assert.equal(hrKnowledgeBase, '/api/hr/company-knowledge');
-  assert.equal(guestKnowledgeBase, '/api/guest-workspace');
 });
 
 test('the HR adapter targets /api/hr/company-knowledge', async () => {
@@ -33,12 +28,4 @@ test('the HR adapter targets /api/hr/company-knowledge', async () => {
   );
   assert.equal(calls[1][1].rawBody, file);
   assert.equal(calls[1][1].headers['X-File-Name'], 'IT%20guide.pdf');
-});
-
-test('the same adapter serves the guest workspace and ignores a trailing slash', async () => {
-  const { calls, request } = recorder();
-  const api = createKnowledgeApi(guestKnowledgeBase + '/', request);
-  assert.equal(api.base, '/api/guest-workspace');
-  await api.upload({ name: 'a.md' }, { category: 'company' });
-  assert.equal(calls[0][0], '/api/guest-workspace/documents?category=company');
 });

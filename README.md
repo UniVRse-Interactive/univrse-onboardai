@@ -1,6 +1,6 @@
 # OnboardAi
 
-An employee onboarding assistant with Alya, the original 3D avatar. Answers can include text, the same server-generated voice for everyone, and a separate illustrated visual panel. Gemini uses approved company documents and saved conversation context.
+An employee onboarding assistant with Alya, the original 3D avatar. Answers can include text, the same server-generated voice for everyone, and a visual guide on Alya's presentation stage that follows her voice. Gemini uses approved company documents and saved conversation context.
 
 ## Run locally
 
@@ -17,11 +17,31 @@ npm.cmd run dev
 
 **Keep your existing `.env` if this project is already configured.** The example contains no credentials and starts with sample answers. The first voice setup downloads the Kokoro model into the ignored `.cache` folder.
 
-Open [the website](http://localhost:3000/) or [Alya's chat](http://localhost:3000/mira).
+Open [the website](http://localhost:3000/) or [Alya's chat](http://localhost:3000/alya).
 
 ### One command in Docker
 
-`npm run local` starts everything in Docker (PostgreSQL, the Firestore emulator, the API, the voice service and the website), creates the tables and a local HR account, and prints the website address, the HR ID and password, and the Emulator UI address. It starts Docker Desktop on macOS if needed. `npm run local:reset-hr` sets a new HR password, `npm run local:down` stops the app containers (the databases keep running) and `npm run local:logs` follows their logs. See [Account access](docs/account-access.md#local-setup-in-docker-one-command).
+`npm run local` starts everything in Docker (PostgreSQL, the Firestore emulator, the API, the voice service, the onboarding checklist agent and the website), creates the tables and a local HR account, and prints the website address, the HR ID and password, and the Emulator UI address. It starts Docker Desktop on macOS if needed. `npm run local:reset-hr` sets a new HR password, `npm run local:down` stops the app containers, the checklist agent included (the databases keep running) and `npm run local:logs` follows their logs. See [Account access](docs/account-access.md#local-setup-in-docker-one-command).
+
+Gemini (answers, profile autofill, the Gemini voice and the checklist agent) needs `GOOGLE_CLOUD_PROJECT`. `npm run local` takes it from the environment, then `.env`, then `gcloud config get-value project`, passes it to the containers, and stops with "GOOGLE_CLOUD_PROJECT is not set: add it to .env (Gemini on Vertex AI needs it)" when none has it. The checklist agent container runs the ADK API server on the compose network and the api reaches it at `CHECKLIST_AGENT_URL=http://checklist-agent:8093`.
+
+### Gemini, voice and checklist agent settings
+
+| Setting                    | Meaning                                                                                                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_CLOUD_PROJECT`     | Required for Gemini on Vertex AI (Application Default Credentials: `gcloud auth application-default login`)                                              |
+| `VOICE_PROVIDER`           | `kokoro` (default) or `gemini`: Gemini text to speech for Alya's voice, with Kokoro as the fallback                                                      |
+| `GEMINI_TTS_MODEL`         | Default `gemini-3.8-flash-tts` (a Preview model)                                                                                                         |
+| `GEMINI_TTS_LOCATION`      | Default `global`                                                                                                                                         |
+| `GEMINI_TTS_VOICE`         | Default `Sulafat`                                                                                                                                        |
+| `CHECKLIST_AGENT_URL`      | The local ADK API server of the onboarding checklist agent (`npm run checklist-agent`: `http://127.0.0.1:8093`; in Docker `http://checklist-agent:8093`) |
+| `CHECKLIST_AGENT_ENGINE`   | On Cloud Run instead: the Vertex AI Agent Engine resource name, set by the Deploy workflow. With neither set, the checklist agent is off                 |
+| `CHECKLIST_AGENT_MODEL`    | The agent's Gemini model, default `gemini-3.8-flash`                                                                                                     |
+| `CHECK_GRADER_MODEL`       | The Gemini model that grades the written policy checks, default `gemini-3.8-flash` (needs `GOOGLE_CLOUD_PROJECT`; off with `AI_MODE=document-search`)    |
+| `CHECK_GRADER_THINKING`    | `low` (default, thinkingLevel LOW) or `default` (the model's own thinking; the rollback, and needed for Gemini 2.5 models)                               |
+| `CHECKLIST_AGENT_THINKING` | The checklist agent's thinking: `default` (default) or `low`                                                                                             |
+
+See [Onboarding journey and support](docs/onboarding-journey.md) for how the agent and the voice work.
 
 ### Local setup with HR and employee accounts
 
@@ -45,7 +65,7 @@ Accounts are optional. They need Docker for PostgreSQL and the Firestore emulato
    npm run dev
    ```
 
-HR then creates employee accounts: the server assigns the Employee ID from the department (for example `PE-0001`) and a temporary password, and employees choose their own password at first sign-in. `npm run hr:reset-password` recovers an HR account (asks for the HR ID and the new password twice). With these settings the server refuses to start without the emulator, so local test personal data never reaches a cloud database. Without `DATABASE_URL` the app runs as before, with guest access only. See [Account access](docs/account-access.md) for roles, rules and the API.
+HR then creates employee accounts: the server assigns the Employee ID from the department (for example `PE-0001`) and a temporary password, and employees choose their own password at first sign-in. `npm run hr:reset-password` recovers an HR account (asks for the HR ID and the new password twice). With these settings the server refuses to start without the emulator, so local test personal data never reaches a cloud database. Guest access was removed (issue #55): the app needs `DATABASE_URL` and a signed-in account for chat, voice and every app page, so create an HR account first. See [Account access](docs/account-access.md) for roles, rules and the API.
 
 With `GOOGLE_CLOUD_PROJECT` also set (and Application Default Credentials, as for Gemini chat), HR can pre-fill the "Add employee account" and "Edit profile" forms from a CV, offer letter or details form (PDF, DOCX, TXT, Markdown, JPG or PNG, up to 5 MB). Gemini on Vertex AI reads the file; HR reviews the values before saving. The file is sent to Google, but the server keeps no copy and logs no file name, content or values. See [Profile autofill](docs/account-access.md#profile-autofill).
 
@@ -58,17 +78,15 @@ npm.cmd start
 
 ## Pages
 
-| Address              | Contents                                                             |
-| -------------------- | -------------------------------------------------------------------- |
-| `/`, `/login`        | Employee/HR login interface and guest entry                          |
-| `/signup`            | Employee sign-up interface                                           |
-| `/dashboard`         | Welcome, next steps and progress                                     |
-| `/onboarding`        | Suggested tasks, filters and a local checklist                       |
-| `/support`           | Support directory and personal notes                                 |
-| `/mira`              | Alya with manual Chat / Visual guide tabs                            |
-| `/hr`, `/hr-preview` | Company uploads, live guest reports and automatic employee summaries |
-| `/employee`          | Open the active guest using uploaded company guidance                |
-| `/employee/<id>`     | One guest’s own Alya conversations, voice and visual guide           |
+| Address       | Contents                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------- |
+| `/`, `/login` | Employee/HR sign-in                                                                               |
+| `/dashboard`  | The employee's onboarding footprint: overall progress, the five areas, steps and the next step    |
+| `/alya`       | Alya's presentation stage beside the chat, quick-question chips and Ask HR                        |
+| `/mira`       | Old `/mira` links redirect to `/alya`.                                                            |
+| `/hr`         | The HR workspace: employee accounts, onboarding, support requests, insights and company documents |
+
+Every app page needs a signed-in account; a signed-out visitor is sent to `/login` (issue #55).
 
 Inside UniVRse, Launchpad and the handbook page have already been removed. Their old addresses lead to Alya. Suggested checklist items and support roles are editable templates, not verified company instructions.
 
@@ -79,35 +97,40 @@ Start with the [file guide](docs/file-guide.md). The project uses JavaScript, Re
 - [Chat and memory](docs/chat-and-memory.md): Gemini, LangChain, LangGraph, Vertex AI Search and saved conversations.
 - [Answer styles](docs/answer-styles.md): automatic support, short explanations, steps, examples and brief answers.
 - [Visual guides and HR summary](docs/visual-guides-and-hr-summary.md): illustrated answers, feedback and HR summary boundaries.
-- [Account access](docs/account-access.md): HR and employee accounts, local setup, the data split, the account API and guest views.
+- [Account access](docs/account-access.md): HR and employee accounts, local setup, the data split and the account API.
+- [Onboarding journey and support](docs/onboarding-journey.md): the onboarding footprint, quick questions, first-day details, consented support requests, team insights and knowledge gaps.
 - [Avatar provenance](public/avatars/alya/PROVENANCE.md): original asset and rendering/voice dependencies.
 
 The current voice is Kokoro Heart (`af_heart`). Its installed model warms at server startup, and a shorter opening segment lets speech begin before the remaining audio is ready. It runs on the Node server. The website does not use device-specific browser voices. Playback and estimated mouth movement start automatically with new answers when voice is on; mute, stop, speed and reduced movement controls remain available.
 
-The original avatar is kept as lossless gzip. Its transfer is about 52.4 MiB; its decoded model is much larger, so loading may take time on slower devices. Chat works independently of the 3D model.
+The ALYA avatar is kept as lossless gzip. Its transfer is about 21 MiB (a 27.7 MiB model once decoded), so loading may take time on slower devices. Chat works independently of the 3D model.
 
 ## Useful commands
 
-| Command                           | Purpose                                                                                    |
-| --------------------------------- | ------------------------------------------------------------------------------------------ |
-| `npm.cmd run dev`                 | Start the local development server                                                         |
-| `npm.cmd test`                    | Check chat, memory, visual answers, audio and assets                                       |
-| `npm.cmd run build`               | Build the browser website                                                                  |
-| `npm.cmd run format`              | Apply consistent, readable formatting                                                      |
-| `npm.cmd run format:check`        | Check formatting without changing files                                                    |
-| `npm.cmd run check:share`         | Check the current Git file list for private files, recognised secrets and large assets     |
-| `npm.cmd run check:search`        | Run one Vertex AI Search query and list the matching files; Google usage billing applies   |
-| `npm.cmd run check:gemini`        | Make one small Gemini request to check model access; Google usage limits and billing apply |
-| `npm.cmd run voice:prepare`       | Download the voice model and generate a local sample                                       |
-| `npm.cmd run db:up`               | Start local PostgreSQL and the Firestore emulator (Docker) and wait until they are healthy |
-| `npm.cmd run db:migrate`          | Run the SQL and Firestore migrations; safe to repeat                                       |
-| `npm.cmd run db:migrations:check` | Check migration file names and numbers (no database)                                       |
-| `npm.cmd run hr:create`           | Create an HR account; the password is prompted for, never passed as an argument            |
-| `npm.cmd run hr:reset-password`   | Recover an HR account: new password, lock cleared, its sessions ended                      |
-| `npm.cmd run local`               | Start the whole stack in Docker and print the local HR login                               |
-| `npm.cmd run local:reset-hr`      | Set a new password for the local HR account and print it                                   |
-| `npm.cmd run local:down`          | Stop the app containers (databases keep running)                                           |
-| `npm.cmd run local:logs`          | Follow the app container logs                                                              |
+| Command                              | Purpose                                                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `npm.cmd run dev`                    | Start the local development server                                                                            |
+| `npm.cmd test`                       | Check chat, memory, visual answers, audio and assets                                                          |
+| `npm.cmd run build`                  | Build the browser website                                                                                     |
+| `npm.cmd run format`                 | Apply consistent, readable formatting                                                                         |
+| `npm.cmd run format:check`           | Check formatting without changing files                                                                       |
+| `npm.cmd run check:share`            | Check the current Git file list for private files, recognised secrets and large assets                        |
+| `npm.cmd run check:search`           | Run one Vertex AI Search query and list the matching files; Google usage billing applies                      |
+| `npm.cmd run check:gemini`           | Make one small Gemini request to check model access; Google usage limits and billing apply                    |
+| `npm.cmd run check:voice`            | Synthesise and transcribe 120 Gemini voice clips; fail if any has words not in its sentence (billing applies) |
+| `npm.cmd run voice:prepare`          | Download the voice model and generate a local sample                                                          |
+| `npm.cmd run db:up`                  | Start local PostgreSQL and the Firestore emulator (Docker) and wait until they are healthy                    |
+| `npm.cmd run db:migrate`             | Run the SQL and Firestore migrations; safe to repeat                                                          |
+| `npm.cmd run db:migrations:check`    | Check migration file names and numbers (no database)                                                          |
+| `npm.cmd run hr:create`              | Create an HR account; the password is prompted for, never passed as an argument                               |
+| `npm.cmd run hr:reset-password`      | Recover an HR account: new password, lock cleared, its sessions ended                                         |
+| `npm.cmd run local`                  | Start the whole stack in Docker and print the local HR login                                                  |
+| `npm.cmd run local:reset-hr`         | Set a new password for the local HR account and print it                                                      |
+| `npm.cmd run local:down`             | Stop the app containers (databases keep running)                                                              |
+| `npm.cmd run local:logs`             | Follow the app container logs                                                                                 |
+| `npm.cmd run checklist-agent`        | Start the onboarding checklist agent (ADK, needs uv) on 127.0.0.1:8093; set `CHECKLIST_AGENT_URL`             |
+| `npm.cmd run checklist-agent:test`   | Run the checklist agent's Python tests (`uv run pytest`, no network)                                          |
+| `npm.cmd run checklist-agent:deploy` | Create or update the checklist agent on Vertex AI Agent Engine (the Deploy workflow runs it)                  |
 
 ## Local settings and data
 
@@ -115,15 +138,11 @@ The existing `.env`, saved chats and voice cache remain local. Git and Docker ex
 
 Company chat searches the approved company documents with Vertex AI Search. Enable it with `AI_MODE=gemini-chat` and the server-only settings in `.env`. Gemini and the search use Application Default Credentials: set `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`), set `VERTEX_SEARCH_ENGINE_ID` (and optionally `VERTEX_SEARCH_LOCATION`, default `global`) and run `gcloud auth application-default login`. Without `VERTEX_SEARCH_ENGINE_ID`, chat answers from the built-in sample onboarding guide. Never put credentials in browser code or variables beginning with `VITE_`.
 
-Successful chats are saved locally in SQLite, or in Firestore when `FIRESTORE_DATABASE_ID` is set (the cloud setting), and belong to an opaque browser-session cookie, or to the signed-in account when accounts are on. The selected chat and voice preferences survive normal refreshes. The editable profile on the portal is not the HR-managed employee profile. Support summaries describe recorded requests and feedback; they do not diagnose disability or score ability. Employee chat does not display reports or export controls. Employee APIs do not return aggregate summaries. The HR workspace shows live activity for each guest, with individual feedback, support requests, suggested support and check-ins. Guest HR/employee views share an isolated browser workspace; this is not verified HR access. Real employee report access still requires connected authentication and company permissions.
+Successful chats are saved locally in SQLite, or in Firestore when `FIRESTORE_DATABASE_ID` is set (the cloud setting), and belong to the signed-in account. The selected chat and voice preferences survive normal refreshes. Support observations describe recorded requests and feedback; they do not diagnose disability or score ability, and they never change onboarding completion. Employee chat does not display reports or export controls. HR sees an individual only through a support request that the employee confirmed; otherwise HR sees team-level insights (at least 3 employees) and anonymous knowledge gaps (decision D1 = Option A, see [Onboarding journey and support](docs/onboarding-journey.md)).
 
-## Company uploads and guest reports
+## Company documents
 
-On the login page choose HR → Continue without an account. Upload a PDF, DOCX, TXT or Markdown guide on the HR page, then use Employee access from the login page to ask Alya about it. HR sees that employee’s updated support summary automatically. **Add employee** creates a separate employee record; the uploaded library is shared within this browser’s workspace. Each report starts with actual activity.
-
-Uploads are limited to 5 MB each and twelve files. Text-based PDFs are supported; scanned pages need a readable copy. A separate ignored SQLite database stores extracted text and conversations (always SQLite, also when `FIRESTORE_DATABASE_ID` is set); workspaces expire after 24 hours without activity and are cleaned on a later request. Another browser gets its own empty workspace. See [Account and workspace details](docs/account-access.md) for limits and the authentication boundary.
-
-The employee assistant searches the company documents with Vertex AI Search when `VERTEX_SEARCH_ENGINE_ID` is set, plus that workspace’s uploaded files; without the engine it answers from the uploads only. The server selects the configured answer engine. Gemini uses Vertex AI with Application Default Credentials and the configured project's quota; relevant passages are sent to Google. There is no model selector in the website. The existing private `/mira` chat history remains available separately.
+Signed-in HR uploads PDF, DOCX, TXT or Markdown company documents on the HR page (5 MB each, twelve files). Only the extracted text is stored, company-wide in Firestore. Every employee's Alya searches them, together with Vertex AI Search when `VERTEX_SEARCH_ENGINE_ID` is set (or the built-in sample guide without it). See [Company Documentation](docs/account-access.md#company-documentation). Gemini uses Vertex AI with Application Default Credentials and the configured project's quota; relevant passages are sent to Google. There is no model selector in the website.
 
 ## GitHub and hosting later
 
@@ -135,4 +154,4 @@ Employee and HR sign-in runs locally (PostgreSQL and the Firestore emulator); Cl
 
 ## Verification after cleanup
 
-All 72 tests and the production build pass, including document extraction, browser/guest isolation, file changes, live reports, persistence and expiry. Automated Gemini checks use injected model responses; they do not validate live provider availability. The question box appears only in Chat; the visual guide uses Next/Back pages rather than an internal scrollbar. The Docker container has not been verified here.
+`npm test` and the production build pass, including document extraction, account ownership, the onboarding journey and signed-out refusals. Automated Gemini checks use injected model responses; they do not validate live provider availability. The visual guide follows Alya's voice, and with voice off the employee steps through it with Previous/Next; captions are paged rather than scrolled. The Docker container has not been verified here.

@@ -1,0 +1,23 @@
+[project]
+name = "onboarding-checklist"
+version = "0.1.0"
+description = "OnboardAi onboarding checklist agent (Google ADK, Gemini on Vertex AI, Firestore)."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = ["google-adk==2.12.0", "google-cloud-firestore==2.34.1"]
+
+[dependency-groups]
+dev = ["pytest==9.1.1"]
+# npm run checklist-agent:deploy (deploy_agent_engine.py) and the Agent Engine
+# entrypoint (onboarding_checklist/agent_engine_app.py). The deployed agent
+# installs exactly the locked versions of the main dependencies plus this group.
+deploy = ["google-cloud-aiplatform[agent-engines,adk]==2.5.0"]
+
+[tool.uv]
+package = false
+# `uv run pytest` covers the deploy command and the Agent Engine entrypoint too.
+default-groups = ["dev", "deploy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

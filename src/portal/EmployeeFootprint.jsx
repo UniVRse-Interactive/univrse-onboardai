@@ -1,0 +1,415 @@
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
+import Icon from './Icon';
+import CheckDialog from './CheckDialog';
+import { journeyErrorMessage } from '../access/journey-errors.mjs';
+import { journeyApi } from '../access/journey-api.mjs';
+import {
+  areaBadge,
+  briefingStatus,
+  areaSummary,
+  optionalStepLabel,
+  thresholdOf,
+  findStep,
+  firstDayRows,
+  formatWhen,
+  myRequestStatus,
+  nextStepBanner,
+  overallSummary,
+  stepActionStates,
+  stepActions,
+  stepErrorMessage,
+  stepStatusLabel,
+} from '../access/onboarding-view.mjs';
+import { briefingHandoff, saveHandoff, stepChip, takeHandoff } from '../access/support-flow.mjs';
+import './footprint.css';
+
+function Ring({ percent }) {
+  return (
+    <div
+      className="uv-progress-ring"
+      role="progressbar"
+      aria-label="Onboarding progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+    >
+      <svg viewBox="0 0 160 160" aria-hidden="true">
+        <circle cx="80" cy="80" r="66" />
+        <circle
+          className="uv-ring-fill"
+          cx="80"
+          cy="80"
+          r="66"
+          pathLength="100"
+          strokeDasharray={`${percent} 100`}
+        />
+      </svg>
+      <div>
+        <strong>
+          {percent}
+          <span>%</span>
+        </strong>
+        <small>YOUR PROGRESS</small>
+      </div>
+    </div>
+  );
+}
+
+// A step's buttons. Until Alya's briefing is done (v1.5), the action that
+// completes a required step is disabled, with the reason shown beside it.
+function StepActions({ step, busy, onAction }) {
+  const reasonId = useId();
+  const states = stepActionStates(step);
+  const reason = states.find((state) => state.reason)?.reason;
+  const done = briefingStatus(step);
+  return (
+    <>
+      {done && (
+        <span className="fp-briefed">
+          <Icon name="check" size={12} />
+          {done}
+        </span>
+      )}
+      {states.map(({ action, label, disabled }) => (
+        <button
+          key={action}
+          type="button"
+          className={
+            'fp-action' +
+            (action === 'ask' || action === 'reopen' || action === 'withdraw' ? '' : ' main')
+          }
+          disabled={busy || disabled}
+          aria-label={`${label}: ${step.title}`}
+          aria-describedby={disabled ? reasonId : undefined}
+          onClick={() => onAction(step, action)}
+        >
+          {action === 'ask' && <Icon name="chat" size={14} />}
+          {action === 'briefing' && <Icon name="volume" size={14} />}
+          {label}
+        </button>
+      ))}
+      {reason && (
+        <span className="fp-gate-reason" id={reasonId}>
+          {reason}
+        </span>
+      )}
+    </>
+  );
+}
+
+// The signed-in employee's onboarding footprint (GET /api/me/onboarding).
+export default function EmployeeFootprint({ navigate, chatPath, account, expanded = false }) {
+  const [onboarding, setOnboarding] = useState(null);
+  const [error, setError] = useState('');
+  const [firstDay, setFirstDay] = useState(null);
+  const [requests, setRequests] = useState(null);
+  const [busyStep, setBusyStep] = useState('');
+  const [stepErrors, setStepErrors] = useState({});
+  const [check, setCheck] = useState(null);
+  const [announce, setAnnounce] = useState('');
+  const headingRef = useRef(null);
+  const alive = useRef(true);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await journeyApi.onboarding();
+      if (!alive.current) return;
+      setOnboarding(data);
+      setError('');
+    } catch (err) {
+      if (alive.current) setError(journeyErrorMessage(err));
+    }
+    journeyApi
+      .firstDay()
+      .then((data) => alive.current && setFirstDay(data))
+      .catch(() => {});
+    journeyApi
+      .mySupportRequests()
+      .then((data) => alive.current && setRequests(data.requests || []))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    alive.current = true;
+    load();
+    const visible = () => {
+      if (document.visibilityState === 'visible') load();
+    };
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      alive.current = false;
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [load]);
+
+  // Back from Alya's briefing with "Take the check": open that step's check.
+  const checkTaken = useRef(false);
+  useEffect(() => {
+    if (!onboarding || checkTaken.current) return;
+    checkTaken.current = true;
+    const handoff = takeHandoff(window.sessionStorage, ['check']);
+    const found = handoff ? findStep(onboarding, handoff.stepId) : null;
+    if (found && stepActions(found.step).includes('check')) setCheck(found.step);
+  }, [onboarding]);
+
+  async function run(step, action) {
+    if (action === 'briefing') {
+      saveHandoff(window.sessionStorage, briefingHandoff(step.id));
+      navigate(chatPath);
+      return;
+    }
+    if (action === 'ask') {
+      const chip = stepChip(step);
+      if (chip) saveHandoff(window.sessionStorage, chip);
+      navigate(chatPath);
+      return;
+    }
+    if (action === 'check') {
+      setCheck(step);
+      return;
+    }
+    setBusyStep(step.id);
+    setStepErrors((current) => ({ ...current, [step.id]: '' }));
+    try {
+      const undo = action === 'reopen' || action === 'withdraw';
+      const next = undo
+        ? await journeyApi.reopenStep(step.id)
+        : await journeyApi.completeStep(step.id);
+      if (!alive.current) return;
+      setOnboarding(next);
+      setAnnounce(
+        action === 'complete'
+          ? `Marked “${step.title}” as done.`
+          : action === 'submit'
+            ? `Sent “${step.title}” to HR to verify.`
+            : `Moved “${step.title}” back to to do.`,
+      );
+    } catch (err) {
+      if (!alive.current) return;
+      setStepErrors((current) => ({ ...current, [step.id]: stepErrorMessage(err) }));
+      if (['STEP_LOCKED', 'STEP_NOT_FOUND', 'BRIEFING_REQUIRED'].includes(err.code)) load();
+    } finally {
+      if (alive.current) setBusyStep('');
+    }
+  }
+
+  if (error && !onboarding)
+    return (
+      <section className="fp" aria-labelledby="fp-title">
+        <h1 id="fp-title">Your onboarding footprint.</h1>
+        <div className="fp-inline-error" role="alert">
+          <p>{error}</p>
+          <button type="button" className="fp-action main" onClick={load}>
+            Try again
+          </button>
+        </div>
+      </section>
+    );
+  if (!onboarding)
+    return (
+      <section className="fp" aria-labelledby="fp-title" aria-busy="true">
+        <h1 id="fp-title">Your onboarding footprint.</h1>
+        <p role="status">Getting your steps ready…</p>
+      </section>
+    );
+
+  const banner = nextStepBanner(onboarding);
+  const nextFound = banner.kind === 'next' ? findStep(onboarding, banner.stepId) : null;
+  const rows = firstDayRows(firstDay?.firstDay);
+  const name = account?.username || '';
+  return (
+    <section className="fp" aria-labelledby="fp-title">
+      <header className="fp-hero">
+        <div>
+          <span className="uv-eyebrow">YOUR ONBOARDING FOOTPRINT</span>
+          <h1 id="fp-title" tabIndex={-1} ref={headingRef}>
+            {onboarding.complete ? 'Onboarding complete.' : 'One step at a time.'}
+          </h1>
+          <p>{overallSummary(onboarding)}</p>
+          {onboarding.complete && (
+            <p className="fp-complete">
+              Onboarding complete. The remaining steps are still worth finishing when you can.
+            </p>
+          )}
+          <p className="fp-muted">
+            {onboarding.track ? `Your plan: ${onboarding.track}.` : ''}{' '}
+            {name && `Signed in as ${name}.`}
+          </p>
+          <div className="fp-hero-actions">
+            <button type="button" className="uv-button primary" onClick={() => navigate(chatPath)}>
+              Ask Alya
+              <Icon name="arrow" size={18} />
+            </button>
+          </div>
+        </div>
+        <Ring percent={onboarding.percent} />
+      </header>
+
+      <div className="fp-live" role="status" aria-live="polite">
+        {announce}
+      </div>
+
+      <section className={'fp-next ' + banner.kind} aria-labelledby="fp-next-title">
+        <span className="uv-mini-label">YOUR NEXT STEP</span>
+        <h2 id="fp-next-title">{banner.title}</h2>
+        {banner.kind === 'next' ? (
+          <>
+            <p className="fp-muted">{banner.areaTitle}</p>
+            {nextFound?.step.description && <p>{nextFound.step.description}</p>}
+            <div className="fp-step-actions">
+              {nextFound && (
+                <StepActions
+                  step={nextFound.step}
+                  busy={busyStep === nextFound.step.id}
+                  onAction={run}
+                />
+              )}
+            </div>
+            {nextFound && stepErrors[nextFound.step.id] && (
+              <p className="fp-inline-error" role="alert">
+                {stepErrors[nextFound.step.id]}
+              </p>
+            )}
+          </>
+        ) : (
+          <p>{banner.text}</p>
+        )}
+      </section>
+
+      <div className="fp-areas">
+        {onboarding.areas.map((area, index) => (
+          <details className="fp-area" key={area.id} open={expanded || index === 0 || undefined}>
+            <summary>
+              <span className="fp-area-title">
+                <span className="fp-area-number" aria-hidden="true">
+                  {area.icon || '0' + (index + 1)}
+                </span>
+                <span>
+                  <strong>{area.title}</strong>
+                  <small>{areaSummary(area)}</small>
+                  {areaBadge(area, onboarding) && (
+                    <span className="fp-badge done">
+                      <Icon name="check" size={12} />
+                      {areaBadge(area, onboarding)}
+                    </span>
+                  )}
+                </span>
+              </span>
+              <span
+                className="fp-bar"
+                role="progressbar"
+                aria-label={`${area.title} progress`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={area.percent}
+              >
+                <span style={{ width: area.percent + '%' }} />
+                <i
+                  className="fp-marker"
+                  style={{ left: thresholdOf(onboarding) + '%' }}
+                  title={thresholdOf(onboarding) + '% marker'}
+                />
+              </span>
+              <span className="fp-percent">{area.percent}%</span>
+              <Icon name="down" size={15} />
+            </summary>
+            {area.description && <p className="fp-area-description">{area.description}</p>}
+            <ul className="fp-steps">
+              {area.steps.map((step) => (
+                <li key={step.id} className={'fp-step ' + step.status}>
+                  <div className="fp-step-copy">
+                    <strong>{step.title}</strong>
+                    {step.description && <p>{step.description}</p>}
+                    {optionalStepLabel(step) && (
+                      <p className="fp-optional">{optionalStepLabel(step)}</p>
+                    )}
+                    <span
+                      className={'fp-badge ' + step.status}
+                      tabIndex={-1}
+                      data-step-status={step.id}
+                    >
+                      {step.status === 'done' && <Icon name="check" size={12} />}
+                      {stepStatusLabel(step)}
+                    </span>
+                  </div>
+                  <div className="fp-step-actions">
+                    <StepActions step={step} busy={busyStep === step.id} onAction={run} />
+                  </div>
+                  {stepErrors[step.id] && (
+                    <p className="fp-inline-error" role="alert">
+                      {stepErrors[step.id]}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ))}
+      </div>
+
+      <div className="fp-cards">
+        {rows && (
+          <section className="fp-card" aria-labelledby="fp-first-day">
+            <span className="uv-mini-label">FROM HR</span>
+            <h2 id="fp-first-day">Your first day</h2>
+            {firstDay?.startDate && (
+              <p className="fp-muted">Starts {formatDay(firstDay.startDate)}</p>
+            )}
+            <dl>
+              {rows.map((row) => (
+                <div key={row.label}>
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+        <section className="fp-card" aria-labelledby="fp-requests">
+          <span className="uv-mini-label">SUPPORT</span>
+          <h2 id="fp-requests">Your requests to HR</h2>
+          {requests === null ? (
+            <p className="fp-muted" role="status">
+              Loading…
+            </p>
+          ) : requests.length ? (
+            <ul className="fp-requests">
+              {requests.map((request) => (
+                <li key={request.id}>
+                  <strong>{request.question}</strong>
+                  <span className="fp-badge">{myRequestStatus(request)}</span>
+                  <small>Sent {formatWhen(request.createdAt)}</small>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="fp-muted">
+              Nothing sent yet. If Alya can’t help, you can choose to ask HR from the chat. You see
+              exactly what is shared first.
+            </p>
+          )}
+        </section>
+      </div>
+      {check && (
+        <CheckDialog
+          step={check}
+          onClose={() => setCheck(null)}
+          onPassed={(next) => {
+            if (next) setOnboarding(next);
+            setAnnounce(`Check passed. “${check.title}” is done.`);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function formatDay(value) {
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? value + 'T00:00:00Z' : value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(date);
+}

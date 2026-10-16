@@ -12,6 +12,7 @@ import {
 import { chatStores } from './server/chat-stores.mjs';
 import { createConversationService } from '../server/gemini-chat-workflow.mjs';
 import { createApp } from '../server/api-routes.mjs';
+import { accountCookieFor, stubAccounts } from './server/signed-in.mjs';
 
 const source = {
   title: 'Synthetic test handbook',
@@ -259,15 +260,18 @@ for (const store of chatStores)
 for (const store of chatStores)
   test(`${store.name}: learning settings endpoint enforces ownership and accepts only presentation and reset controls`, async () => {
     const service = engine({ store }),
-      app = createApp({ env: { AI_MODE: 'gemini-chat' }, conversationService: service });
+      app = createApp({
+        env: { AI_MODE: 'gemini-chat' },
+        conversationService: service,
+        accountService: stubAccounts(),
+      });
     const server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const url = `http://127.0.0.1:${server.address().port}`;
     try {
-      const a = await fetch(url + '/api/conversations'),
-        b = await fetch(url + '/api/conversations');
-      const cookie = a.headers.get('set-cookie').split(';')[0],
-        otherCookie = b.headers.get('set-cookie').split(';')[0];
+      // Two signed-in employees (issue #55: no anonymous browser sessions).
+      const cookie = accountCookieFor('a'),
+        otherCookie = accountCookieFor('b');
       const created = await fetch(url + '/api/conversations', {
           method: 'POST',
           headers: { cookie },
