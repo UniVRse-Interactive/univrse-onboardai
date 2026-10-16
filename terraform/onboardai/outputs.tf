@@ -14,7 +14,7 @@ output "web_runtime_service_account_email" {
 }
 
 output "api_runtime_service_account_email" {
-  description = "Runtime identity of onboardai-api. Share the Google Drive folder with this address as Viewer."
+  description = "Runtime identity of the api service and the migration job. production: roles/aiplatform.user, roles/discoveryengine.viewer and roles/datastore.user on the project. staging: roles/aiplatform.user on the project, roles/datastore.user limited to its own database by an IAM condition, roles/discoveryengine.viewer on its own engine only. Both: roles/cloudsql.client limited to their own accounts instance by an IAM condition."
   value       = google_service_account.runtime["api"].email
 }
 
@@ -34,14 +34,97 @@ output "service_urls" {
 }
 
 output "github_variable_commands" {
-  description = "Run these yourself (needs gh with admin rights on the repository) to set the repository variables the workflows read."
-  value = join("\n", concat(
-    [for name, value in local.github_variables : "gh variable set ${name} --repo ${var.github_repository} --body '${value}'"],
-    var.google_drive_folder_id == "" ? ["# GOOGLE_DRIVE_FOLDER_ID: set google_drive_folder_id and re-run terraform output, or: gh variable set GOOGLE_DRIVE_FOLDER_ID --repo ${var.github_repository} --body '<folder-id>'"] : [],
-  ))
+  description = "Run these yourself (needs gh with admin rights on the repository) to set every variable the workflows read: repository variables for production, variables of the GitHub environment of the same name for staging (create it first: github_environment_commands)."
+  value       = join("\n", [for name, value in local.github_variables : "gh variable set ${name}${local.github_variable_scope} --repo ${var.github_repository} --body '${value}'"])
+}
+
+# null in production, which keeps its repository variables and needs no setup.
+output "github_environment_commands" {
+  description = "Staging only (null in production). Run these yourself before github_variable_commands: they create the GitHub environment the deploy jobs read staging's variables from, and let only the staging branch deploy to it."
+  value = local.is_production ? null : join("\n", [
+    "gh api -X PUT repos/${var.github_repository}/environments/${var.environment} -F 'deployment_branch_policy[protected_branches]=false' -F 'deployment_branch_policy[custom_branch_policies]=true'",
+    "gh api -X POST repos/${var.github_repository}/environments/${var.environment}/deployment-branch-policies -f name=${local.github_deploy_branch} -f type=branch",
+  ])
 }
 
 output "cloud_run_deploy_flags" {
   description = "gcloud run deploy flags per service. .github/workflows/deploy.yml must carry the same strings (checked by terraform test)."
   value       = local.cloud_run_deploy_flags
+}
+
+output "docs_bucket_name" {
+  description = "Bucket the team uploads documents to (gs://<name>/). Import them with import_documents_command."
+  value       = google_storage_bucket.docs.name
+}
+
+output "vertex_search_data_store_id" {
+  description = "Vertex AI Search data store ID (location global, collection default_collection)."
+  value       = google_discovery_engine_data_store.docs.data_store_id
+}
+
+output "vertex_search_serving_config" {
+  description = "Full serving config name onboardai-api searches (VERTEX_SEARCH_LOCATION and VERTEX_SEARCH_ENGINE_ID point at it)."
+  value       = local.serving_config_name
+}
+
+output "firestore_database_id" {
+  description = "Firestore database of the API (repository variable FIRESTORE_DATABASE_ID)."
+  value       = google_firestore_database.default.name
+}
+
+output "import_documents_command" {
+  description = "Imports every file in this environment's documents bucket into its data store (incremental: adds and updates, never deletes). Run it after uploading; it returns a long-running operation. Needs gcloud logged in as a user with Discovery Engine Editor or Owner."
+  value = join(" \\\n  ", [
+    "curl -sS -X POST",
+    "-H \"Authorization: Bearer $(gcloud auth print-access-token)\"",
+    "-H \"X-Goog-User-Project: ${var.project_id}\"",
+    "-H \"Content-Type: application/json\"",
+    "\"https://discoveryengine.googleapis.com/v1/${local.data_store_name}/branches/default_branch/documents:import\"",
+    "-d '${local.import_request}'",
+  ])
+}
+
+# ---------------------------------------------------------------------------
+# Employee accounts (every environment, #45) and the intake agent (staging
+# only, #30). Names only, never a secret value. The intake agent's are null in
+# production.
+# ---------------------------------------------------------------------------
+
+output "cloud_sql_instance_connection_name" {
+  description = "Connection name of the accounts Cloud SQL instance (project:region:instance). The deploy workflow passes it to the api as --set-cloudsql-instances; the HR bootstrap passes it to the Cloud SQL Auth Proxy."
+  value       = local.employee_accounts ? google_sql_database_instance.accounts[0].connection_name : null
+}
+
+output "accounts_secret_ids" {
+  description = "Secret Manager secret IDs (values are never output): db_password (the database user's, for the HR bootstrap), database_url (DATABASE_URL of the api and the migration job), intake_mcp_token (INTAKE_MCP_TOKEN of the api and the agent; null where the intake agent does not run)."
+  value = local.employee_accounts ? {
+    db_password      = google_secret_manager_secret.accounts["db_password"].secret_id
+    database_url     = google_secret_manager_secret.accounts["database_url"].secret_id
+    intake_mcp_token = local.intake_agent ? google_secret_manager_secret.intake_mcp_token[0].secret_id : null
+  } : null
+}
+
+output "db_migrate_job_name" {
+  description = "Cloud Run job that runs npm run db:migrate (Cloud SQL, then Firestore) from the api image before each deploy."
+  value       = local.employee_accounts ? google_cloud_run_v2_job.db_migrate[0].name : null
+}
+
+output "db_migrate_log_view" {
+  description = "Cloud Logging view (bucket _Default, location global) of the migration job's output; the deploy workflow reads it with gcloud logging read --view."
+  value       = local.employee_accounts ? google_logging_log_view.db_migrate[0].name : null
+}
+
+output "intake_agent_service_account_email" {
+  description = "Runtime service account of the intake agent on Agent Engine (--service-account of npm run intake-agent:deploy)."
+  value       = local.intake_agent ? google_service_account.intake_agent[0].email : null
+}
+
+output "intake_agent_deploy_settings" {
+  description = "What the deploy workflow passes to npm run intake-agent:deploy, besides --mcp-url (<api URL>/mcp, read at deploy time) and --model."
+  value = local.intake_agent ? {
+    location         = var.intake_agent_location
+    display_name     = local.intake_agent_display_name
+    service_account  = google_service_account.intake_agent[0].email
+    mcp_token_secret = google_secret_manager_secret.intake_mcp_token[0].secret_id
+  } : null
 }

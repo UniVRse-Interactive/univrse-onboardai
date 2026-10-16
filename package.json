@@ -7,35 +7,49 @@
     "dev": "node scripts/start-development-server.mjs",
     "build": "vite build",
     "start": "node server/index.mjs --production",
-    "test": "node --test tests/*.test.mjs",
+    "test": "node --test \"tests/*.test.mjs\" \"tests/server/*.test.mjs\" \"tests/frontend/*.test.mjs\"",
     "voice:prepare": "node scripts/download-voice-model.mjs",
     "check:share": "node scripts/check-shareable-files.mjs",
-    "check:drive": "node scripts/check-google-drive-connection.mjs",
     "check:gemini": "node scripts/check-gemini-connection.mjs",
-    "check:search": "node scripts/check-document-search.mjs",
+    "check:search": "node scripts/check-vertex-ai-search.mjs",
+    "docs:import": "node scripts/import-company-documents.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "db:up": "docker compose up -d --wait",
+    "db:migrate": "node scripts/migrate-database.mjs",
+    "db:migrations:check": "node scripts/check-migration-files.mjs",
+    "hr:create": "node scripts/create-hr-account.mjs",
+    "hr:reset-password": "node scripts/reset-hr-password.mjs",
+    "local": "node scripts/local-stack.mjs start",
+    "local:reset-hr": "node scripts/local-stack.mjs reset",
+    "local:down": "node scripts/local-stack.mjs down",
+    "local:logs": "node scripts/local-stack.mjs logs"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^9.3.1",
     "@huggingface/transformers": "^3.8.1",
     "@langchain/core": "^1.2.17",
     "@langchain/google": "^0.2.10",
     "@langchain/langgraph": "^1.4.21",
+    "@langchain/langgraph-checkpoint": "^1.1.6",
     "@langchain/langgraph-checkpoint-sqlite": "^1.0.4",
-    "@langchain/textsplitters": "^1.0.2",
     "@met4citizen/talkinghead": "^1.7.0",
     "express": "^5.1.0",
     "google-auth-library": "^10.3.0",
     "kokoro-js": "^1.2.1",
+    "mammoth": "^1.13.0",
+    "pdfjs-dist": "^6.4.299",
+    "pg": "^8.23.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "pg-mem": "^3.0.14",
     "prettier": "3.9.10",
     "vite": "^7.1.0"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   }
 }

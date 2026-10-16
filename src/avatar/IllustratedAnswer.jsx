@@ -1,6 +1,8 @@
 import React, { useId, useRef, useState } from 'react';
 import Icon from '../portal/Icon';
 import AnswerIllustrations from './AnswerIllustrations';
+import useVisualTextPages from './use-visual-text-pages';
+import { visualPageAt } from './visual-text-pagination.mjs';
 
 function AnswerWords({ text }) {
   const important =
@@ -20,189 +22,182 @@ function AnswerWords({ text }) {
     );
 }
 
-export default function IllustratedAnswer({ guide }) {
-  const [active, setActive] = useState(0),
-    [mode, setMode] = useState('visual');
+// Reading controls change presentation only; they never mark work as completed.
+export default function IllustratedAnswer({ guide, question }) {
+  const [position, setPosition] = useState({ part: 0, character: 0 });
   const regionId = useId(),
-    pictures = useRef([]),
+    dialogId = useId(),
+    fullAnswer = useRef(null);
+  const active = position.part,
     item = guide.items[active],
-    steps = guide.kind === 'steps';
-  const count = guide.items.length,
-    multiple = count > 1,
+    count = guide.items.length;
+  const steps = guide.kind === 'steps',
     noun = steps ? 'Step' : 'Part';
-  function select(index) {
-    setActive(index);
-    const picture = pictures.current[index],
-      strip = picture?.closest('.av-picture-list');
-    if (picture && strip) {
-      const left = picture.offsetLeft - strip.offsetLeft;
-      if (
-        left < strip.scrollLeft ||
-        left + picture.offsetWidth > strip.scrollLeft + strip.clientWidth
-      )
-        strip.scrollTo({ left: Math.max(0, left - 20), behavior: 'auto' });
+  const { viewport, measure, pages } = useVisualTextPages(guide.grounded ? item.plain : guide.text);
+  const page = visualPageAt(pages, position.character);
+  const first = active === 0 && page === 0;
+  const last = active === count - 1 && page === pages.length - 1;
+  function choosePart(part) {
+    setPosition({ part, character: 0 });
+  }
+  function turnPage(direction) {
+    const next = page + direction;
+    if (next >= 0 && next < pages.length) {
+      setPosition({ part: active, character: pages[next].start });
+    } else if (active + direction >= 0 && active + direction < count) {
+      setPosition({
+        part: active + direction,
+        character: direction < 0 ? Number.MAX_SAFE_INTEGER : 0,
+      });
     }
   }
   return (
     <div className="av-explanation">
-      <div className="av-controls">
-        <p>
-          {guide.grounded
-            ? mode === 'visual'
-              ? 'Choose a picture. Read the guidance beside it.'
-              : 'All parts of the original answer.'
-            : 'Alya’s reply is shown below.'}
-        </p>
-        {guide.grounded && (
-          <div role="group" aria-label="Visual answer view">
-            <button aria-pressed={mode === 'visual'} onClick={() => setMode('visual')}>
-              <Icon name="sun" size={16} />
-              Visual view
-            </button>
-            <button aria-pressed={mode === 'all'} onClick={() => setMode('all')}>
-              <Icon name="book" size={16} />
-              All details
-            </button>
-          </div>
-        )}
+      <div className="av-question" title={question}>
+        <Icon name="chat" size={15} />
+        <p>{question}</p>
       </div>
-      {!guide.grounded ? (
-        <div className="av-reply">
-          <Icon name="chat" size={30} />
-          <div>
-            <h3>Alya’s reply</h3>
-            <p>{guide.text}</p>
-          </div>
-        </div>
-      ) : mode === 'visual' ? (
-        <div className="av-learning-board">
-          <div className="av-picture-space">
+      {guide.grounded && count > 1 && (
+        <div className="av-chapters">
+          {count > 4 ? (
+            <label className="av-part-picker">
+              Explore the answer
+              <select
+                aria-label="Visual answer part"
+                value={active}
+                onChange={(e) => choosePart(Number(e.target.value))}
+              >
+                {guide.items.map((part, index) => (
+                  <option key={index} value={index}>
+                    {noun} {index + 1}: {part.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
             <ol
-              className={'av-picture-list ' + (steps ? 'sequence' : 'subjects')}
-              style={{ '--av-count': count }}
+              className={steps ? 'av-chapter-list sequence' : 'av-chapter-list'}
+              style={{ '--chapter-columns': count }}
               aria-label={steps ? 'Illustrated answer steps' : 'Illustrated answer subjects'}
             >
               {guide.items.map((part, index) => (
                 <li key={index}>
                   <button
-                    ref={(element) => {
-                      pictures.current[index] = element;
-                    }}
                     className={active === index ? 'selected' : ''}
                     aria-label={noun + ' ' + (index + 1) + ': ' + part.title}
                     aria-pressed={active === index}
                     aria-controls={regionId}
-                    onClick={() => select(index)}
+                    onClick={() => choosePart(index)}
+                    title={part.title}
                   >
-                    <span className="av-picture-number" aria-hidden="true">
-                      {String(index + 1).padStart(2, '0')}
-                    </span>
-                    <AnswerIllustrations part={part} />
-                    <span className="av-picture-title">{part.title}</span>
-                    <span className="av-picture-selection">
-                      {active === index ? 'Selected' : 'View this part'}
-                      <Icon name={active === index ? 'down' : 'arrow'} size={13} />
-                    </span>
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                    <Icon name={part.icon} size={16} />
+                    <span className="av-chapter-name">{part.title}</span>
                   </button>
                 </li>
               ))}
             </ol>
-            <div className="av-picture-caption">
-              <span>
-                <i aria-hidden="true" />
-                {guide.example ? 'Example illustration' : 'Illustrated guidance'}
-              </span>
-              <small>{multiple ? count + ' parts · choose where to start' : 'One part'}</small>
-            </div>
-          </div>
-          <div className="av-reading" id={regionId}>
-            <div className="av-reading-content" aria-live="polite" aria-atomic="true">
-              <span className="av-reading-position">
-                {noun} {active + 1}
-                {multiple ? ' of ' + count : ''}
-                {guide.example ? ' · Worked example' : ''}
-              </span>
-              <h3>{item.title}</h3>
-              <p>
-                <AnswerWords text={item.plain} />
-              </p>
-              {!!item.times?.length && (
-                <div className="av-time-labels" aria-label="Times mentioned in this answer">
-                  {item.times.map((time) => (
-                    <span key={time}>
-                      <Icon name="clock" size={15} />
-                      {time}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-            {item.plain !== item.body && (
-              <details className="av-original">
-                <summary>
-                  Original wording
-                  <Icon name="down" size={13} />
-                </summary>
-                <p>{item.body}</p>
-              </details>
-            )}
-            {multiple && (
-              <div className="av-navigation">
-                <button
-                  disabled={active === 0}
-                  aria-label={'Previous ' + noun.toLowerCase()}
-                  onClick={() => select(active - 1)}
-                >
-                  <Icon name="arrow" size={16} />
-                  Back
-                </button>
-                <button
-                  disabled={active === count - 1}
-                  aria-label={'Next ' + noun.toLowerCase()}
-                  onClick={() => select(active + 1)}
-                >
-                  Next {noun.toLowerCase()}
-                  <Icon name="arrow" size={16} />
-                </button>
-              </div>
-            )}
-          </div>
+          )}
         </div>
-      ) : (
-        <ol className="av-all-details">
-          {guide.items.map((part, index) => (
-            <li key={index}>
-              <div className="av-detail-picture">
-                <AnswerIllustrations part={part} small />
-                <span>{String(index + 1).padStart(2, '0')}</span>
-              </div>
-              <div>
-                <span>
-                  {noun} {index + 1}
-                  {guide.example ? ' · Worked example' : ''}
-                </span>
-                <h3>{part.title}</h3>
-                <p>{part.body}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
       )}
+      <div className="av-infographic" id={regionId}>
+        <figure className="av-illustration">
+          <span className="av-plate-index" aria-hidden="true">
+            {String(active + 1).padStart(2, '0')}
+          </span>
+          <AnswerIllustrations part={guide.grounded ? item : { scene: 'conversation' }} />
+          <figcaption>
+            {!guide.grounded
+              ? 'A NOTE FROM ALYA'
+              : guide.example
+                ? 'EXAMPLE ILLUSTRATION'
+                : steps
+                  ? 'ONE STEP AT A TIME'
+                  : 'THE IDEA, ILLUSTRATED'}
+          </figcaption>
+        </figure>
+        <section className="av-reading" aria-label="Selected visual explanation" tabIndex={0}>
+          <div className="av-reading-heading">
+            <span className="av-reading-position">
+              {guide.grounded ? noun + ' ' + (active + 1) + ' of ' + count : 'Alya’s reply'}
+              {pages.length > 1 ? ' · Page ' + (page + 1) + ' of ' + pages.length : ''}
+              {guide.example ? ' · Example' : ''}
+            </span>
+            <h3 title={guide.grounded ? item.title : undefined}>
+              {guide.grounded ? item.title : 'Here’s the answer.'}
+            </h3>
+            {!!item.times?.length && guide.grounded && (
+              <div className="av-time-labels" aria-label="Times mentioned in this answer">
+                {item.times.map((time) => (
+                  <span key={time}>
+                    <Icon name="clock" size={16} />
+                    {time}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="av-text-viewport" ref={viewport}>
+            <p className="av-page-copy" aria-live="polite" aria-atomic="true">
+              <AnswerWords text={pages[page].text} />
+            </p>
+            <p className="av-page-copy av-page-measure" ref={measure} aria-hidden="true" />
+          </div>
+          <span className="av-page-note">
+            {pages.length > 1 ? 'Read every page in this part.' : ' '}
+          </span>
+        </section>
+      </div>
+      <nav className="av-navigation" aria-label="Visual explanation navigation">
+        <button disabled={first} aria-label="Previous page" onClick={() => turnPage(-1)}>
+          <Icon name="arrow" size={16} />
+          Back
+        </button>
+        <span>
+          {active + 1} / {count}
+          <small>
+            {pages.length > 1 ? 'Page ' + (page + 1) + ' of ' + pages.length : 'At your pace'}
+          </small>
+        </span>
+        <button disabled={last} aria-label="Next page" onClick={() => turnPage(1)}>
+          Next
+          <Icon name="arrow" size={16} />
+        </button>
+      </nav>
       <footer className="av-source-footer">
         <span>
           <Icon name={guide.grounded ? 'book' : 'info'} size={14} />
-          {guide.grounded
-            ? 'Based on your linked company documents'
-            : 'No linked company source for this reply'}
+          {guide.grounded ? 'From your company documents' : 'No linked company source'}
         </span>
-        <details>
-          <summary>
-            Full answer
-            <Icon name="down" size={13} />
-          </summary>
-          <p>{guide.text}</p>
-        </details>
+        <button onClick={() => fullAnswer.current?.showModal()}>
+          Full answer
+          <Icon name="book" size={14} />
+        </button>
       </footer>
+      <dialog className="av-answer-dialog" ref={fullAnswer} aria-labelledby={dialogId}>
+        <header>
+          <div>
+            <span className="av-paper-label">ORIGINAL ANSWER</span>
+            <h2 id={dialogId}>The full picture.</h2>
+          </div>
+          <button
+            autoFocus
+            aria-label="Close full answer"
+            onClick={() => fullAnswer.current?.close()}
+          >
+            <Icon name="close" size={22} />
+          </button>
+        </header>
+        <p className="av-dialog-question">{question}</p>
+        <div className="av-dialog-text" tabIndex={0}>
+          {guide.text}
+        </div>
+        <p className="av-dialog-source">
+          {guide.grounded
+            ? 'Based on the linked company passages shown in chat.'
+            : 'This reply has no linked company source.'}
+        </p>
+      </dialog>
     </div>
   );
 }

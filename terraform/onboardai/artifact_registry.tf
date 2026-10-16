@@ -1,9 +1,10 @@
 # Images: <region>-docker.pkg.dev/<project>/onboardai/<web|api|tts>:<git-sha>
+# (staging: .../onboardai-staging/...). Each environment pushes to its own.
 resource "google_artifact_registry_repository" "onboardai" {
   location      = var.region
   repository_id = local.repository_id
   format        = "DOCKER"
-  description   = "OnboardAi Cloud Run images (web, api, tts), tagged with the git commit SHA."
+  description   = "${local.display_name} Cloud Run images (web, api, tts), tagged with the git commit SHA."
   labels        = merge(local.labels, { component = "images" })
 
   # Tags stay mutable (the API default) so a re-run of the deploy workflow for the

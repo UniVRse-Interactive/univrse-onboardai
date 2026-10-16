@@ -90,3 +90,25 @@ test('current server audio plays automatically and stopping it clears the mouth 
     fixture.restore();
   }
 });
+
+test('the opening plays before later audio is ready, and stop cancels the prefetched audio', async () => {
+  const fixture = mockPlayback();
+  try {
+    const playback = fixture.player.speak(
+      'Please contact HR. Bring the documents requested by your manager on your first day.',
+    );
+    assert.equal(JSON.parse(fixture.requests[0].options.body).text, 'Please contact HR.');
+    fixture.reply();
+    await new Promise(setImmediate);
+    assert.equal(fixture.sources[0].started, true);
+    assert.equal(fixture.requests.length, 2);
+    fixture.player.stop();
+    fixture.reply();
+    await playback;
+    assert.equal(fixture.requests[1].options.signal.aborted, true);
+    assert.equal(fixture.sources.length, 1);
+    assert.equal(fixture.player.getFrame().speaking, false);
+  } finally {
+    fixture.restore();
+  }
+});

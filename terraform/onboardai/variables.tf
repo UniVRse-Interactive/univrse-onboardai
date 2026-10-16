@@ -1,10 +1,21 @@
 variable "project_id" {
-  description = "GCP project ID that hosts the OnboardAi Cloud Run services."
+  description = "GCP project ID of the OnBoard AI project, which hosts the whole OnboardAi stack."
   type        = string
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
     error_message = "project_id must be a GCP project ID (6-30 characters: lowercase letters, digits, hyphens)."
+  }
+}
+
+variable "environment" {
+  description = "Stack this plan manages. production: workspace default, state onboardai/default.tfstate, the names it was applied with. staging: workspace staging, state onboardai/staging.tfstate, every resource ID suffixed -staging. A plan fails when this and the selected workspace disagree (environment.tf)."
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = contains(["production", "staging"], var.environment)
+    error_message = "environment must be production or staging."
   }
 }
 
@@ -21,7 +32,7 @@ variable "region" {
 variable "github_repository" {
   description = "owner/name of the repository whose deploy workflow may impersonate the deployer. Also used in the generated gh commands."
   type        = string
-  default     = "UniVRse-Interactive/univrse-onboardai"
+  default     = "UniVRse-Team/univrse-onboardai"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
@@ -43,7 +54,7 @@ variable "github_repository_id" {
 variable "github_repository_owner_id" {
   description = "Numeric GitHub ID of the repository owner (organisation)."
   type        = string
-  default     = "281514177"
+  default     = "283518526"
 
   validation {
     condition     = can(regex("^[0-9]+$", var.github_repository_owner_id))
@@ -79,15 +90,66 @@ variable "gemini_model" {
   }
 }
 
-variable "google_drive_folder_id" {
-  description = "GOOGLE_DRIVE_FOLDER_ID of the API service. Empty leaves its gh command out (the API then answers from the sample tasks)."
+# ---------------------------------------------------------------------------
+# Employee accounts (every environment, #45) and the form intake agent
+# (staging only, #30)
+# ---------------------------------------------------------------------------
+
+variable "intake_agent_location" {
+  description = "Vertex AI Agent Engine region the deploy workflow deploys the employee form intake agent to. deploy.yml carries the same value as INTAKE_AGENT_LOCATION (terraform test checks they match); change both together. Gemini itself is called on the global endpoint."
   type        = string
-  default     = ""
+  default     = "asia-southeast1"
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9_-]*$", var.google_drive_folder_id))
-    error_message = "google_drive_folder_id may only contain letters, digits, underscores and hyphens."
+    condition     = can(regex("^[a-z]+-[a-z]+[0-9]+$", var.intake_agent_location))
+    error_message = "intake_agent_location must be a region such as asia-southeast1."
   }
+}
+
+variable "db_password_version" {
+  description = "Version of the generated accounts database password. Terraform generates the password during apply without storing it in state, and sends it only when this number changes. Raise it by one to rotate: the database user, the password secret and the DATABASE_URL secret get the new value in the same apply. Redeploy the API afterwards (README, Employee accounts)."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.db_password_version >= 1 && floor(var.db_password_version) == var.db_password_version
+    error_message = "db_password_version must be a whole number of at least 1."
+  }
+}
+
+variable "intake_mcp_token_version" {
+  description = "Version of the generated INTAKE_MCP_TOKEN. Generated during apply, never stored in state, sent only when this number changes. Raise it by one to rotate, then redeploy (the API and the agent both read the latest version)."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.intake_mcp_token_version >= 1 && floor(var.intake_mcp_token_version) == var.intake_mcp_token_version
+    error_message = "intake_mcp_token_version must be a whole number of at least 1."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+
+variable "alert_emails" {
+  description = "Addresses that receive the OnboardAi alerts (monitoring.tf). One Cloud Monitoring email channel each."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.alert_emails) > 0 && alltrue([for e in var.alert_emails : can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", e))])
+    error_message = "alert_emails needs at least one address, and every entry must be an email address."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Tear down
+# ---------------------------------------------------------------------------
+
+variable "deletion_protection" {
+  description = "Keeps Terraform (and, for Firestore and Cloud SQL, anyone) from deleting the Cloud Run services and job, the Vertex AI Search data store and engine, the Firestore database and the accounts Cloud SQL instance and database. Leave it true. To tear a stack down, apply once with false, then destroy (README, Tear down)."
+  type        = bool
+  default     = true
 }
 
 # ---------------------------------------------------------------------------

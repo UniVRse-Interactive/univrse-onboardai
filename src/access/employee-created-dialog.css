@@ -1,0 +1,107 @@
+/* Result window after creating an employee. Light accounts-card palette. */
+.created-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(31, 48, 71, 0.6);
+}
+.created-dialog {
+  width: min(100%, 460px);
+  max-height: 100%;
+  overflow: auto;
+  padding: 24px;
+  background: #f4f8fb;
+  color: #1f3047;
+  border: 1px solid #a9bfce;
+  border-radius: 8px;
+  color-scheme: light;
+}
+.created-dialog:focus-visible,
+.created-dialog button:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 2px;
+}
+.created-dialog h3 {
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+.created-who {
+  margin: 4px 0 16px;
+  color: #3f566b;
+  font-size: 14px;
+}
+.created-values {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.created-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #c8d8e2;
+  border-radius: 6px;
+}
+.created-label {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #1d5f84;
+}
+.created-value {
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #1f3047;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.created-status {
+  min-height: 1.4em;
+  margin: 10px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d5f84;
+}
+.created-note {
+  margin: 8px 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #3f566b;
+}
+.created-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.created-dialog .account-primary {
+  background: #1d5f84;
+  border-color: #1d5f84;
+  color: #fff;
+}
+.created-dialog .account-secondary {
+  background: #f4f8fb;
+  color: #1f3047;
+}
+@media (max-width: 480px) {
+  .created-dialog {
+    padding: 18px;
+  }
+  .created-row {
+    grid-template-columns: 1fr;
+  }
+  .created-actions > button {
+    flex: 1 1 100%;
+  }
+}

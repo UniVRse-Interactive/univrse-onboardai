@@ -1,0 +1,258 @@
+import express from 'express';
+import { ChatError } from './chat-errors.mjs';
+import { accountErrors, autofillErrors } from './account-errors.mjs';
+import { companyKnowledgeRequestErrors } from './company-knowledge.mjs';
+import { readUploadedDocument } from './read-uploaded-document.mjs';
+import { workspaceLimits } from './workspace-limits.mjs';
+
+// HTTP routes for accounts (see docs/account-access.md for the contract):
+//   /api/auth/*           sign in, session, sign out, change password
+//   /api/me/*             the signed-in account's own data
+//   /api/hr/employees*    HR-only employee administration, including deletion
+//   /api/hr/employees/autofill  HR-only profile autofill (profile-autofill.mjs)
+//   /api/hr/departments*        HR-only departments and Employee ID prefixes (Settings)
+//   /api/hr/support-summaries   HR-only support summaries of employee accounts
+//   /api/hr/company-knowledge*  HR-only company knowledge uploads (company-knowledge.mjs)
+// Every route checks the browser's Origin like the saved-chat routes, answers
+// 503 ACCOUNTS_NOT_CONFIGURED without DATABASE_URL, is never cached, and sits
+// behind the app's POST rate limiter.
+export const accountCookie = 'onboardai_account';
+
+export function readCookie(req, name) {
+  const prefix = name + '=';
+  return req
+    .get('cookie')
+    ?.split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(prefix))
+    ?.slice(prefix.length);
+}
+
+// The same rule as the saved-chat routes: a browser Origin header, when sent,
+// must name this host.
+export function sameOrigin(req) {
+  const origin = req.get('origin');
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === req.host;
+  } catch {
+    return false;
+  }
+}
+
+export function accountCookieOptions(req, env) {
+  return {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: req.secure || env.NODE_ENV === 'production',
+    path: '/api',
+  };
+}
+
+export function sendAccountError(res, error) {
+  res.status(error.status).json({ code: error.code, error: error.message, ...error.details });
+}
+
+// profileAutofill: the service from createProfileAutofill, or null (503
+// AUTOFILL_NOT_CONFIGURED). chatMemory(): the saved-chat store holding account
+// chats (deletion and support summaries). companyKnowledge: the service from
+// createCompanyKnowledge (the HR library).
+export function mountAccountRoutes(
+  app,
+  { env, accounts, profileAutofill = null, chatMemory = null, companyKnowledge = null },
+) {
+  const setSession = (req, res, result) =>
+    res.cookie(accountCookie, result.token, {
+      ...accountCookieOptions(req, env),
+      maxAge: result.sessionMs,
+    });
+  const clearSession = (req, res) => res.clearCookie(accountCookie, accountCookieOptions(req, env));
+
+  function guard(req, res, next) {
+    res.set('Cache-Control', 'no-store');
+    if (!sameOrigin(req)) throw accountErrors.crossOrigin();
+    if (!accounts) throw accountErrors.notConfigured();
+    next();
+  }
+  // Requires a usable session. allowPasswordChange lets an account with a
+  // forced password change through (session, change password, sign out only).
+  const signedIn =
+    ({ allowPasswordChange = false, role = null } = {}) =>
+    async (req, res, next) => {
+      const token = readCookie(req, accountCookie);
+      if (token === undefined) throw accountErrors.authRequired();
+      const session = await accounts.session(token);
+      if (!session) {
+        clearSession(req, res);
+        throw accountErrors.sessionExpired();
+      }
+      if (session.account.mustChangePassword && !allowPasswordChange)
+        throw accountErrors.passwordChangeRequired();
+      if (role && session.account.role !== role) throw accountErrors.hrRequired();
+      req.accountSession = session;
+      next();
+    };
+  const hr = signedIn({ role: 'hr' });
+
+  const auth = express.Router();
+  auth.post('/sign-in', async (req, res) => {
+    const previous = readCookie(req, accountCookie);
+    const result = await accounts.signIn(req.body, previous);
+    setSession(req, res, result);
+    res.json({ account: result.account });
+  });
+  auth.get('/session', async (req, res) => {
+    const token = readCookie(req, accountCookie);
+    if (token === undefined) return res.json({ account: null });
+    const session = await accounts.session(token);
+    if (!session) {
+      clearSession(req, res);
+      throw accountErrors.sessionExpired();
+    }
+    res.json({ account: session.account });
+  });
+  auth.post('/sign-out', async (req, res) => {
+    await accounts.signOut(readCookie(req, accountCookie));
+    clearSession(req, res);
+    res.status(204).end();
+  });
+  auth.post('/password', signedIn({ allowPasswordChange: true }), async (req, res) => {
+    const result = await accounts.changePassword(req.accountSession, req.body);
+    setSession(req, res, result);
+    res.json({ account: result.account });
+  });
+
+  const me = express.Router();
+  me.get('/profile', signedIn(), async (req, res) => {
+    res.json({ profile: await accounts.myProfile(req.accountSession.account) });
+  });
+
+  const employees = express.Router();
+  // Reads profile fields from an uploaded document; saves nothing.
+  employees.post('/employees/autofill', hr, async (req, res) => {
+    if (!profileAutofill) throw autofillErrors.notConfigured();
+    await profileAutofill.handle(req, res);
+  });
+  employees.get('/employees', hr, async (req, res) => {
+    res.json({ employees: await accounts.listEmployees() });
+  });
+  // { profile } in; { employee, temporaryPassword } out. The server assigns the
+  // Employee ID and the temporary password; this response is the only place
+  // the password ever appears (never cached: the guard sets no-store).
+  employees.post('/employees', hr, async (req, res) => {
+    res.status(201).json(await accounts.createEmployee(req.accountSession, req.body));
+  });
+  employees.get('/employees/:id', hr, async (req, res) => {
+    res.json({ employee: await accounts.getEmployee(req.params.id) });
+  });
+  employees.put('/employees/:id/profile', hr, async (req, res) => {
+    res.json({
+      employee: await accounts.replaceProfile(req.accountSession, req.params.id, req.body),
+    });
+  });
+  employees.post('/employees/:id/password', hr, async (req, res) => {
+    res.json(await accounts.resetPassword(req.accountSession, req.params.id, req.body));
+  });
+  employees.put('/employees/:id/status', hr, async (req, res) => {
+    res.json(await accounts.setStatus(req.accountSession, req.params.id, req.body));
+  });
+  // Deletes the employee's Firestore data, then the account. Safe to retry.
+  employees.delete('/employees/:id', hr, async (req, res) => {
+    await accounts.deleteEmployee(req.accountSession, req.params.id, {
+      eraseChats: (owner) => chatMemory().eraseOwner(owner),
+    });
+    res.status(204).end();
+  });
+  employees.get('/support-summaries', hr, async (req, res) => {
+    res.json({
+      employees: await accounts.supportSummaries((owner) => chatMemory().supportSummary(owner)),
+    });
+  });
+
+  // HR Settings: the departments and their Employee ID prefixes.
+  employees.get('/departments', hr, async (req, res) => {
+    res.json({ departments: await accounts.listDepartments() });
+  });
+  employees.post('/departments', hr, async (req, res) => {
+    res.status(201).json(await accounts.createDepartment(req.accountSession, req.body));
+  });
+  employees.patch('/departments/:id', hr, async (req, res) => {
+    res.json(await accounts.updateDepartment(req.accountSession, req.params.id, req.body));
+  });
+
+  // The company knowledge library: uploaded files, stored company-wide as text.
+  const library = () => {
+    if (!companyKnowledge) throw accountErrors.notConfigured();
+    return companyKnowledge;
+  };
+  employees.get('/company-knowledge', hr, async (req, res) => {
+    res.json(await library().snapshot());
+  });
+  // A raw file body (application/octet-stream, X-File-Name), read into text
+  // like a guest upload. Only the text and metadata are stored.
+  const rawFile = express.raw({ type: 'application/octet-stream', limit: workspaceLimits.bytes });
+  employees.post(
+    '/company-knowledge/documents',
+    hr,
+    (req, res, next) => {
+      if (!companyKnowledge) throw accountErrors.notConfigured();
+      if (!req.is('application/octet-stream')) throw companyKnowledgeRequestErrors.fileRequired();
+      // The topic is checked before the file is read.
+      req.knowledgeTopic = companyKnowledge.describe(req.query);
+      rawFile(req, res, (error) =>
+        next(
+          error?.type === 'entity.too.large'
+            ? new ChatError(413, 'FILE_TOO_LARGE', 'Each file must be 5 MB or smaller.')
+            : error,
+        ),
+      );
+    },
+    async (req, res) => {
+      let name;
+      try {
+        name = decodeURIComponent(req.get('X-File-Name') || '');
+      } catch {
+        throw new ChatError(400, 'FILE_NAME_INVALID', 'Choose a file with a valid name.');
+      }
+      const file = await readUploadedDocument(name, req.body);
+      if (req.aborted || res.destroyed) return;
+      const added = await companyKnowledge.add(
+        req.accountSession.account.id,
+        req.knowledgeTopic,
+        file,
+        new Date(),
+      );
+      if (!res.destroyed) res.status(added.duplicate || added.replaced ? 200 : 201).json(added);
+    },
+  );
+  employees.delete('/company-knowledge/documents/:id', hr, async (req, res) => {
+    await library().remove(req.params.id);
+    res.status(204).end();
+  });
+
+  for (const [path, router] of [
+    ['/api/auth', auth],
+    ['/api/me', me],
+    ['/api/hr', employees],
+  ]) {
+    const mounted = express.Router();
+    mounted.use(guard, router);
+    mounted.use(() => {
+      throw accountErrors.notFound();
+    });
+    mounted.use((error, req, res, next) => {
+      if (res.headersSent) return next(error);
+      if (error instanceof ChatError) return sendAccountError(res, error);
+      // Only the error's name and code, never request data or values.
+      console.warn(
+        'Account request failed: ' +
+          JSON.stringify({ name: error?.name, code: String(error?.code || 'UNKNOWN') }),
+      );
+      res.status(500).json({
+        code: 'ACCOUNT_REQUEST_FAILED',
+        error: 'The account request could not be completed. Please try again.',
+      });
+    });
+    app.use(path, mounted);
+  }
+}

@@ -1,7 +1,9 @@
 # The three services exist before the first deploy so the deployer can be
 # granted Cloud Run Developer on each one instead of on the project. Terraform
 # owns their shape (identity, resources, scaling, probe, ingress, public access);
-# the deploy workflow owns the image, environment variables, secrets and traffic.
+# the deploy workflow owns the image, environment variables, secrets, Cloud SQL
+# connections and traffic.
+# Staging's three (onboardai-<service>-staging) have the same shape.
 resource "google_cloud_run_v2_service" "service" {
   for_each = local.services
 
@@ -12,7 +14,7 @@ resource "google_cloud_run_v2_service" "service" {
   labels      = merge(local.labels, { component = each.key })
 
   # Terraform refuses to delete a service while this is true (see README, Tear down).
-  deletion_protection = true
+  deletion_protection = var.deletion_protection
 
   template {
     service_account                  = google_service_account.runtime[each.key].email
@@ -71,6 +73,10 @@ resource "google_cloud_run_v2_service" "service" {
       template[0].annotations,
       template[0].containers[0].image,
       template[0].containers[0].env,
+      # The deploy workflow's --set-cloudsql-instances (staging's api, #30),
+      # which Cloud Run stores as a Cloud SQL volume mounted at /cloudsql.
+      template[0].volumes,
+      template[0].containers[0].volume_mounts,
       # A manual rollback pins traffic to an older revision; apply must not undo it.
       traffic,
     ]

@@ -1,7 +1,14 @@
 import { supportRequest, teachingFormats } from './answer-style-preferences.mjs';
+import {
+  answerNotFound,
+  busyMessages,
+  chatBusy,
+  feedbackInvalid,
+  supportSettingsInvalid,
+} from './chat-errors.mjs';
 
 const emptyFormats = () => ({ standard: 0, steps: 0, example: 0, brief: 0 });
-export function employeeOverview({ turns, requests, feedback, humanHelpRequests }) {
+export function employeeOverview({ turns, conversations, requests, feedback, humanHelpRequests }) {
   const requested = Object.entries(requests)
     .filter(([, count]) => count > 0)
     .map(([key, count]) => {
@@ -15,7 +22,7 @@ export function employeeOverview({ turns, requests, feedback, humanHelpRequests 
   let interaction = !turns
     ? 'The employee’s onboarding summary will take shape as they use Alya.'
     : requested.length
-      ? `During onboarding conversations, the employee requested ${requested.join(' and ')}.`
+      ? `The employee requested ${requested.join(' and ')}.`
       : 'The employee has used Alya for onboarding guidance without requesting a different explanation so far.';
   if (feedback.helpful)
     interaction += ` They marked ${feedback.helpful} ${feedback.helpful === 1 ? 'answer' : 'answers'} helpful.`;
@@ -23,6 +30,11 @@ export function employeeOverview({ turns, requests, feedback, humanHelpRequests 
     interaction += ` They marked ${feedback.unclear} ${feedback.unclear === 1 ? 'answer' : 'answers'} still unclear.`;
   if (!feedback.helpful && !feedback.unclear && turns)
     interaction += ' Their feedback on the explanations is still to be confirmed.';
+  if (turns && conversations)
+    interaction =
+      `Across ${turns} answered ${turns === 1 ? 'question' : 'questions'} in ${conversations} ${conversations === 1 ? 'conversation' : 'conversations'}, ` +
+      interaction[0].toLowerCase() +
+      interaction.slice(1);
   const recommendations = [];
   if (requests.steps)
     recommendations.push('Offer one manageable action at a time, with clear numbered steps.');
@@ -85,7 +97,13 @@ export function summariseSupport(events, { recording = true, version = 0, update
   const last = events.length ? Math.max(...events.map((e) => e.updated)) : null;
   const ranked = Object.entries(formats).sort((a, b) => b[1] - a[1]);
   const mostUsed = turns >= 3 && ranked[0][1] > ranked[1][1] ? ranked[0][0] : null;
-  const overview = employeeOverview({ turns, requests, feedback, humanHelpRequests });
+  const overview = employeeOverview({
+    turns,
+    conversations: conversations.size,
+    requests,
+    feedback,
+    humanHelpRequests,
+  });
   return {
     recording,
     version,
@@ -107,7 +125,17 @@ export function summariseSupport(events, { recording = true, version = 0, update
   };
 }
 
-export function createSupportStore(db, { owned, isBusy, error, retention }) {
+// The only accepted settings change: { recording: true | false }.
+export const isSupportSettings = (patch) =>
+  Boolean(patch) &&
+  typeof patch === 'object' &&
+  !Array.isArray(patch) &&
+  Object.keys(patch).length === 1 &&
+  typeof patch.recording === 'boolean';
+export const feedbackRatings = ['helpful', 'unclear', null];
+
+// SQLite support observations, written inside the conversation store's transactions.
+export function createSupportStore(db, { owned, isBusy, retention }) {
   db.exec(`CREATE TABLE IF NOT EXISTS support_preferences (
     owner TEXT PRIMARY KEY, recording INTEGER NOT NULL DEFAULT 1, revision INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL
   ); CREATE TABLE IF NOT EXISTS support_events (
@@ -161,18 +189,7 @@ export function createSupportStore(db, { owned, isBusy, error, retention }) {
     );
   }
   function settings(owner, patch) {
-    if (
-      !patch ||
-      typeof patch !== 'object' ||
-      Array.isArray(patch) ||
-      Object.keys(patch).length !== 1 ||
-      typeof patch.recording !== 'boolean'
-    )
-      throw error(
-        400,
-        'SUPPORT_SETTINGS_INVALID',
-        'Choose whether to update your support summary.',
-      );
+    if (!isSupportSettings(patch)) throw supportSettingsInvalid();
     preference(owner);
     db.prepare(
       'UPDATE support_preferences SET recording=?,revision=revision+1,updated=? WHERE owner=?',
@@ -181,15 +198,14 @@ export function createSupportStore(db, { owned, isBusy, error, retention }) {
   }
   function message(owner, id, messageId) {
     const raw = owned(owner, id);
-    if (isBusy(id)) throw error(409, 'CHAT_BUSY', 'Wait for the answer before updating feedback.');
+    if (isBusy(id)) throw chatBusy(busyMessages.feedback);
     const messages = JSON.parse(raw.messages);
     const found = messages.find((m) => m.id === messageId && m.role === 'assistant');
-    if (!found) throw error(404, 'ANSWER_NOT_FOUND', 'This answer is unavailable.');
+    if (!found) throw answerNotFound();
     return { messages, found };
   }
   const feedback = db.transaction((owner, id, messageId, rating) => {
-    if (!['helpful', 'unclear', null].includes(rating))
-      throw error(400, 'FEEDBACK_INVALID', 'Choose Helpful or Still unclear.');
+    if (!feedbackRatings.includes(rating)) throw feedbackInvalid();
     const { messages, found } = message(owner, id, messageId);
     found.feedback = rating;
     db.prepare('UPDATE conversations SET messages=?,updated=? WHERE owner=? AND id=?').run(

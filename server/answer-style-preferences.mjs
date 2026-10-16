@@ -1,5 +1,5 @@
 // Teaching formats and handbook subjects, not medical or ability profiles.
-// Actual policy content is always retrieved from the existing Drive documents.
+// Actual policy content is always retrieved from the company document search.
 const subjectHints = [
   { id: 'welcome', terms: ['vision', 'mission', 'values', 'welcome'] },
   { id: 'first-day', terms: ['hours', 'dress', 'wear', 'tshirt', 'shirt', 'attire', 'workspace'] },
@@ -71,7 +71,10 @@ export function supportRequest(question) {
   )
     return { format: 'example', reason: 'example-request' };
   if (
-    /\b(?:i (?:don't|dont|do not|didn't|didnt|cannot|can't) (?:understand|get it)|i(?:'m| am) confused|this is (?:too much|confusing)|break it down|explain (?:it |that |this )?(?:again|more simply|in simple words)|step[ -]by[ -]step|one (?:step|task) at a time|saya (?:tak|tidak) faham|langkah demi langkah)\b/.test(
+    /\b(?:i (?:don't|dont|do not|didn't|didnt|cannot|can't) (?:understand|get it)|i(?:'m| am) confused|this is (?:too much|confusing)|break (?:it|this|that|the task) down|explain (?:it |that |this )?(?:again|more simply|in simple words)|step[ -]by[ -]step|(?:need|want|use|give me|explain (?:it|this|that) in) (?:smaller|small|simpler) steps|one (?:step|task) at a time|saya (?:tak|tidak) faham|langkah demi langkah)\b/.test(
+      text,
+    ) &&
+    !/\b(?:don't|dont|do not|never) (?:need|want|use|give me) (?:smaller|small|simpler) steps\b/.test(
       text,
     )
   )

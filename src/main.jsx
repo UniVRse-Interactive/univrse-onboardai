@@ -1,6 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import './styles/theme.css';
 import OnboardingWebsite from './portal/OnboardingWebsite';
+import './styles/workspace-palette.css';
 
 // Old preview URLs now lead to the current website sections.
 const path = window.location.pathname;

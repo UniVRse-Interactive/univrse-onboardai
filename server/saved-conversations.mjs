@@ -4,17 +4,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import { normaliseLearning } from './answer-style-preferences.mjs';
 import { createSupportStore } from './employee-support-tracking.mjs';
+import { ChatError, busyMessages, chatBusy, chatLimit, chatNotFound } from './chat-errors.mjs';
 
-export class ChatError extends Error {
-  constructor(status, code, message) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
+export { ChatError };
 export const sessionHash = (token) => createHash('sha256').update(token).digest('hex');
 const retention = 30 * 24 * 60 * 60 * 1000;
 
+// Saved chats in a local SQLite file: the default when FIRESTORE_DATABASE_ID is
+// unset (see chat-store.mjs). Same promise-based interface as the Firestore
+// store. The turn lock is in-process, so this store serves one server process.
 export function createChatMemory(path = resolve('.cache/chat/conversations.sqlite')) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const checkpointer = SqliteSaver.fromConnString(path),
@@ -31,17 +29,11 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
   const support = createSupportStore(db, {
     owned,
     isBusy: (id) => busy.has(id),
-    error: (...args) => new ChatError(...args),
     retention,
   });
   function owned(owner, id) {
     const row = db.prepare('SELECT * FROM conversations WHERE id=? AND owner=?').get(id, owner);
-    if (!row || row.updated < Date.now() - retention)
-      throw new ChatError(
-        404,
-        'CHAT_NOT_FOUND',
-        'This saved chat is unavailable or has expired. Start a new chat.',
-      );
+    if (!row || row.updated < Date.now() - retention) throw chatNotFound();
     return row;
   }
   const remove = db.transaction((id) => {
@@ -65,12 +57,7 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
       .all(owner);
   }
   function create(owner) {
-    if (list(owner).length >= 30)
-      throw new ChatError(
-        409,
-        'CHAT_LIMIT',
-        'You have 30 saved chats. Delete an older chat before starting another.',
-      );
+    if (list(owner).length >= 30) throw chatLimit();
     const id = randomUUID(),
       now = Date.now();
     db.prepare('INSERT INTO conversations(id,owner,title,created,updated) VALUES(?,?,?,?,?)').run(
@@ -100,28 +87,14 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
   }
   function erase(owner, id) {
     owned(owner, id);
-    if (busy.has(id))
-      throw new ChatError(
-        409,
-        'CHAT_BUSY',
-        'Wait for this answer to finish before deleting its chat.',
-      );
+    if (busy.has(id)) throw chatBusy(busyMessages.erase);
     remove(id);
     db.pragma('wal_checkpoint(TRUNCATE)');
   }
-  function acquire(owner, id) {
-    const row = read(owner, id);
-    if (busy.has(id))
-      throw new ChatError(
-        409,
-        'CHAT_BUSY',
-        'This chat is already preparing an answer. Please wait.',
-      );
-    busy.add(id);
-    return { row, release: () => busy.delete(id) };
-  }
-  const save = db.transaction((owner, id, messages, learning) => {
+  // Appends a completed turn's messages to the visible history.
+  const save = db.transaction((owner, id, added, learning) => {
     const row = owned(owner, id),
+      messages = [...JSON.parse(row.messages), ...added],
       title = messages.find((m) => m.role === 'user')?.text.slice(0, 65) || row.title;
     db.prepare(
       'UPDATE conversations SET messages=?,title=?,updated=?,learning=? WHERE id=? AND owner=?',
@@ -157,14 +130,31 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
     if (answer?.role === 'assistant' && answer.id && answer.requestId && answer.result)
       support.turn(owner, id, answer.id, question?.text || '', answer.result);
   });
+  // A turn holds the chat until release(); other turns, deletion and feedback
+  // on it get CHAT_BUSY meanwhile.
+  function acquire(owner, id) {
+    const row = read(owner, id);
+    if (busy.has(id)) throw chatBusy(busyMessages.answer);
+    busy.add(id);
+    let held = true;
+    return {
+      row,
+      save: async (messages, learning) => save(owner, id, messages, learning),
+      release: async () => {
+        if (held) busy.delete(id);
+        held = false;
+      },
+    };
+  }
+  const eraseOwner = db.transaction((owner) => {
+    const chats = db.prepare('SELECT id FROM conversations WHERE owner=?').all(owner);
+    if (chats.some((chat) => busy.has(chat.id))) throw chatBusy(busyMessages.eraseOwner);
+    for (const chat of chats) remove(chat.id);
+    db.prepare('DELETE FROM support_preferences WHERE owner=?').run(owner);
+  });
   function setLearning(owner, id, learning) {
     owned(owner, id);
-    if (busy.has(id))
-      throw new ChatError(
-        409,
-        'CHAT_BUSY',
-        'Wait for the answer to finish before changing learning settings.',
-      );
+    if (busy.has(id)) throw chatBusy(busyMessages.learning);
     const clean = normaliseLearning(learning);
     db.prepare('UPDATE conversations SET learning=?,updated=? WHERE id=? AND owner=?').run(
       JSON.stringify(clean),
@@ -176,21 +166,24 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
   }
   return {
     checkpointer,
-    list,
-    create,
-    read,
-    erase,
-    acquire,
-    save,
-    setLearning,
-    supportSummary: (owner) => {
+    list: async (owner) => list(owner),
+    create: async (owner) => create(owner),
+    read: async (owner, id) => read(owner, id),
+    erase: async (owner, id) => erase(owner, id),
+    // Removes one owner's chats, checkpoints and support records together, or
+    // nothing while one is busy (guest removal; Firestore has the same method).
+    eraseOwner: async (owner) => eraseOwner(owner),
+    acquire: async (owner, id) => acquire(owner, id),
+    setLearning: async (owner, id, learning) => setLearning(owner, id, learning),
+    supportSummary: async (owner) => {
       cleanup();
       return support.summary(owner);
     },
-    supportSettings: support.settings,
-    feedback: support.feedback,
-    voiceEvent: support.voice,
-    humanHelp: support.humanHelp,
-    close: () => db.close(),
+    supportSettings: async (owner, patch) => support.settings(owner, patch),
+    feedback: async (owner, id, messageId, rating) =>
+      support.feedback(owner, id, messageId, rating),
+    voiceEvent: async (owner, id, messageId) => support.voice(owner, id, messageId),
+    humanHelp: async (owner, id, messageId) => support.humanHelp(owner, id, messageId),
+    close: async () => db.close(),
   };
 }

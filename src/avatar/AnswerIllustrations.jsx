@@ -2,11 +2,11 @@ import React from 'react';
 
 // Original SVG illustrations: no generated policy screenshots, stock people,
 // or decorative charts with invented values. All instructions are in HTML.
-const ink = '#302936',
-  paper = '#fffaf0',
-  plum = '#82769e',
-  pink = '#d44f8f',
-  mint = '#bad0a3';
+const ink = '#2d4365',
+  paper = '#f7fafd',
+  plum = '#6e93ae',
+  pink = '#256a91',
+  mint = '#b8dfe3';
 function Person({ x = 0, y = 0, shirt = plum }) {
   return (
     <g transform={`translate(${x} ${y})`}>
@@ -51,7 +51,7 @@ function Garment({ kind, ripped }) {
       <g>
         <path
           d="m-35 0 70 0-5 54h-24L0 22l-6 32h-24Z"
-          fill="#b49dc6"
+          fill="#8dafbc"
           stroke={ink}
           strokeWidth="2"
         />
@@ -91,7 +91,7 @@ function Garment({ kind, ripped }) {
 }
 export default function AnswerIllustrations({ part, small = false }) {
   const scene = part.scene;
-  const sourceTime = part.times?.[0]?.match(/(\d{1,2})(?:[.:](\d{2}))?\s*(AM|PM)/i);
+  const sourceTime = part.times?.[0]?.match(/(\d{1,2})(?:[.:](\d{2}))?\s*([AP])\.?M\.?/i);
   const hourAngle = sourceTime
     ? (Number(sourceTime[1]) % 12) * 30 + Number(sourceTime[2] || 0) * 0.5
     : null;
@@ -107,7 +107,7 @@ export default function AnswerIllustrations({ part, small = false }) {
       <ellipse cx="162" cy="224" rx="106" ry="12" fill="#ded2c8" />
       {scene === 'document' && (
         <>
-          <path d="M77 65h158v142H77Z" fill="#cdbfda" stroke={ink} strokeWidth="2" />
+          <path d="M77 65h158v142H77Z" fill="#c9d9da" stroke={ink} strokeWidth="2" />
           <path d="M77 65v142h158" stroke={ink} strokeWidth="3" />
           <Paper x={103} y={46} rotate={-7} />
           <rect
@@ -170,7 +170,7 @@ export default function AnswerIllustrations({ part, small = false }) {
           )}
           <path
             d="M185 96h82q10 0 10 10v39q0 10-10 10h-19v14l-19-14h-44q-10 0-10-10v-39q0-10 10-10Z"
-            fill="#e8b3cd"
+            fill="#f5dba2"
             stroke={ink}
             strokeWidth="2"
           />
@@ -217,7 +217,7 @@ export default function AnswerIllustrations({ part, small = false }) {
           <path d="M74 92h163" stroke={ink} strokeWidth="2" />
           <rect x="74" y="55" width="163" height="36" fill={plum} />
           <path d="M110 39v32m91-32v32" stroke={ink} strokeWidth="5" strokeLinecap="round" />
-          <path d="M95 114h119m-119 26h89m-89 26h105m-105 26h75" stroke="#baa9c6" strokeWidth="7" />
+          <path d="M95 114h119m-119 26h89m-89 26h105m-105 26h75" stroke="#aac3ca" strokeWidth="7" />
           <circle cx="232" cy="175" r="49" fill={mint} stroke={ink} strokeWidth="2" />
           <circle cx="232" cy="175" r="38" stroke={ink} strokeWidth="2" />
           <path
@@ -326,7 +326,7 @@ export default function AnswerIllustrations({ part, small = false }) {
           <path d="M74 96h175" stroke={ink} strokeWidth="2" />
           <circle cx="86" cy="85" r="3" fill={pink} />
           <circle cx="99" cy="85" r="3" fill={mint} />
-          <rect x="91" y="112" width="60" height="45" rx="4" fill="#dcd0e7" />
+          <rect x="91" y="112" width="60" height="45" rx="4" fill="#e4e9df" />
           <path d="m99 122 22 15 22-15m-44 26 14-10m29 10-13-10" stroke={ink} strokeWidth="2" />
           <path
             d="M166 121h62m-62 15h48m-48 15h61"
@@ -355,7 +355,7 @@ export default function AnswerIllustrations({ part, small = false }) {
             stroke={ink}
             strokeWidth="2"
           />
-          <rect x="51" y="81" width="65" height="100" rx="4" fill="#d6c9e0" />
+          <rect x="51" y="81" width="65" height="100" rx="4" fill="#d9e3df" />
           <path
             d="m66 119 18-10 18 10v21l-18 10-18-10Zm0 0 18 10 18-10m-18 10v21"
             stroke={ink}
@@ -378,7 +378,7 @@ export default function AnswerIllustrations({ part, small = false }) {
           <path d="m157 111 25 15 28-15m14 0 22 15 22-15" stroke={ink} strokeWidth="2" />
           <path
             d="M177 191h82q9 0 14 13l8 13q3 12-9 11l-27-17h-40l-24 17q-14 1-11-12l-1-12q1-13 8-13Z"
-            fill="#e9b5ce"
+            fill="#f2d28b"
             stroke={ink}
             strokeWidth="2"
           />
