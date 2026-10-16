@@ -7,6 +7,7 @@ import { createApp } from '../../server/api-routes.mjs';
 import { createAccountService } from '../../server/account-service.mjs';
 import { createAccountStore } from '../../server/account-store.mjs';
 import { createProfileStore } from '../../server/employee-profiles.mjs';
+import { createProfileAutofill } from '../../server/profile-autofill.mjs';
 import { createFirestoreChatMemory } from '../../server/firestore-chat-memory.mjs';
 import { createConversationService } from '../../server/gemini-chat-workflow.mjs';
 import { hashPassword, verifyPassword } from '../../server/password-hashing.mjs';
@@ -140,12 +141,16 @@ export class Browser {
 }
 
 // Starts the app with accounts on. mode is the AI_MODE; `accounts: false`
-// starts it without the accounts service (DATABASE_URL unset).
+// starts it without the accounts service (DATABASE_URL unset). `autofill`, when
+// given, is passed to createProfileAutofill (model, fetchImpl, timeoutMs, ...)
+// with its log lines kept in `logs`; without it the app builds its default
+// autofill service, whose Vertex AI requests fail.
 export async function startAccountsApp({
   mode = 'document-search',
   env: extraEnv = {},
   accounts: enabled = true,
   storageTimeoutMs = 300,
+  autofill = undefined,
 } = {}) {
   const database = await createTestDatabase();
   const firestore = new FakeFirestore();
@@ -164,14 +169,27 @@ export async function startAccountsApp({
     models: fakeModels(),
     retrieve: fakeRetrieve,
   });
+  const getAccessToken = async () => 'synthetic-token';
+  const fetchImpl = async () => {
+    throw new Error('No Google request is expected in account tests.');
+  };
   const app = createApp({
     env,
     accountService: enabled ? accounts : null,
     conversationService,
-    getAccessToken: async () => 'synthetic-token',
-    fetchImpl: async () => {
-      throw new Error('No Google request is expected in account tests.');
-    },
+    getAccessToken,
+    fetchImpl,
+    ...(autofill
+      ? {
+          profileAutofill: createProfileAutofill({
+            env,
+            log,
+            getAccessToken,
+            fetchImpl,
+            ...autofill,
+          }),
+        }
+      : {}),
   });
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');

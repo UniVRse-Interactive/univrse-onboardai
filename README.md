@@ -43,6 +43,8 @@ Accounts are optional. They need Docker for PostgreSQL and the Firestore emulato
 
 HR then creates employee accounts with temporary passwords; employees choose their own password at first sign-in. `npm run hr:reset-password` recovers an HR account (asks for the HR ID and the new password twice). With these settings the server refuses to start without the emulator, so local test personal data never reaches a cloud database. Without `DATABASE_URL` the app runs as before, with guest access only. See [Account access](docs/account-access.md) for roles, rules and the API.
 
+With `GOOGLE_CLOUD_PROJECT` also set (and Application Default Credentials, as for Gemini chat), HR can pre-fill the "Add employee account" and "Edit profile" forms from a CV, offer letter or details form (PDF, DOCX, TXT, Markdown, JPG or PNG, up to 5 MB). Gemini on Vertex AI reads the file; HR reviews the values before saving. The file is sent to Google, but the server keeps no copy and logs no file name, content or values. See [Profile autofill](docs/account-access.md#profile-autofill).
+
 To serve a production build locally:
 
 ```powershell

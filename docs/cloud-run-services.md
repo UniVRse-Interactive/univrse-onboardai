@@ -32,7 +32,7 @@ The `tts` image carries the Kokoro model (downloaded at build time by `npm run v
 browser -> web -> api -> tts
 ```
 
-The browser only ever talks to the web origin. `/api/*` is a same-origin request to web, which forwards it to api; the api calls tts only for `/api/voice`. This keeps the `alya_session` cookie first-party (it is `httpOnly`, `sameSite=strict`, path `/api`), so it keeps working and the api's same-origin check still makes sense. The proxy passes the api's `Set-Cookie` headers back unchanged, streams the response, and answers 502 or 504 if the api is down or too slow.
+The browser only ever talks to the web origin. `/api/*` is a same-origin request to web, which forwards it to api; the api calls tts only for `/api/voice`. This keeps the `alya_session` cookie first-party (it is `httpOnly`, `sameSite=strict`, path `/api`), so it keeps working and the api's same-origin check still makes sense. The proxy passes the api's `Set-Cookie` headers back unchanged, streams the response, and answers 502 or 504 if the api is down or too slow. Request bodies are limited to 64 KiB, except raw file uploads (`application/octet-stream`) to `/api/guest-workspace/documents` and `/api/hr/employees/autofill`, which may be 5 MiB; a larger autofill file gets the api's own `413 AUTOFILL_FILE_TOO_LARGE` answer.
 
 ## Trusted proxy hops
 

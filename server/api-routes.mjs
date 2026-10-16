@@ -14,6 +14,7 @@ import { sessionHash } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
 import { mountGuestWorkspaceRoutes } from './guest-workspace-routes.mjs';
 import { vertexConfig, vertexGenerateContentUrl, createAccessTokenProvider } from './vertex-ai.mjs';
+import { createProfileAutofill } from './profile-autofill.mjs';
 import { ChatError } from './chat-errors.mjs';
 import { accountErrors } from './account-errors.mjs';
 import { accountSettings } from './account-settings.mjs';
@@ -52,6 +53,9 @@ export function createApp({
   // Accounts service (account-service.mjs). By default it is built when
   // DATABASE_URL is set; pass null to turn accounts off.
   accountService = undefined,
+  // Profile autofill service (profile-autofill.mjs). By default it uses Vertex
+  // AI through fetchImpl and getAccessToken; pass null to turn it off.
+  profileAutofill = undefined,
 } = {}) {
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
@@ -66,6 +70,10 @@ export function createApp({
         ? createAccountService(createAccountBackends(settings))
         : null;
   const vertexToken = getAccessToken || createAccessTokenProvider();
+  const autofill =
+    profileAutofill !== undefined
+      ? profileAutofill
+      : createProfileAutofill({ env, fetchImpl, getAccessToken: vertexToken });
   // Company passages for gemini-chat and document-search: Vertex AI Search, or
   // the sample guide when VERTEX_SEARCH_ENGINE_ID is unset.
   const retrieve = createCompanyRetriever({ env, fetchImpl, getAccessToken: vertexToken });
@@ -126,7 +134,7 @@ export function createApp({
     store: guestStore,
     companyRetrieve: retrieve,
   });
-  mountAccountRoutes(app, { env, accounts });
+  mountAccountRoutes(app, { env, accounts, profileAutofill: autofill });
   // Both stores close asynchronously (Firestore client or SQLite file), as do
   // the account database pool and profile client.
   app.locals.closeChat = async () => {
@@ -177,6 +185,9 @@ export function createApp({
 
       // HR and employee sign-in is available (DATABASE_URL is set).
       accounts: Boolean(accounts),
+      // HR can pre-fill profile forms from a document: accounts are on and
+      // GOOGLE_CLOUD_PROJECT is set (credentials are not probed).
+      profileAutofill: Boolean(accounts && autofill?.available),
     });
   });
 

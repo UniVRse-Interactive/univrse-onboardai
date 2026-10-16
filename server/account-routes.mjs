@@ -1,11 +1,12 @@
 import express from 'express';
 import { ChatError } from './chat-errors.mjs';
-import { accountErrors } from './account-errors.mjs';
+import { accountErrors, autofillErrors } from './account-errors.mjs';
 
 // HTTP routes for accounts (see docs/account-access.md for the contract):
 //   /api/auth/*           sign in, session, sign out, change password
 //   /api/me/*             the signed-in account's own data
 //   /api/hr/employees*    HR-only employee administration
+//   /api/hr/employees/autofill  HR-only profile autofill (profile-autofill.mjs)
 // Every route checks the browser's Origin like the saved-chat routes, answers
 // 503 ACCOUNTS_NOT_CONFIGURED without DATABASE_URL, is never cached, and sits
 // behind the app's POST rate limiter.
@@ -46,7 +47,9 @@ export function sendAccountError(res, error) {
   res.status(error.status).json({ code: error.code, error: error.message, ...error.details });
 }
 
-export function mountAccountRoutes(app, { env, accounts }) {
+// profileAutofill: the service from createProfileAutofill, or null (503
+// AUTOFILL_NOT_CONFIGURED).
+export function mountAccountRoutes(app, { env, accounts, profileAutofill = null }) {
   const setSession = (req, res, result) =>
     res.cookie(accountCookie, result.token, {
       ...accountCookieOptions(req, env),
@@ -114,6 +117,11 @@ export function mountAccountRoutes(app, { env, accounts }) {
   });
 
   const employees = express.Router();
+  // Reads profile fields from an uploaded document; saves nothing.
+  employees.post('/employees/autofill', hr, async (req, res) => {
+    if (!profileAutofill) throw autofillErrors.notConfigured();
+    await profileAutofill.handle(req, res);
+  });
   employees.get('/employees', hr, async (req, res) => {
     res.json({ employees: await accounts.listEmployees() });
   });

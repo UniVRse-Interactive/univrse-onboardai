@@ -80,6 +80,17 @@ function fieldProblem(value, rule) {
   return [null, text];
 }
 
+// One optional value checked against its field's rule, for callers that take
+// fields one at a time (profile autofill): { value } with the trimmed text, ''
+// when empty, or { problem } with one of the PROFILE_INVALID problem codes.
+export function checkProfileValue(group, name, value) {
+  const fields = Object.hasOwn(profileSchema, group) ? profileSchema[group] : {};
+  if (!Object.hasOwn(fields, name)) return { problem: 'unknown' };
+  const rule = fields[name];
+  const [problem, text] = fieldProblem(value, { ...rule, required: false });
+  return problem ? { problem } : { value: text };
+}
+
 // Returns the stored form (every field present, trimmed, '' when empty), or
 // throws 400 PROFILE_INVALID with details.fields = [{ field, problem }].
 export function validateProfile(input) {

@@ -73,3 +73,46 @@ export const accountErrors = {
     new AccountError(400, 'STATUS_INVALID', 'Choose a status of active or disabled.'),
   notFound: () => new AccountError(404, 'NOT_FOUND', 'This account action is unavailable.'),
 };
+
+// POST /api/hr/employees/autofill. Fixed messages only: provider text, file
+// names and document content never reach the browser.
+export const autofillErrors = {
+  fileInvalid: () =>
+    new AccountError(
+      400,
+      'AUTOFILL_FILE_INVALID',
+      'This file could not be read. Upload a PDF, Word (.docx), text, Markdown, JPG or PNG file that opens without a password.',
+    ),
+  tooLarge: () =>
+    new AccountError(413, 'AUTOFILL_FILE_TOO_LARGE', 'The file must be 5 MB or smaller.'),
+  nothingFound: () =>
+    new AccountError(
+      422,
+      'AUTOFILL_NOTHING_FOUND',
+      'No employee details were found in this file. Fill in the form yourself.',
+    ),
+  notConfigured: () =>
+    new AccountError(
+      503,
+      'AUTOFILL_NOT_CONFIGURED',
+      'Filling in the form from a document is not set up on this server. Fill in the form yourself.',
+    ),
+  unavailable: () =>
+    new AccountError(
+      503,
+      'AUTOFILL_UNAVAILABLE',
+      'Filling in the form from a document is temporarily unavailable. Try again shortly or fill in the form yourself.',
+    ),
+  rateLimited: () =>
+    new AccountError(
+      429,
+      'AUTOFILL_RATE_LIMITED',
+      'Too many documents are being read right now. Wait a moment, then try again.',
+    ),
+  timeout: () =>
+    new AccountError(
+      504,
+      'AUTOFILL_TIMEOUT',
+      'Reading the document took too long. Try again, or fill in the form yourself.',
+    ),
+};

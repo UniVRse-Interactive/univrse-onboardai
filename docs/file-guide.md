@@ -143,6 +143,7 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | `server/account-errors.mjs`      | Account error codes and messages                                                                |
 | `server/password-hashing.mjs`    | scrypt password hashes and password rules                                                       |
 | `server/employee-profiles.mjs`   | Profile validation and `employeeProfiles/{accountId}` in Firestore                              |
+| `server/profile-autofill.mjs`    | Profile autofill: reads profile fields from an uploaded document with Gemini; saves nothing     |
 | `server/database-migrations.mjs` | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                       |
 | `server/migrations/`             | Plain SQL migrations                                                                            |
 | `scripts/migrate-database.mjs`   | `npm run db:migrate`                                                                            |
@@ -152,4 +153,4 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 
 ## Uploaded company guidance
 
-See [Account and workspace details](account-access.md). `server/guest-workspace-routes.mjs` scopes guest uploads, conversations and reports to an opaque browser cookie. `server/guest-workspace-store.mjs` stores documents and individual employee identities in separate private SQLite storage. `server/read-uploaded-document.mjs` validates files and bounds worker execution; `server/uploaded-document-worker.mjs` extracts PDF/DOCX/text content. `server/workspace-company-knowledge.mjs` combines the company document search (Vertex AI Search, when `VERTEX_SEARCH_ENGINE_ID` is set) with owner-scoped uploads, which `server/uploaded-document-search.mjs` ranks locally. Guest workspaces always use their own SQLite file, also when saved chats use Firestore.
+See [Account and workspace details](account-access.md). `server/guest-workspace-routes.mjs` scopes guest uploads, conversations and reports to an opaque browser cookie. `server/guest-workspace-store.mjs` stores documents and individual employee identities in separate private SQLite storage. `server/read-uploaded-document.mjs` validates files and bounds worker execution; `server/uploaded-document-worker.mjs` extracts PDF/DOCX/text content (profile autofill reuses both, cutting long text to the limit instead of rejecting it). `server/workspace-company-knowledge.mjs` combines the company document search (Vertex AI Search, when `VERTEX_SEARCH_ENGINE_ID` is set) with owner-scoped uploads, which `server/uploaded-document-search.mjs` ranks locally. Guest workspaces always use their own SQLite file, also when saved chats use Firestore.
