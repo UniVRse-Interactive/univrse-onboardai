@@ -1,8 +1,8 @@
 # Firestore database in Native mode for the API (contract v2:
 # FIRESTORE_DATABASE_ID). Production's is (default); a project has only one, so
 # staging's is the named database onboardai-staging. The api account reads and
-# writes it with roles/datastore.user (identity.tf); staging's grant carries an
-# IAM condition that limits it to onboardai-staging.
+# writes it with roles/datastore.user (identity.tf), whose IAM condition limits
+# it to its own environment's database.
 #
 # Two guards keep the data while var.deletion_protection is true (the default):
 # - delete_protection_state: Firestore itself refuses to delete the database,
@@ -19,9 +19,12 @@ resource "google_firestore_database" "default" {
   delete_protection_state = var.deletion_protection ? "DELETE_PROTECTION_ENABLED" : "DELETE_PROTECTION_DISABLED"
   deletion_policy         = var.deletion_protection ? "ABANDON" : "DELETE"
 
-  # Point-in-time recovery stays off (the default) because it bills 7 days of
-  # version storage. Set point_in_time_recovery_enablement once the data
-  # stored here must be recoverable.
+  # Point-in-time recovery (#56): production holds real account profiles and
+  # chats, so it keeps 7 days of versions (reads, exports and clones at any
+  # minute of the last 7 days; without it, the last hour only). It bills that
+  # version storage (PITR storage, USD 0.1846 per GiB-month in asia-southeast1).
+  # Staging keeps the default, off. Switching it is an in-place update.
+  point_in_time_recovery_enablement = local.is_production ? "POINT_IN_TIME_RECOVERY_ENABLED" : "POINT_IN_TIME_RECOVERY_DISABLED"
 
   depends_on = [google_project_service.required]
 }

@@ -135,18 +135,23 @@ resource "google_discovery_engine_search_engine" "docs" {
   deletion_policy = var.deletion_protection ? "PREVENT" : "DELETE"
 }
 
-# --- Search access of a non-production api -------------------------------------
+# --- Search access of the api --------------------------------------------------
 
-# Staging's api account searches its own engine through a grant on that engine
+# Each api account searches its own engine through a grant on that engine
 # alone (engines carry their own IAM policy), instead of a Discovery Engine role
-# on the project. It holds no Discovery Engine role anywhere else, so it cannot
-# search production's engine or read production's data store. If the service
-# ever stopped honouring engine-level grants for search, staging search would
-# fail with 403; it would not fall back to production's data.
-# Production keeps its project-level roles/discoveryengine.viewer (identity.tf)
-# so its plan stays unchanged.
+# on the project. It holds no Discovery Engine role anywhere else, so neither
+# api can search the other environment's engine or read its data store. If the
+# service ever stopped honouring engine-level grants for search, search would
+# fail with 403; it would not fall back to the other environment's data.
+#
+# Staging since #20, production since #56 (which removed production's
+# project-level roles/discoveryengine.viewer). count stays, always 1, so
+# staging's grant keeps the address it was applied with ([0]) and its state
+# needs no move. Production's first apply of #56 runs in two steps (README,
+# Order of the #56 change): this grant first, so the api can still search
+# when its project-level role goes.
 resource "google_discovery_engine_search_engine_iam_member" "api_searches_engine" {
-  count = local.is_production ? 0 : 1
+  count = 1
 
   project       = var.project_id
   location      = google_discovery_engine_search_engine.docs.location

@@ -9,20 +9,20 @@ same code: **production** (deployed from `main`, described below) and
 [Staging](#staging)). Each has its own state in Cloud Storage (see
 [State](#state)).
 
-| Creates                                | Name                                                                                                                                          |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, discoveryengine, firestore, storage, monitoring, sqladmin         |
-| Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image                                                                   |
-| Cloud Run services (placeholder image) | `onboardai-web`, `onboardai-api`, `onboardai-tts`, all public (`allUsers` invoker)                                                            |
-| Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                                                                                 |
-| Deployer service account (no key)      | `onboardai-deployer`                                                                                                                          |
-| Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                                                                            |
-| Project roles of `onboardai-api-run`   | `roles/aiplatform.user`, `roles/discoveryengine.viewer`, `roles/datastore.user`, `roles/cloudsql.client` (on `onboardai-db` only)             |
-| Documents bucket                       | `<project>-onboardai-docs`: uniform access, public access prevention, versioning                                                              |
-| Vertex AI Search (`global`)            | data store `onboardai-docs` (layout parser, 500-token chunks), Enterprise engine `onboardai-search`                                           |
-| Firestore                              | `(default)`, Native mode, `asia-southeast1`, delete protection on                                                                             |
-| Employee accounts (#45)                | Cloud SQL `onboardai-db`, secrets `onboardai-db-password` and `onboardai-database-url`, migration job `onboardai-db-migrate` and its log view |
-| Cloud Monitoring                       | one email channel per `alert_emails` entry; alerts on 5xx (api, tts) and api p95 latency                                                      |
+| Creates                                | Name                                                                                                                                                                                      |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, discoveryengine, firestore, storage, monitoring, sqladmin                                                     |
+| Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image                                                                                                               |
+| Cloud Run services (placeholder image) | `onboardai-web`, `onboardai-api`, `onboardai-tts`, all public (`allUsers` invoker)                                                                                                        |
+| Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                                                                                                                             |
+| Deployer service account (no key)      | `onboardai-deployer`                                                                                                                                                                      |
+| Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                                                                                                                        |
+| Project roles of `onboardai-api-run`   | `roles/aiplatform.user`, `roles/datastore.user` (on `(default)` only), `roles/cloudsql.client` (on `onboardai-db` only)                                                                   |
+| Documents bucket                       | `<project>-onboardai-docs`: uniform access, public access prevention, versioning                                                                                                          |
+| Vertex AI Search (`global`)            | data store `onboardai-docs` (layout parser, 500-token chunks), Enterprise engine `onboardai-search`; `onboardai-api-run` searches it through `roles/discoveryengine.viewer` on the engine |
+| Firestore                              | `(default)`, Native mode, `asia-southeast1`, delete protection on, point-in-time recovery (7 days)                                                                                        |
+| Employee accounts (#45)                | Cloud SQL `onboardai-db`, secrets `onboardai-db-password` and `onboardai-database-url`, migration job `onboardai-db-migrate` and its log view                                             |
+| Cloud Monitoring                       | one email channel per `alert_emails` entry; alerts on 5xx (api, tts), api p95 latency and failing uptime checks (`/web-health`, `/api/health` through web)                                |
 
 **Who owns what.** Terraform owns each service's shape: identity, CPU, memory,
 scaling, concurrency, timeout, startup probe, ingress and public access, and
@@ -195,6 +195,21 @@ The data store's document processing (layout parser; layout-based chunks of at
 most 500 tokens that carry their ancestor headings) cannot change after
 creation. Different chunking means a new data store and a fresh import.
 
+`onboardai-api-run` reaches only its own data (#56): `roles/datastore.user`
+with an IAM condition on the `(default)` database, and
+`roles/discoveryengine.viewer` on the engine `onboardai-search`, not on the
+project. Staging's api is limited the same way to its own database and engine
+([Isolation inside the shared project](#isolation-inside-the-shared-project)).
+
+Production's Firestore database keeps point-in-time recovery (PITR, #56): any
+minute of the last 7 days can be read, exported
+(`gcloud firestore export --snapshot-time=...`) or cloned into a new database
+(`gcloud firestore databases clone --snapshot-time=...`). Without it only the
+last hour can. It bills the retained versions as PITR storage, USD 0.1846 per
+GiB-month in `asia-southeast1` (the metric
+`firestore.googleapis.com/storage/pitr_storage_bytes` shows its size): cents a
+month for a database of a few hundred MiB. Staging has it off.
+
 ## Alerts
 
 Cloud Monitoring emails every address in `alert_emails` (one email channel
@@ -206,10 +221,25 @@ each) when:
   service. `onboardai-web` is left out because it proxies the API.
 - **Latency**: the p95 of `onboardai-api` (`run.googleapis.com/request_latencies`)
   over 5 minutes is above 20 s. A streamed answer counts until the stream ends.
+- **Uptime** (#56): an uptime check fails from at least two of its three
+  locations for 5 minutes. Two HTTPS checks run on `onboardai-web`'s `run.app`
+  host every 5 minutes, from Asia Pacific, Europe and the USA (three
+  locations, the fewest allowed), with a 30 s timeout: `GET /web-health`, and
+  `GET /api/health`, which web proxies to the api, so it keeps working if the
+  api stops being public. Each must answer 2xx with `"ok":true`. One incident
+  per check; failed probes are logged to Cloud Logging.
 
 A service scaled to zero sends no data, and missing data never fires an alert;
-an open incident closes after 30 minutes without data. Two conditions keep the
-alerting cost low. To change the addresses, edit `alert_emails` and apply.
+an open incident closes after 30 minutes without data. The uptime checks run
+whatever the services' scale.
+
+Cost: three conditions, and 25,920 check executions a month per check (four
+checks across both stacks: 103,680), inside Cloud Monitoring's 1 million free
+executions a month (USD 0.30 per 1,000 beyond). Each check is also a request
+to web (and to the api) about every 100 s: milliseconds of request-based
+billing, inside the Cloud Run free tier. It also keeps both warm, so fewer
+users meet a cold start. To change the addresses, edit `alert_emails` and
+apply.
 
 ## Employee accounts and database migrations
 
@@ -239,13 +269,13 @@ The Cloud SQL Admin API is in production's `local.apis`; staging's state
 enabled it for #30 and now only forgets it (`removed` block in `main.tf`, the
 API stays on).
 
-| Account                        | Gets                                             | On                                                         |
-| ------------------------------ | ------------------------------------------------ | ---------------------------------------------------------- |
-| `onboardai-api-run[-staging]`  | `roles/cloudsql.client`                          | The project, with an IAM condition: its own instance only  |
-|                                | Secret Manager Secret Accessor                   | Its own `onboardai-database-url[-staging]`                 |
-|                                | `roles/datastore.user` (already held: Firestore) | Production: the project. Staging: `onboardai-staging` only |
-| `onboardai-deployer[-staging]` | Cloud Run Developer (update the image, execute)  | Its own migration job                                      |
-|                                | Logs View Accessor                               | Its own migration log view                                 |
+| Account                        | Gets                                             | On                                                                               |
+| ------------------------------ | ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `onboardai-api-run[-staging]`  | `roles/cloudsql.client`                          | The project, with an IAM condition: its own instance only                        |
+|                                | Secret Manager Secret Accessor                   | Its own `onboardai-database-url[-staging]`                                       |
+|                                | `roles/datastore.user` (already held: Firestore) | The project, with an IAM condition: its own database only (production since #56) |
+| `onboardai-deployer[-staging]` | Cloud Run Developer (update the image, execute)  | Its own migration job                                                            |
+|                                | Logs View Accessor                               | Its own migration log view                                                       |
 
 Nobody but project owners reads the bare password secret.
 
@@ -329,9 +359,18 @@ Migrations are forward-only and a service rollback does not undo them.
   gcloud sql backups list --instance=onboardai-db --project=project-65a9b676-abdb-4393-bc1
   ```
 
-  Staging has daily backups only (`gcloud sql backups restore`). Firestore has
-  no point-in-time recovery enabled; a Firestore migration must be undone by a
-  new one.
+  Staging has daily backups only (`gcloud sql backups restore`). Production's
+  Firestore has point-in-time recovery over the last 7 days (#56): clone
+  `(default)` as it was just before the migration into a new database, check
+  it, and copy the affected documents back:
+
+  ```sh
+  gcloud firestore databases clone --source-database='projects/project-65a9b676-abdb-4393-bc1/databases/(default)' \
+    --snapshot-time='2026-10-16T09:00:00Z' --destination-database=onboardai-restore-1 --project=project-65a9b676-abdb-4393-bc1
+  ```
+
+  The snapshot time must be a whole minute. Staging's Firestore has no
+  point-in-time recovery; a Firestore migration there is undone by a new one.
 
 ### Rotate the database password
 
@@ -444,9 +483,13 @@ while serving), scale to zero, and listen on port 8080.
 - **web**: static files and a streaming proxy. Measured locally: 21 MiB idle,
   53 MiB peak. 512Mi is the gen2 minimum. The 300 s timeout is above the proxy's
   290 s upstream timeout, so the proxy answers a slow API with its own 504.
-- **api**: one instance, because conversations are SQLite on local disk
-  (until they move to Firestore). Measured locally: 61 MiB idle (demo mode).
-  1Gi leaves room for the SQLite file, which Cloud Run keeps in memory.
+- **api**: one instance. Saved chats are in Firestore (#9), but the guest
+  workspace store (`server/guest-workspace-store.mjs`: guest workspaces, their
+  employees, documents, chats and checkpoints) is a SQLite file on each
+  instance's local disk, wiped on restart, and the per-IP limit on POST and
+  PATCH requests is counted per instance; a second instance would split both.
+  Lifting the cap is #58. Measured locally: 61 MiB idle (demo mode). 1Gi
+  leaves room for the SQLite file, which Cloud Run keeps in memory.
 - **tts**: Kokoro q8 (82M) runs a whole answer, up to the model's 512 tokens, in
   one ONNX pass. Measured on linux/arm64 (container cgroup peak): 340 MiB after
   the model loads in about 0.6 s; 508 MiB for 100 characters, 591 for 150, 652
@@ -493,13 +536,15 @@ show "Memory limit exceeded".
   database's password and `DATABASE_URL` (#45), generated by Terraform and
   written with write-only arguments, so neither is in state, the repository
   or a log. `onboardai-api-run` holds `roles/aiplatform.user`,
-  `roles/discoveryengine.viewer` (includes
-  `discoveryengine.servingConfigs.search`), `roles/datastore.user` and
+  `roles/datastore.user` (IAM condition: the `(default)` database only) and
   `roles/cloudsql.client` (IAM condition: `onboardai-db` only) on the project,
-  and Secret Accessor on `onboardai-database-url`. Those are the only
-  project-level bindings in this module besides staging's intake agent roles;
-  the web and tts accounts and the deployer hold none. The API has no access
-  to the documents bucket.
+  `roles/discoveryengine.viewer` (includes
+  `discoveryengine.servingConfigs.search`) on the engine `onboardai-search`
+  only, and Secret Accessor on `onboardai-database-url`. Its project roles are
+  the only project-level bindings in this module besides staging's intake
+  agent roles; the web and tts accounts and the deployer hold none. The API
+  has no access to the documents bucket, staging's database or staging's
+  engine.
 - The repository is public, so its Actions logs are public too, and they show
   the project ID and the service URLs. Neither is a credential. To hide the
   project ID, make `GCP_PROJECT_ID` a repository secret instead and change
@@ -545,16 +590,16 @@ production and `staging` deploys staging, through the same
 | Documents bucket           | `<project>-onboardai-docs`                        | `<project>-onboardai-docs-staging`                                        |
 | Data store / engine        | `onboardai-docs` / `onboardai-search`             | `onboardai-docs-staging` / `onboardai-search-staging`                     |
 | Firestore database         | `(default)`                                       | `onboardai-staging` (a project has one `(default)`)                       |
-| Alerts                     | `OnboardAi: ...`                                  | `OnboardAi [staging]: ...`, watching the staging services                 |
+| Alerts and uptime checks   | `OnboardAi: ...`                                  | `OnboardAi [staging]: ...`, watching the staging services                 |
 | Labels                     | `app`, `managed-by`, `component`                  | the same plus `environment = staging`                                     |
 | Deploys from / GitHub vars | `main` / repository variables                     | `staging` / variables of the GitHub environment `staging`                 |
 
 Staging has production's shape: the same Cloud Run settings (one set of
 `*_RUN_FLAGS` serves both), Enterprise search with the same document
-processing, Native-mode Firestore, the same bucket and repository policies, and
-the same alerts. API enablement and the Discovery Engine service agent are
-project-wide and stay in production's state; staging relies on them and never
-manages them.
+processing, Native-mode Firestore (point-in-time recovery off), the same bucket
+and repository policies, and the same alerts and uptime checks. API enablement
+and the Discovery Engine service agent are project-wide and stay in
+production's state; staging relies on them and never manages them.
 
 ### Production's one-time state move
 
@@ -636,6 +681,9 @@ into, and pushes to, both branches.
 
 ### Isolation inside the shared project
 
+The two api accounts are limited to their own data the same way (production
+since #56), so neither reaches the other stack's database or engine.
+
 - **Deploy identity.** The staging pool's provider accepts only the deploy
   workflow on `refs/heads/staging` (repository and owner pinned by numeric ID,
   push or workflow_dispatch). `onboardai-deployer-staging` holds Cloud Run
@@ -654,23 +702,25 @@ into, and pushes to, both branches.
   project with an IAM condition, `resource.name` equal to
   `projects/<project>/databases/onboardai-staging` (by project ID or number).
   Firestore evaluates database-level IAM conditions, so it cannot read or
-  write `(default)`.
-- **Vertex AI Search.** `onboardai-api-run-staging` holds no Discovery Engine
-  role on the project. It holds `roles/discoveryengine.viewer` on the engine
-  `onboardai-search-staging` only (engines carry their own IAM policy), so it
-  cannot search `onboardai-search` or read `onboardai-docs`. If engine-level
-  grants were not honoured for search, staging search would fail with 403 and
-  never reach production's data. Check it once after the first staging deploy
-  with a chat that needs the documents.
-- **Gemini.** `roles/aiplatform.user` on the project, unconditioned, as in
-  production. The same role lets it query the intake agent on Agent Engine.
+  write `(default)`. `onboardai-api-run` holds the same role with the
+  condition on `projects/<project>/databases/(default)` (title
+  `(default) database only`), so it cannot read or write `onboardai-staging`.
+- **Vertex AI Search.** Neither api account holds a Discovery Engine role on
+  the project. Each holds `roles/discoveryengine.viewer` on its own engine
+  only (`onboardai-search-staging`, `onboardai-search`; engines carry their own
+  IAM policy), so neither can search the other's engine or read its data
+  store. If engine-level grants were not honoured for search, search would
+  fail with 403 and never reach the other stack's data.
+- **Gemini.** `roles/aiplatform.user` on the project, unconditioned, in both
+  stacks: Vertex AI has no narrower grant. The same role lets staging's api
+  query the intake agent on Agent Engine.
 - **Cloud SQL.** `roles/cloudsql.client` on the project with an IAM condition,
   `resource.name` equal to `projects/<project>/instances/onboardai-db-staging`
   and `resource.type` `sqladmin.googleapis.com/Instance`, so it can connect to
   the staging accounts instance and no other.
 
-After the staging apply, the API's own view of its grants can be checked
-without changing anything:
+After an apply, each API's project-level grants can be checked without
+changing anything (`onboardai-api-run@` for production):
 
 ```sh
 gcloud projects get-iam-policy project-65a9b676-abdb-4393-bc1 \
@@ -680,16 +730,51 @@ gcloud projects get-iam-policy project-65a9b676-abdb-4393-bc1 \
 
 ### Production follow-ups
 
-Production's grants are wider than staging's and were left unchanged so that
-its plan stays empty:
-
-- `onboardai-api-run` holds `roles/datastore.user` and
-  `roles/discoveryengine.viewer` on the whole project, unconditioned, so it can
-  reach staging's database and search staging's engine. Narrow it the same way
-  (a condition on `(default)`, a grant on `onboardai-search`); each is a
-  replace of a production IAM binding, so plan and apply it on its own.
+- Done in #56: `onboardai-api-run` held `roles/datastore.user` and
+  `roles/discoveryengine.viewer` on the whole project, unconditioned, so it
+  could reach staging's database and search staging's engine. It is now
+  narrowed like staging's api (a condition on `(default)`, a grant on
+  `onboardai-search`); see [Order of the #56 change](#order-of-the-56-change).
 - The GitHub environment `production` has no protection rules; consider
   limiting it to `main`.
+
+### Order of the #56 change
+
+Staging's plan only adds its two uptime checks and their alert; its IAM and
+Firestore do not change. Production's plan replaces `roles/datastore.user`
+with the conditioned binding (`+/-`: the new binding is created before the old
+one is removed, both in the project policy), adds the engine grant, removes
+the project-level `roles/discoveryengine.viewer`, turns on Firestore
+point-in-time recovery (an in-place update) and adds the uptime checks and
+their alert.
+
+Terraform cannot order the removal of the project-level search role after the
+creation of the engine grant: the role leaves a `for_each` map, and such a
+destroy never waits for another resource's create (adding `depends_on` makes
+it run first). The engine grant also sits in a different IAM policy, which
+takes effect on its own schedule. So production is applied in two steps, and
+the api can search throughout:
+
+1. Apply the `staging` workspace (plan reviewed by the user; 3 to add). Within
+   about 10 minutes both `OnboardAi [staging]` checks show as passing under
+   Monitoring, Uptime checks.
+2. Production, step 1, the engine grant alone (plan: 1 to add):
+
+   ```sh
+   terraform apply -target='google_discovery_engine_search_engine_iam_member.api_searches_engine[0]'
+   ```
+
+3. Wait at least 7 minutes: Google documents that an IAM change usually takes
+   effect within 2 minutes but can take 7 or more.
+4. Production, step 2, everything else (plan: 4 to add, 1 to change, 2 to
+   destroy): `terraform apply`.
+5. Check production: a chat question answered from the company documents
+   (search), a signed-in chat that saves and reloads (Firestore), and the next
+   deploy's migration step (the migration job uses the same Firestore grant).
+   If Firestore answers `PERMISSION_DENIED`, restore the old binding at once
+   with
+   `gcloud projects add-iam-policy-binding project-65a9b676-abdb-4393-bc1 --member=serviceAccount:onboardai-api-run@project-65a9b676-abdb-4393-bc1.iam.gserviceaccount.com --role=roles/datastore.user --condition=None`
+   and investigate before the next apply.
 
 ### The intake agent (staging)
 
@@ -755,7 +840,9 @@ What it adds:
   (`images_to_keep`), roughly as much storage as production's.
 - **Cloud Storage**: the staging documents bucket, with 30 days of old
   versions.
-- **Cloud Monitoring**: two more alert conditions.
+- **Cloud Monitoring**: three more alert conditions, and two uptime checks
+  (51,840 executions a month, inside the free 1 million together with
+  production's).
 - **Cloud SQL** (`onboardai-db-staging`, runs all month): about USD 13 a
   month in `asia-southeast1`: `db-f1-micro` USD 0.0147 an hour (USD 10.73 for
   730 hours), 10 GiB SSD at USD 0.238 per GiB-month (USD 2.38), and backups at

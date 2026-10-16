@@ -546,6 +546,17 @@ run "migrations_run_everywhere_and_the_agent_only_on_staging" {
     error_message = "The migration step updates the job to this commit's api image, executes it with --wait, prints its lines, then fails with ::error:: if the execution failed (an incomplete log only warns)."
   }
 
+  # #54: the step reads the job before it updates it, and a job it cannot read
+  # (not applied yet, or no access) stops the step with an error that names
+  # the missing apply and gcloud's own first error line, before anything runs.
+  assert {
+    condition = (
+      [for m in regexall("gcloud run jobs (describe|update|execute) ", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run) : m[0]] == ["describe", "update", "execute"] &&
+      can(regex("^set -euo pipefail\\njob=\"onboardai-db-migrate\\$NAME_SUFFIX\"\\nview=\"onboardai-db-migrate\\$NAME_SUFFIX\"\\nif ! gcloud run jobs describe \"\\$job\" --project=\"\\$GCP_PROJECT_ID\" --region=\"\\$GCP_REGION\" [^\\n]*> /dev/null 2> \"\\$RUNNER_TEMP/migrate-describe\\.log\"; then\\n  echo \"::error::Cannot read the migration job \\$job\\. Apply terraform/onboardai \\(\\$DEPLOY_ENV\\) first; it creates the job and the deployer's access to it\\. Nothing was deployed\\.\"\\n  echo \"gcloud: \\$\\(grep -m 1 '\\^ERROR' \"\\$RUNNER_TEMP/migrate-describe\\.log\" \\|\\| head -n 1 \"\\$RUNNER_TEMP/migrate-describe\\.log\"\\)\"\\n  exit 1\\nfi\\ngcloud run jobs update \"\\$job\" ", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run))
+    )
+    error_message = "Before gcloud run jobs update, the migration step must run gcloud run jobs describe on the job and, if that fails, print the ::error:: naming the missing terraform/onboardai apply and gcloud's first error line, then exit 1."
+  }
+
   # The log: this execution only, through the stack's log view, retried a
   # bounded number of times, and only the runner's lines are printed.
   assert {

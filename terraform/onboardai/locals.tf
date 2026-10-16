@@ -29,59 +29,58 @@ locals {
     "sqladmin.googleapis.com",
   ]
 
-  # Project-level roles of the api runtime account, the only project-level
+  # Project-level roles of the api runtime account. With the intake agent's
+  # two (staging only, intake_agent.tf) they are the only project-level
   # bindings in this module (tests/onboardai.tftest.hcl enforces it).
   #
-  # production: the three roles it was applied with, none conditioned. They
-  # reach every Firestore database and every Vertex AI Search engine in the
-  # project, staging's included (README, Staging: production follow-ups).
-  # Since #45 also Cloud SQL Client, only on its own accounts instance (IAM
-  # condition below; a new binding, so it starts with its condition).
-  #
-  # staging: Gemini on the project (Vertex AI has no narrower grant; the same
-  # role lets it query the intake agent on Agent Engine and delete the agent's
-  # sessions), Firestore only through the IAM condition below, Cloud SQL Client
-  # only on its own accounts instance (IAM condition below), and no Discovery
-  # Engine role on the project at all: it searches through a grant on its own
-  # engine (vertex_ai_search.tf), so it cannot search production's engine.
+  # Every environment holds the same three (#56 narrowed production to
+  # staging's pattern):
+  # - Gemini on the project, unconditioned: Vertex AI has no narrower grant.
+  #   The same role lets staging's api query the intake agent on Agent Engine
+  #   and delete the agent's sessions.
+  # - Firestore only in its own database (IAM condition below).
+  # - Cloud SQL Client only on its own accounts instance (IAM condition below).
+  # No Discovery Engine role on the project: each api searches through a grant
+  # on its own engine (vertex_ai_search.tf), so neither can search the other
+  # environment's engine.
   api_project_roles = {
     for role, purpose in {
-      "roles/aiplatform.user"        = "Gemini generateContent on Vertex AI"
-      "roles/discoveryengine.viewer" = "Vertex AI Search: discoveryengine.servingConfigs.search"
-      "roles/datastore.user"         = "Firestore: read and write documents"
-      "roles/cloudsql.client"        = "Cloud SQL: the Cloud Run connection to the accounts instance"
+      "roles/aiplatform.user" = "Gemini generateContent on Vertex AI"
+      "roles/datastore.user"  = "Firestore: read and write documents"
+      "roles/cloudsql.client" = "Cloud SQL: the Cloud Run connection to the accounts instance"
     } : role => purpose
     if !contains(local.api_project_roles_left_out, role)
   }
 
-  # staging searches through its engine grant; Cloud SQL only where accounts run.
-  api_project_roles_left_out = concat(
-    local.is_production ? [] : ["roles/discoveryengine.viewer"],
-    local.employee_accounts ? [] : ["roles/cloudsql.client"],
-  )
+  # Cloud SQL only where accounts run.
+  api_project_roles_left_out = local.employee_accounts ? [] : ["roles/cloudsql.client"]
 
-  # IAM conditions on api_project_roles, by role. Never on a binding production
-  # already holds: adding a condition replaces a binding. Production's
-  # roles/cloudsql.client is new (#45), so it is created with its condition.
-  # - roles/datastore.user (staging): Firestore evaluates resource.name for
-  #   database-level IAM conditions, so it reaches the staging database and not
-  #   (default). Both spellings of the project are accepted; each one names the
-  #   staging database only.
+  # IAM conditions on api_project_roles, by role. Adding a condition to a
+  # binding that already exists replaces it; api_runtime (identity.tf) creates
+  # the conditioned binding before it removes the old one
+  # (create_before_destroy).
+  # - roles/datastore.user: Firestore evaluates resource.name for
+  #   database-level IAM conditions, so each api reaches its own database only:
+  #   production (default), staging onboardai-staging. Both spellings of the
+  #   project are accepted; each one names that database only. The migration
+  #   job runs as the same account, against the same database.
   # - roles/cloudsql.client (wherever accounts run): Cloud SQL evaluates
   #   resource.name and resource.type of the instance (Cloud SQL docs, "IAM
   #   Conditions": allow connecting to specific instances), so the api can
   #   connect to its own accounts instance and no other.
   api_project_role_conditions = merge(
-    !local.is_production ? {
+    {
       "roles/datastore.user" = {
-        title       = "${local.firestore_database_name} database only"
-        description = "Firestore access for the ${var.environment} api: the ${local.firestore_database_name} database, never (default)."
+        title = "${local.firestore_database_name} database only"
+        # Staging's text is the one it was applied with; changing it would
+        # replace staging's binding.
+        description = "Firestore access for the ${var.environment} api: the ${local.firestore_database_name} database, ${local.is_production ? "no other" : "never (default)"}."
         expression = join(" || ", [
           for p in distinct([var.project_id, data.google_project.this.number]) :
           "resource.name == \"projects/${p}/databases/${local.firestore_database_name}\""
         ])
       }
-    } : {},
+    },
     local.employee_accounts ? {
       "roles/cloudsql.client" = {
         title       = "${local.sql_instance_name} instance only"
@@ -233,11 +232,16 @@ locals {
       account_id  = "onboardai-api-run${local.name_suffix}"
       description = "${local.display_name} API: /api/* routes, Gemini chat and Vertex AI Search retrieval."
       cpu         = "1"
-      # The SQLite conversation file (written to the in-memory filesystem) lives
-      # in this limit until conversations move to Firestore.
+      # The guest workspace store's SQLite file (written to the in-memory
+      # filesystem) lives in this limit.
       memory      = "1Gi"
       concurrency = 80
-      # Contract: exactly one instance, because conversations are SQLite on local disk.
+      # Contract: exactly one instance. Saved chats are in Firestore (#9), but
+      # the guest workspace store (server/guest-workspace-store.mjs: guest
+      # workspaces, their employees, documents, chats and checkpoints) is a
+      # SQLite file on each instance's local disk, wiped on restart, and the
+      # per-IP limit on POST and PATCH requests is counted per instance. A
+      # second instance would split both. Lifting the cap is #58.
       min_instances             = 0
       max_instances             = 1
       timeout_seconds           = 300
