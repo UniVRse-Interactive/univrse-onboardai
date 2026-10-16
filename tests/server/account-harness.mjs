@@ -57,12 +57,13 @@ export const fakeRetrieve = async () => [
   { title: 'Synthetic handbook', heading: 'Dress', text: 'Business casual clothing.' },
 ];
 
-export const syntheticProfile = (fullName = 'Avery Example') => ({
+// People & Culture by default, so employees made with it are PC-0001, PC-0002, ...
+export const syntheticProfile = (fullName = 'Avery Example', department = 'People & Culture') => ({
   job: {
     fullName,
     preferredName: 'Avery',
     jobTitle: 'Onboarding Analyst',
-    department: 'People Operations',
+    department,
     startDate: '2026-11-02',
     manager: 'Jordan Sample',
   },
@@ -238,7 +239,7 @@ export async function startAccountsApp({
     accounts,
     browser: () => new Browser(url),
     createHr,
-    // An HR browser that is signed in, and a helper creating employees with it.
+    // An HR browser that is signed in, and helpers creating employees with it.
     async hrBrowser(username = 'HR-0001', password = 'synthetic-hr-pass-1') {
       await createHr(username, password);
       const hr = new Browser(url);
@@ -246,26 +247,27 @@ export async function startAccountsApp({
       if (signed.status !== 200) throw new Error('HR sign-in failed in test set-up');
       return hr;
     },
-    async createEmployee(hr, username = 'EMP-0001', temporaryPassword = 'temporary-pass-1') {
-      const created = await hr.post('/api/hr/employees', {
-        username,
-        temporaryPassword,
-        profile: syntheticProfile(),
-      });
+    // The 201 body: { employee, temporaryPassword }. The server assigns the
+    // Employee ID from the profile's department (PC-0001 for the first default).
+    async createEmployee(hr, profile = syntheticProfile()) {
+      const created = await hr.post('/api/hr/employees', { profile });
       if (created.status !== 201) throw new Error(`Employee creation failed: ${created.text}`);
-      return created.body.employee;
+      return created.body;
     },
     // An employee who has signed in and replaced the temporary password.
-    async readyEmployee(hr, username = 'EMP-0001', password = 'employee-own-pass-1') {
-      const employee = await this.createEmployee(hr, username);
+    async readyEmployee(
+      hr,
+      { password = 'employee-own-pass-1', profile = syntheticProfile() } = {},
+    ) {
+      const { employee, temporaryPassword } = await this.createEmployee(hr, profile);
       const browser = new Browser(url);
-      await browser.signIn(username, 'temporary-pass-1');
+      await browser.signIn(employee.account.username, temporaryPassword);
       const changed = await browser.post('/api/auth/password', {
-        currentPassword: 'temporary-pass-1',
+        currentPassword: temporaryPassword,
         newPassword: password,
       });
       if (changed.status !== 200) throw new Error(`Password change failed: ${changed.text}`);
-      return { employee, browser };
+      return { employee, browser, temporaryPassword };
     },
     rows: database.rows,
     memory,

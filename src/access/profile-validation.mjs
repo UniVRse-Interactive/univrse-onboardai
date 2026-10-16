@@ -9,7 +9,7 @@ export const profileGroups = [
       { key: 'fullName', label: 'Full name', max: 120, required: true, autoComplete: 'off' },
       { key: 'preferredName', label: 'Preferred name', max: 80 },
       { key: 'jobTitle', label: 'Job title', max: 120 },
-      { key: 'department', label: 'Department', max: 120 },
+      { key: 'department', label: 'Department', max: 120, kind: 'department' },
       { key: 'startDate', label: 'Start date', max: 10, kind: 'date' },
       { key: 'manager', label: 'Manager', max: 120 },
     ],
@@ -116,6 +116,7 @@ const problemText = {
   invalid_characters: 'cannot contain line breaks or control characters.',
   invalid_email: 'must be a valid email address.',
   invalid_date: 'must be a real date.',
+  invalid_department: 'must be one of the listed departments.',
   invalid_phone: 'can only use digits, spaces, + - ( ) and a full stop.',
 };
 
@@ -158,18 +159,6 @@ export function passwordProblem(password, username = '') {
   if (username && password.toLowerCase() === username.toLowerCase())
     return 'The password cannot be the same as the ID.';
   return null;
-}
-
-// -> { username?, temporaryPassword?, confirmation? } messages, empty when valid.
-export function validateNewEmployee({ username, temporaryPassword, confirmation }) {
-  const errors = {};
-  const name = String(username ?? '').trim();
-  if (!usernamePattern.test(name))
-    errors.username = 'Use an ID of 3 to 32 letters, numbers, dots, hyphens or underscores.';
-  const passwordMessage = passwordProblem(temporaryPassword, name);
-  if (passwordMessage) errors.temporaryPassword = passwordMessage;
-  else if (temporaryPassword !== confirmation) errors.confirmation = 'The passwords do not match.';
-  return errors;
 }
 
 // Where a server error code from the HR routes belongs in the add-employee form.

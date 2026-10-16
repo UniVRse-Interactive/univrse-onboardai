@@ -3,6 +3,9 @@ import Icon from '../portal/Icon';
 import { accountApi } from './account-api.mjs';
 import AutofillControl, { useProfileAutofill } from './AutofillControl';
 import { SecretField, TextField, useFocusFirstError } from './account-fields';
+import DepartmentField from './DepartmentField';
+import EmployeeCreatedDialog from './EmployeeCreatedDialog';
+import { autoIdNote, departmentProblem } from './employee-departments.mjs';
 import { canConfirmDelete, deleteErrorMessage } from './delete-confirm.mjs';
 import { accountBadges, employeeNames, formatDateTime, formatDay } from './profile-display.mjs';
 import {
@@ -12,7 +15,6 @@ import {
   passwordProblem,
   profileGroups,
   profileToForm,
-  validateNewEmployee,
   validateProfileForm,
 } from './profile-validation.mjs';
 import './accounts.css';
@@ -28,6 +30,8 @@ export function ProfileFields({
   marks = {},
   notes = {},
   onEdit,
+  requireDepartment = false,
+  legacyDepartment = '',
 }) {
   return profileGroups.map((group) => (
     <fieldset className="account-group" key={group.key}>
@@ -35,6 +39,26 @@ export function ProfileFields({
       <div className="account-group-fields">
         {group.fields.map((field) => {
           const path = `${group.key}.${field.key}`;
+          const change = (value) => {
+            onEdit?.(path);
+            onChange({ ...form, [group.key]: { ...form[group.key], [field.key]: value } });
+          };
+          if (field.kind === 'department')
+            return (
+              <DepartmentField
+                key={path}
+                id={`${idPrefix}-${group.key}-${field.key}`}
+                label={field.label}
+                required={requireDepartment}
+                legacy={legacyDepartment}
+                showIdHint={requireDepartment}
+                value={form[group.key][field.key]}
+                onChange={change}
+                error={errors[path]}
+                fromDocument={!!marks[path]}
+                note={notes[path]}
+              />
+            );
           return (
             <TextField
               key={path}
@@ -45,10 +69,7 @@ export function ProfileFields({
               inputMode={field.kind === 'phone' ? 'tel' : undefined}
               maxLength={field.kind === 'date' ? undefined : field.max}
               value={form[group.key][field.key]}
-              onChange={(value) => {
-                onEdit?.(path);
-                onChange({ ...form, [group.key]: { ...form[group.key], [field.key]: value } });
-              }}
+              onChange={change}
               error={errors[path]}
               fromDocument={!!marks[path]}
               note={notes[path]}
@@ -126,8 +147,7 @@ function applyServerError(error, setErrors, setSummary) {
   setSummary(error.message);
 }
 
-function AddEmployeePanel({ onClose, onDone, autofillEnabled }) {
-  const [account, setAccount] = useState({ username: '', temporaryPassword: '', confirmation: '' });
+function AddEmployeePanel({ onClose, onCreated, autofillEnabled }) {
   const [profile, setProfile] = useState(() => profileToForm(null));
   const autofill = useProfileAutofill(profile, setProfile);
   const [errors, setErrors] = useState({});
@@ -146,9 +166,9 @@ function AddEmployeePanel({ onClose, onDone, autofillEnabled }) {
   async function submit(event) {
     event.preventDefault();
     if (busy || autofill.reading) return;
-    const submitted = { ...account };
-    const found = { ...validateNewEmployee(submitted) };
-    Object.assign(found, fieldErrors(validateProfileForm(profile)).errors);
+    const found = fieldErrors(validateProfileForm(profile)).errors;
+    const departmentMessage = departmentProblem(profile);
+    if (departmentMessage) found['job.department'] = departmentMessage;
     setSummary('');
     if (Object.keys(found).length) {
       setErrors(found);
@@ -157,58 +177,24 @@ function AddEmployeePanel({ onClose, onDone, autofillEnabled }) {
     setErrors({});
     setBusy(true);
     try {
-      const { employee } = await accountApi.createEmployee(
-        submitted.username.trim(),
-        submitted.temporaryPassword,
-        formToProfileInput(profile),
-      );
-      onDone(
-        `Created employee account ${employee.account.username}. They must choose a new password at first sign-in.`,
-      );
+      const input = formToProfileInput(profile);
+      const { employee, temporaryPassword } = await accountApi.createEmployee(input);
+      onCreated({
+        username: employee.account.username,
+        temporaryPassword,
+        fullName: input.job.fullName,
+        department: input.job.department,
+      });
     } catch (error) {
       if (alive.current) applyServerError(error, setErrors, setSummary);
     } finally {
       if (alive.current) setBusy(false);
     }
   }
-  const set = (key) => (value) => setAccount((previous) => ({ ...previous, [key]: value }));
   return (
     <Panel headingId="add-employee-heading" title="Add employee account" onClose={onClose}>
       <form className="account-form" onSubmit={submit} ref={formRef} noValidate>
-        <fieldset className="account-group">
-          <legend>Sign-in details</legend>
-          <div className="account-group-fields">
-            <TextField
-              id="add-employee-id"
-              label="Employee ID"
-              required
-              autoComplete="off"
-              maxLength={32}
-              hint="3 to 32 letters, numbers, dots, hyphens or underscores."
-              value={account.username}
-              onChange={set('username')}
-              error={errors.username}
-            />
-            <SecretField
-              id="add-temporary-password"
-              label="Temporary password"
-              autoComplete="new-password"
-              hint="At least 8 characters. The employee must change it at first sign-in."
-              value={account.temporaryPassword}
-              onChange={set('temporaryPassword')}
-              error={errors.temporaryPassword}
-            />
-            <SecretField
-              id="add-temporary-confirm"
-              label="Confirm temporary password"
-              confirm
-              autoComplete="new-password"
-              value={account.confirmation}
-              onChange={set('confirmation')}
-              error={errors.confirmation}
-            />
-          </div>
-        </fieldset>
+        <p className="account-note">{autoIdNote}</p>
         <AutofillControl idPrefix="add" enabled={autofillEnabled} autofill={autofill} />
         <ProfileFields
           idPrefix="add"
@@ -218,6 +204,7 @@ function AddEmployeePanel({ onClose, onDone, autofillEnabled }) {
           marks={autofill.marks}
           notes={autofill.notes}
           onEdit={autofill.edited}
+          requireDepartment
         />
         <ErrorSummary message={summary} summaryRef={summaryRef} />
         <div className="account-actions">
@@ -240,6 +227,7 @@ function EditProfilePanel({ employee, onClose, onDone, autofillEnabled }) {
   const [summary, setSummary] = useState('');
   const [busy, setBusy] = useState(false);
   const [updatedAt, setUpdatedAt] = useState('');
+  const [legacyDepartment, setLegacyDepartment] = useState('');
   const autofill = useProfileAutofill(form, setForm);
   const formRef = useRef(null),
     summaryRef = useRef(null),
@@ -252,6 +240,7 @@ function EditProfilePanel({ employee, onClose, onDone, autofillEnabled }) {
         if (!alive.current) return;
         setForm(profileToForm(data.employee.profile));
         setUpdatedAt(data.employee.profile?.updatedAt || '');
+        setLegacyDepartment(String(data.employee.profile?.job?.department ?? ''));
       })
       .catch((error) => alive.current && setLoadError(error.message));
     return () => {
@@ -303,6 +292,7 @@ function EditProfilePanel({ employee, onClose, onDone, autofillEnabled }) {
             marks={autofill.marks}
             notes={autofill.notes}
             onEdit={autofill.edited}
+            legacyDepartment={legacyDepartment}
           />
           <ErrorSummary message={summary} summaryRef={summaryRef} />
           <div className="account-actions">
@@ -543,10 +533,12 @@ export default function HrEmployees() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [panel, setPanel] = useState(null);
+  const [created, setCreated] = useState(null);
   const [loading, setLoading] = useState(false);
   const [autofillEnabled, setAutofillEnabled] = useState(false);
   const opener = useRef(null),
     headingRef = useRef(null),
+    addButton = useRef(null),
     sequence = useRef(0);
   const load = useCallback(async () => {
     const token = ++sequence.current;
@@ -599,6 +591,19 @@ export default function HrEmployees() {
     load();
     requestAnimationFrame(() => headingRef.current?.focus());
   }
+  function onCreated(result) {
+    setPanel(null);
+    setCreated(result);
+    setNotice(
+      `Created employee account ${result.username}. They must choose a new password at first sign-in.`,
+    );
+    load();
+  }
+  // The password is dropped with the dialog: nothing else keeps it.
+  function closeCreated() {
+    setCreated(null);
+    requestAnimationFrame(() => addButton.current?.focus());
+  }
   function missing(username) {
     done(`${username} no longer exists. The list has been refreshed.`);
   }
@@ -611,13 +616,20 @@ export default function HrEmployees() {
           <h2 id="hr-accounts-heading" tabIndex={-1} ref={headingRef}>
             Employee accounts
           </h2>
-          <p>Create employee IDs, reset passwords, edit profiles and turn accounts on or off.</p>
+          <p>
+            Create employee accounts, reset passwords, edit profiles and turn accounts on or off.
+          </p>
         </div>
         <div className="account-actions">
           <button type="button" className="account-secondary" onClick={load} disabled={loading}>
             {loading ? 'Refreshing…' : 'Refresh accounts'}
           </button>
-          <button type="button" className="account-primary" onClick={() => open({ type: 'add' })}>
+          <button
+            type="button"
+            className="account-primary"
+            ref={addButton}
+            onClick={() => open({ type: 'add' })}
+          >
             <Icon name="user" size={17} />
             Add employee account
           </button>
@@ -636,8 +648,9 @@ export default function HrEmployees() {
         </div>
       )}
       {panel?.type === 'add' && (
-        <AddEmployeePanel onClose={close} onDone={done} autofillEnabled={autofillEnabled} />
+        <AddEmployeePanel onClose={close} onCreated={onCreated} autofillEnabled={autofillEnabled} />
       )}
+      {created && <EmployeeCreatedDialog created={created} onClose={closeCreated} />}
       {panel?.type === 'edit' && selected && (
         <EditProfilePanel
           key={panel.id}

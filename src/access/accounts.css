@@ -618,3 +618,28 @@
   background: #eef7f1;
   border-color: #1d6b3f;
 }
+
+.account-select {
+  width: 100%;
+  min-width: 0;
+  height: 51px;
+  padding: 0 12px;
+  border: 1px solid #c1d1d6;
+  background: #dce6ed;
+  color: #293e58;
+  border-radius: 6px;
+  font-size: 14px;
+}
+.account-select:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 2px;
+}
+.account-field select[aria-invalid='true'] {
+  border-color: #9b2c2c;
+  border-width: 2px;
+}
+@media (max-width: 640px) {
+  .account-select {
+    font-size: 16px;
+  }
+}

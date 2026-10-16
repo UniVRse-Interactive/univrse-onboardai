@@ -21,6 +21,7 @@ import {
   readAutofillAnswer,
 } from '../../server/profile-autofill.mjs';
 import { checkProfileValue, profileSchema } from '../../server/employee-profiles.mjs';
+import { departments } from '../../server/departments.mjs';
 import { readUploadedDocument } from '../../server/read-uploaded-document.mjs';
 import { createWebApp } from '../../server/web-app.mjs';
 
@@ -35,7 +36,7 @@ const answer = () => ({
     fullName: '  Avery Example ',
     preferredName: 'Avery',
     jobTitle: 'Onboarding Analyst',
-    department: 'People Operations',
+    department: 'People & Culture',
     startDate: '2026-11-02',
     manager: 'Jordan Sample',
   },
@@ -149,12 +150,12 @@ test('autofill is HR-only: the same gate, order and origin check as the other HR
     forged.cookies.set('onboardai_account', 'f'.repeat(64));
     const expired = await upload(forged, 'cv.pdf', file);
     assert.deepEqual([expired.status, expired.body.code], [401, 'SESSION_EXPIRED']);
-    await app.createEmployee(hr, 'EMP-0002');
+    const { employee, temporaryPassword } = await app.createEmployee(hr);
     const pending = app.browser();
-    await pending.signIn('EMP-0002', 'temporary-pass-1');
+    await pending.signIn(employee.account.username, temporaryPassword);
     const forced = await upload(pending, 'cv.pdf', file);
     assert.deepEqual([forced.status, forced.body.code], [403, 'PASSWORD_CHANGE_REQUIRED']);
-    const { browser: staff } = await app.readyEmployee(hr, 'EMP-0001');
+    const { browser: staff } = await app.readyEmployee(hr);
     const denied = await upload(staff, 'cv.pdf', file);
     assert.deepEqual([denied.status, denied.body.code], [403, 'HR_ROLE_REQUIRED']);
     const foreign = await upload(hr, 'cv.pdf', file, { Origin: 'https://attacker.example' });
@@ -248,15 +249,27 @@ test('a PDF is sent inline with the schema and system instruction, and the profi
       responseMimeType: 'application/json',
       responseSchema: autofillResponseSchema,
     });
-    // The schema mirrors ProfileInput: four groups, every field text.
+    // The schema mirrors ProfileInput: four groups, every field text, and the
+    // department limited to the six departments, or null when unclear.
     assert.equal(autofillResponseSchema.type, 'OBJECT');
     assert.deepEqual(Object.keys(autofillResponseSchema.properties), Object.keys(profileSchema));
     for (const [group, fields] of Object.entries(profileSchema)) {
       const schema = autofillResponseSchema.properties[group];
       assert.equal(schema.type, 'OBJECT');
       assert.deepEqual(Object.keys(schema.properties), Object.keys(fields));
-      for (const field of Object.values(schema.properties)) assert.equal(field.type, 'STRING');
+      for (const [name, field] of Object.entries(schema.properties)) {
+        assert.equal(field.type, 'STRING');
+        assert.equal('enum' in field, group === 'job' && name === 'department', name);
+      }
     }
+    assert.deepEqual(autofillResponseSchema.properties.job.properties.department, {
+      type: 'STRING',
+      description:
+        'The department the employee’s role best belongs to: exactly one of the listed names, or null when unclear.',
+      // Vertex AI refuses an empty enum value, so "unclear" is null.
+      enum: departments.map((department) => department.name),
+      nullable: true,
+    });
     assert.equal(request.contents.length, 1);
     const [task, document] = request.contents[0].parts;
     assert.equal(request.contents[0].role, 'user');
@@ -430,7 +443,7 @@ test('invalid values are dropped into warnings; unknown keys and non-text values
       filled: ['job.fullName', 'emergencyContact.name', 'emergencyContact.phoneNumber'],
       warnings: [
         { field: 'job.jobTitle', problem: 'too_long' },
-        { field: 'job.department', problem: 'invalid_characters' },
+        { field: 'job.department', problem: 'invalid_department' },
         { field: 'job.startDate', problem: 'invalid_date' },
         { field: 'contact.workEmail', problem: 'invalid_email' },
         { field: 'contact.personalEmail', problem: 'invalid_email' },
@@ -447,6 +460,66 @@ test('invalid values are dropped into warnings; unknown keys and non-text values
       'fax',
     ])
       assert.ok(!response.text.includes(value), value);
+  });
+});
+
+test('the department is one of the six or empty: an enum for Gemini, a rule to choose, and a server check', async () => {
+  // The model is told to choose the department the role belongs to (the one
+  // exception to copying only written values) and may leave it empty.
+  assert.match(autofillInstruction, /The only exception is job\.department \(rule 8\)/);
+  for (const { name } of departments) assert.ok(autofillInstruction.includes(name), name);
+  assert.match(autofillInstruction, /best belongs to/);
+  assert.match(
+    autofillInstruction,
+    /Leave it empty \(null\) when the document does not make clear/,
+  );
+  const engineer = () => ({
+    job: { fullName: 'Avery Example', jobTitle: 'Backend Engineer', department: '' },
+  });
+  const departmentsFromModel = [
+    ['Product & Engineering', 'Product & Engineering', null],
+    [' Customer Success ', 'Customer Success', null],
+    ['', '', null],
+    [null, '', null],
+    ['N/A', '', null],
+    ['Engineering', '', 'invalid_department'],
+    ['product & engineering', '', 'invalid_department'],
+    ['People\nOperations', '', 'invalid_department'],
+  ];
+  const queue = departmentsFromModel.map(([department]) => {
+    const answer = engineer();
+    answer.job.department = department;
+    return answer;
+  });
+  const vertex = fakeVertex(() => geminiResponse(queue.shift()));
+  await withAutofill({ autofill: { fetchImpl: vertex.fetchImpl } }, async (app) => {
+    const hr = await app.hrBrowser();
+    for (const [department, expected, problem] of departmentsFromModel) {
+      const response = await upload(hr, 'cv.txt', Buffer.from('Synthetic CV: backend engineer'));
+      assert.equal(response.status, 200, response.text);
+      const label = String(department);
+      assert.equal(response.body.profile.job.department, expected, label);
+      assert.equal(response.body.filled.includes('job.department'), Boolean(expected), label);
+      assert.deepEqual(
+        response.body.warnings,
+        problem ? [{ field: 'job.department', problem }] : [],
+        label,
+      );
+      // A dropped value is never echoed.
+      if (problem) assert.ok(!response.text.includes(department.trim()), department);
+    }
+    const sent = vertex.calls[0].request.generationConfig.responseSchema;
+    assert.deepEqual(sent.properties.job.properties.department.enum, [
+      'Product & Engineering',
+      'Customer Success',
+      'Sales & Marketing',
+      'Finance',
+      'People & Culture',
+      'Operations & Facilities',
+    ]);
+    assert.equal(sent.properties.job.properties.department.nullable, true);
+    // No enum value is empty: Vertex AI answers 400 to that.
+    assert.ok(sent.properties.job.properties.department.enum.every(Boolean));
   });
 });
 

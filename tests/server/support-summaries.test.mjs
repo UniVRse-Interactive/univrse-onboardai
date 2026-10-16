@@ -21,18 +21,17 @@ test('summaries name each employee account and carry the chat store’s support 
   await withApp({ mode: 'gemini-chat' }, async (app) => {
     const hr = await app.hrBrowser();
     // Preferred name set (the harness profile has preferredName "Avery").
-    const { employee: avery, browser } = await app.readyEmployee(hr, 'EMP-0003');
-    // Preferred name empty: the full name is used.
-    const blank = syntheticProfile('Blake Sample');
-    blank.job.preferredName = '';
-    const blake = await hr.post('/api/hr/employees', {
-      username: 'emp-0001',
-      temporaryPassword: 'temporary-pass-1',
-      profile: blank,
+    const { employee: avery, browser } = await app.readyEmployee(hr, {
+      profile: syntheticProfile('Avery Example', 'Sales & Marketing'),
     });
+    // Preferred name empty: the full name is used.
+    const blank = syntheticProfile('Blake Sample', 'Customer Success');
+    blank.job.preferredName = '';
+    const blake = await hr.post('/api/hr/employees', { profile: blank });
     assert.equal(blake.status, 201);
     // No profile at all: the ID is used.
-    const casey = await app.createEmployee(hr, 'EMP-0002');
+    const casey = (await app.createEmployee(hr, syntheticProfile('Casey Example', 'Finance')))
+      .employee;
     await app.firestore.connect().collection('employeeProfiles').doc(casey.account.id).delete();
 
     const before = await hr.get('/api/hr/support-summaries');
@@ -47,9 +46,9 @@ test('summaries name each employee account and carry the chat store’s support 
     assert.deepEqual(
       before.body.employees.map((entry) => [entry.account.username, entry.name]),
       [
-        ['emp-0001', 'Blake Sample'],
-        ['EMP-0002', 'EMP-0002'],
-        ['EMP-0003', 'Avery'],
+        ['CS-0001', 'Blake Sample'],
+        ['FN-0001', 'FN-0001'],
+        ['SM-0001', 'Avery'],
       ],
     );
     for (const entry of before.body.employees) {

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { startAccountsApp, syntheticProfile } from './account-harness.mjs';
+import { verifyPassword } from '../../server/password-hashing.mjs';
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const MINUTE = 60 * 1000,
@@ -75,21 +76,24 @@ test('HR signs in with a session cookie that is HttpOnly, SameSite=Strict, /api-
 test('every failed sign-in looks the same, and an unknown ID still costs one password check', async () => {
   await withApp(async (app) => {
     const hr = await app.hrBrowser();
-    await app.createEmployee(hr, 'EMP-0001');
-    await app.createEmployee(hr, 'EMP-0002');
-    const employees = (await hr.get('/api/hr/employees')).body.employees;
-    const second = employees.find((e) => e.account.username === 'EMP-0002').account.id;
+    const first = await app.createEmployee(hr);
+    const second = await app.createEmployee(hr);
+    assert.deepEqual(
+      [first.employee.account.username, second.employee.account.username],
+      ['PC-0001', 'PC-0002'],
+    );
+    const secondId = second.employee.account.id;
     assert.equal(
-      (await hr.put(`/api/hr/employees/${second}/status`, { status: 'disabled' })).status,
+      (await hr.put(`/api/hr/employees/${secondId}/status`, { status: 'disabled' })).status,
       200,
     );
     const browser = app.browser();
     const attempts = [
-      ['NO-SUCH-USER', 'temporary-pass-1'], // unknown ID
-      ['EMP-0001', 'wrong-password-1'], // wrong password
-      ['EMP-0002', 'temporary-pass-1'], // right password, disabled account
-      ['x', 'temporary-pass-1'], // an ID that cannot exist
-      ['EMP-0001', 'p'.repeat(500)], // longer than any password
+      ['NO-SUCH-USER', first.temporaryPassword], // unknown ID
+      ['PC-0001', 'wrong-password-1'], // wrong password
+      ['PC-0002', second.temporaryPassword], // right password, disabled account
+      ['x', first.temporaryPassword], // an ID that cannot exist
+      ['PC-0001', 'p'.repeat(500)], // longer than any password
     ];
     const work = [];
     for (const [username, password] of attempts) {
@@ -107,7 +111,7 @@ test('every failed sign-in looks the same, and an unknown ID still costs one pas
     for (const statements of work) assert.deepEqual(statements, work[0]);
     assert.match(work[0][0], /^UPDATE accounts SET/);
     // Malformed requests are a 400 that says nothing about accounts.
-    for (const body of [{}, { username: 'EMP-0001' }, { username: 5, password: 'x' }, []]) {
+    for (const body of [{}, { username: 'PC-0001' }, { username: 5, password: 'x' }, []]) {
       const response = await browser.post('/api/auth/sign-in', body);
       assert.equal(response.status, 400);
       assert.equal(response.body.code, 'SIGN_IN_INVALID');
@@ -205,13 +209,13 @@ test('wrong current passwords lock the account but keep the session; no password
       assert.deepEqual([locked.status, locked.body.code], [429, 'ACCOUNT_LOCKED']);
     }
     assert.equal(app.hashing.counts.verify, verifies);
-    assert.equal((await app.browser().signIn('EMP-0001', 'employee-own-pass-1')).status, 401);
+    assert.equal((await app.browser().signIn('PC-0001', 'employee-own-pass-1')).status, 401);
     // After the lock ends the password can be changed, which clears the count.
     app.clock.advance(15 * MINUTE);
     const changed = await change('employee-own-pass-1');
     assert.equal(changed.status, 200);
     const [after] = await app.rows(
-      "SELECT failed_attempts, locked_until FROM accounts WHERE username = 'EMP-0001'",
+      "SELECT failed_attempts, locked_until FROM accounts WHERE username = 'PC-0001'",
     );
     assert.deepEqual(after, { failed_attempts: 0, locked_until: null });
   });
@@ -280,15 +284,7 @@ test('role gates: no session is 401, an employee is 403 and HR is allowed on eve
     const id = employee.account.id;
     const routes = [
       ['get', '/api/hr/employees'],
-      [
-        'post',
-        '/api/hr/employees',
-        {
-          username: 'EMP-0100',
-          temporaryPassword: 'temporary-pass-1',
-          profile: syntheticProfile(),
-        },
-      ],
+      ['post', '/api/hr/employees', { profile: syntheticProfile('Gate Example', 'Finance') }],
       ['get', `/api/hr/employees/${id}`],
       ['put', `/api/hr/employees/${id}/profile`, { profile: syntheticProfile() }],
       ['post', `/api/hr/employees/${id}/password`, { temporaryPassword: 'temporary-pass-2' }],
@@ -303,9 +299,10 @@ test('role gates: no session is 401, an employee is 403 and HR is allowed on eve
     }
     // Nothing the employee tried changed anything.
     assert.equal(
-      (await app.rows("SELECT count(*)::int AS n FROM accounts WHERE username = 'EMP-0100'"))[0].n,
+      (await app.rows("SELECT count(*)::int AS n FROM accounts WHERE username LIKE 'FN-%'"))[0].n,
       0,
     );
+    assert.deepEqual(await app.rows('SELECT prefix FROM employee_id_counters'), [{ prefix: 'PC' }]);
     for (const [method, path, body] of routes) {
       const allowed = await hr[method](path, body);
       assert.ok([200, 201].includes(allowed.status), `${path}: ${allowed.text}`);
@@ -321,10 +318,10 @@ test('role gates: no session is 401, an employee is 403 and HR is allowed on eve
 test('a forced password change blocks everything except session, change password and sign-out', async () => {
   await withApp(async (app) => {
     const hr = await app.hrBrowser();
-    const employee = await app.createEmployee(hr);
+    const { employee, temporaryPassword } = await app.createEmployee(hr);
     assert.equal(employee.account.mustChangePassword, true);
     const staff = app.browser();
-    const signed = await staff.signIn('EMP-0001', 'temporary-pass-1');
+    const signed = await staff.signIn('PC-0001', temporaryPassword);
     assert.equal(signed.status, 200);
     assert.equal(signed.body.account.mustChangePassword, true);
     assert.equal((await staff.get('/api/auth/session')).body.account.mustChangePassword, true);
@@ -350,13 +347,10 @@ test('a forced password change blocks everything except session, change password
         { currentPassword: 'not-the-temporary', newPassword: 'employee-own-pass-1' },
         'CURRENT_PASSWORD_INCORRECT',
       ],
-      [
-        { currentPassword: 'temporary-pass-1', newPassword: 'temporary-pass-1' },
-        'PASSWORD_REJECTED',
-      ],
-      [{ currentPassword: 'temporary-pass-1', newPassword: 'emp-0001' }, 'PASSWORD_REJECTED'],
-      [{ currentPassword: 'temporary-pass-1', newPassword: 'short' }, 'PASSWORD_REJECTED'],
-      [{ currentPassword: 'temporary-pass-1' }, 'PASSWORD_CHANGE_INVALID'],
+      [{ currentPassword: temporaryPassword, newPassword: temporaryPassword }, 'PASSWORD_REJECTED'],
+      [{ currentPassword: temporaryPassword, newPassword: 'pc-0001' }, 'PASSWORD_REJECTED'],
+      [{ currentPassword: temporaryPassword, newPassword: 'short' }, 'PASSWORD_REJECTED'],
+      [{ currentPassword: temporaryPassword }, 'PASSWORD_CHANGE_INVALID'],
     ];
     for (const [body, code] of attempts) {
       const rejected = await staff.post('/api/auth/password', body);
@@ -364,12 +358,12 @@ test('a forced password change blocks everything except session, change password
     }
     // The wrong current password counted towards the lockout.
     assert.equal(
-      (await app.rows("SELECT failed_attempts FROM accounts WHERE username = 'EMP-0001'"))[0]
+      (await app.rows("SELECT failed_attempts FROM accounts WHERE username = 'PC-0001'"))[0]
         .failed_attempts,
       1,
     );
     const changed = await staff.post('/api/auth/password', {
-      currentPassword: 'temporary-pass-1',
+      currentPassword: temporaryPassword,
       newPassword: 'employee-own-pass-1',
     });
     assert.equal(changed.status, 200);
@@ -380,7 +374,8 @@ test('a forced password change blocks everything except session, change password
     assert.equal(profile.body.profile.contact.workEmail, 'avery.example@example.com');
     assert.equal((await staff.get('/api/config')).body.conversationMemory, true);
     // Responses never echo a password.
-    assert.ok(!JSON.stringify([signed.body, changed.body, profile.body]).includes('pass-1'));
+    const answers = JSON.stringify([signed.body, changed.body, profile.body]);
+    assert.ok(!answers.includes(temporaryPassword) && !answers.includes('pass-1'));
   });
 });
 
@@ -388,12 +383,10 @@ test('HR creates, reads, lists and edits employees; every change writes an accou
   await withApp(async (app) => {
     const hr = await app.hrBrowser();
     const hrId = (await hr.get('/api/auth/session')).body.account.id;
-    const created = await hr.post('/api/hr/employees', {
-      username: ' EMP-0001 ',
-      temporaryPassword: 'temporary-pass-1',
-      profile: syntheticProfile(),
-    });
+    const created = await hr.post('/api/hr/employees', { profile: syntheticProfile() });
     assert.equal(created.status, 201);
+    assert.equal(created.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(Object.keys(created.body).sort(), ['employee', 'temporaryPassword']);
     const { account, profile } = created.body.employee;
     assert.deepEqual(Object.keys(account).sort(), [
       'createdAt',
@@ -409,7 +402,7 @@ test('HR creates, reads, lists and edits employees; every change writes an accou
     ]);
     assert.deepEqual(
       [account.username, account.role, account.status, account.mustChangePassword, account.locked],
-      ['EMP-0001', 'employee', 'active', true, false],
+      ['PC-0001', 'employee', 'active', true, false],
     );
     assert.equal(profile.updatedBy, hrId);
     assert.equal(profile.updatedAt, '2026-10-15T01:00:00.000Z');
@@ -418,58 +411,29 @@ test('HR creates, reads, lists and edits employees; every change writes an accou
       syntheticProfile().job,
     );
     const [row] = await app.rows(
-      "SELECT password_hash, created_by FROM accounts WHERE username = 'EMP-0001'",
+      "SELECT password_hash, created_by FROM accounts WHERE username = 'PC-0001'",
     );
     assert.match(row.password_hash, /^scrypt\$n=1024,r=8,p=1\$/);
+    assert.ok(await verifyPassword(created.body.temporaryPassword, row.password_hash));
     assert.equal(row.created_by, hrId);
 
-    // Duplicate IDs, whatever their case, have their own code; nothing is written.
-    const duplicate = await hr.post('/api/hr/employees', {
-      username: 'emp-0001',
-      temporaryPassword: 'temporary-pass-1',
-      profile: syntheticProfile('Another Person'),
-    });
-    assert.deepEqual([duplicate.status, duplicate.body.code], [409, 'USERNAME_TAKEN']);
-    assert.equal(app.firestore.paths('employeeProfiles/').length, 1);
-
+    // The Employee ID and the temporary password are the server's: a body that
+    // names either (or anything but the profile) is refused; nothing is written.
+    const job = { fullName: 'A', department: 'Finance' };
     for (const [body, code] of [
-      [
-        { username: 'x', temporaryPassword: 'temporary-pass-1', profile: syntheticProfile() },
-        'USERNAME_INVALID',
-      ],
-      [
-        { username: 'EMP-0002', temporaryPassword: 'short', profile: syntheticProfile() },
-        'PASSWORD_REJECTED',
-      ],
-      [
-        { username: 'EMP-0002', temporaryPassword: 'EMP-0002', profile: syntheticProfile() },
-        'PASSWORD_REJECTED',
-      ],
-      [
-        {
-          username: 'EMP-0002',
-          temporaryPassword: 'temporary-pass-1',
-          profile: { job: { fullName: 'A', ssn: '1' } },
-        },
-        'PROFILE_INVALID',
-      ],
-      [
-        {
-          username: 'EMP-0002',
-          temporaryPassword: 'temporary-pass-1',
-          profile: { job: { fullName: 'A' }, contact: { workEmail: 'bad' } },
-        },
-        'PROFILE_INVALID',
-      ],
-      [{ username: 'EMP-0002', temporaryPassword: 'temporary-pass-1' }, 'PROFILE_INVALID'],
+      [{ username: 'FN-0001', profile: syntheticProfile() }, 'EMPLOYEE_INVALID'],
+      [{ temporaryPassword: 'temporary-pass-1', profile: syntheticProfile() }, 'EMPLOYEE_INVALID'],
+      [{ profile: syntheticProfile(), note: 'x' }, 'EMPLOYEE_INVALID'],
+      [[], 'EMPLOYEE_INVALID'],
+      [{ profile: { job: { ...job, ssn: '1' } } }, 'PROFILE_INVALID'],
+      [{ profile: { job, contact: { workEmail: 'bad' } } }, 'PROFILE_INVALID'],
+      [{}, 'PROFILE_INVALID'],
     ]) {
       const rejected = await hr.post('/api/hr/employees', body);
       assert.deepEqual([rejected.status, rejected.body.code], [400, code], JSON.stringify(body));
     }
     const invalid = await hr.post('/api/hr/employees', {
-      username: 'EMP-0002',
-      temporaryPassword: 'temporary-pass-1',
-      profile: { job: { fullName: 'A', startDate: '2026-13-01' }, extra: 'x' },
+      profile: { job: { ...job, startDate: '2026-13-01' }, extra: 'x' },
     });
     assert.deepEqual(invalid.body.fields, [
       { field: 'extra', problem: 'unknown' },
@@ -479,6 +443,8 @@ test('HR creates, reads, lists and edits employees; every change writes an accou
       (await app.rows("SELECT count(*)::int AS n FROM accounts WHERE role = 'employee'"))[0].n,
       1,
     );
+    assert.equal(app.firestore.paths('employeeProfiles/').length, 1);
+    assert.deepEqual(await app.rows('SELECT prefix FROM employee_id_counters'), [{ prefix: 'PC' }]);
 
     const list = await hr.get('/api/hr/employees');
     assert.equal(list.status, 200);
@@ -489,7 +455,7 @@ test('HR creates, reads, lists and edits employees; every change writes an accou
           fullName: 'Avery Example',
           preferredName: 'Avery',
           jobTitle: 'Onboarding Analyst',
-          department: 'People Operations',
+          department: 'People & Culture',
           startDate: '2026-11-02',
         },
       },
@@ -545,7 +511,7 @@ test('a password reset or a disabled account ends that employee’s sessions; en
     const { employee, browser: first } = await app.readyEmployee(hr);
     const id = employee.account.id;
     const second = app.browser();
-    assert.equal((await second.signIn('EMP-0001', 'employee-own-pass-1')).status, 200);
+    assert.equal((await second.signIn('PC-0001', 'employee-own-pass-1')).status, 200);
     const hrSessions = async () =>
       (await app.rows(`SELECT count(*)::int AS n FROM sessions WHERE account_id = '${id}'`))[0].n;
     assert.equal(await hrSessions(), 2);
@@ -558,8 +524,8 @@ test('a password reset or a disabled account ends that employee’s sessions; en
     assert.equal(await hrSessions(), 0);
     for (const browser of [first, second])
       assert.equal((await browser.get('/api/me/profile')).body.code, 'SESSION_EXPIRED');
-    assert.deepEqual((await second.signIn('EMP-0001', 'employee-own-pass-1')).body, failedSignIn);
-    const again = await second.signIn('EMP-0001', 'temporary-pass-2');
+    assert.deepEqual((await second.signIn('PC-0001', 'employee-own-pass-1')).body, failedSignIn);
+    const again = await second.signIn('PC-0001', 'temporary-pass-2');
     assert.equal(again.body.account.mustChangePassword, true);
     assert.equal((await second.get('/api/me/profile')).body.code, 'PASSWORD_CHANGE_REQUIRED');
     // HR's own session is untouched.
@@ -569,18 +535,18 @@ test('a password reset or a disabled account ends that employee’s sessions; en
     assert.equal(disabled.body.account.status, 'disabled');
     assert.equal(await hrSessions(), 0);
     assert.equal((await second.get('/api/auth/session')).body.code, 'SESSION_EXPIRED');
-    assert.deepEqual((await second.signIn('EMP-0001', 'temporary-pass-2')).body, failedSignIn);
+    assert.deepEqual((await second.signIn('PC-0001', 'temporary-pass-2')).body, failedSignIn);
 
     const enabled = await hr.put(`/api/hr/employees/${id}/status`, { status: 'active' });
     assert.equal(enabled.body.account.status, 'active');
-    assert.equal((await second.signIn('EMP-0001', 'temporary-pass-2')).status, 200);
+    assert.equal((await second.signIn('PC-0001', 'temporary-pass-2')).status, 200);
 
     // A reset also clears a lock, so HR can let a locked-out employee back in.
     await second.post('/api/auth/sign-out');
-    for (let i = 0; i < 5; i++) await second.signIn('EMP-0001', `wrong-pass-${i}`);
+    for (let i = 0; i < 5; i++) await second.signIn('PC-0001', `wrong-pass-${i}`);
     assert.equal((await hr.get(`/api/hr/employees/${id}`)).body.employee.account.locked, true);
     await hr.post(`/api/hr/employees/${id}/password`, { temporaryPassword: 'temporary-pass-3' });
-    assert.equal((await second.signIn('EMP-0001', 'temporary-pass-3')).status, 200);
+    assert.equal((await second.signIn('PC-0001', 'temporary-pass-3')).status, 200);
     const actions = (
       await app.rows(`SELECT action FROM account_events WHERE target_id = '${id}' ORDER BY id`)
     ).map((e) => e.action);
@@ -605,11 +571,7 @@ test('creating an employee rolls back the account when the Firestore profile wri
   await withApp({ storageTimeoutMs: 100 }, async (app) => {
     const hr = await app.hrBrowser();
     const create = () =>
-      hr.post('/api/hr/employees', {
-        username: 'EMP-0001',
-        temporaryPassword: 'temporary-pass-1',
-        profile: syntheticProfile('PRIVATE-NAME Example'),
-      });
+      hr.post('/api/hr/employees', { profile: syntheticProfile('PRIVATE-NAME Example') });
     const count = async () =>
       (await app.rows("SELECT count(*)::int AS n FROM accounts WHERE role = 'employee'"))[0].n;
     app.firestore.fail(14, { only: ['set'] });
@@ -626,13 +588,16 @@ test('creating an employee rolls back the account when the Firestore profile wri
       "SELECT action FROM account_events WHERE action = 'employee_created'",
     );
     assert.deepEqual(events, []);
-    // The same ID can then be created: nothing half-made blocks it.
+    // Nothing half-made blocks the next creation. The failed ones used up
+    // PC-0001 and PC-0002 (numbers are never handed out twice).
     const created = await create();
     assert.equal(created.status, 201);
+    assert.equal(created.body.employee.account.username, 'PC-0003');
     assert.equal(await count(), 1);
     assert.equal(app.firestore.paths('employeeProfiles/').length, 1);
     for (const line of app.logs)
-      assert.ok(!line.includes('PRIVATE') && !line.includes('EMP-0001'), line);
+      for (const secret of ['PRIVATE', 'PC-000', created.body.temporaryPassword])
+        assert.ok(!line.includes(secret), line);
   });
 });
 

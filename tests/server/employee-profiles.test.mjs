@@ -29,8 +29,11 @@ test('a complete profile is trimmed and stored with every field present', () => 
   assert.deepEqual(Object.keys(profile), ['job', 'contact', 'emergencyContact', 'homeAddress']);
   for (const [group, fields] of Object.entries(profileSchema))
     assert.deepEqual(Object.keys(profile[group]), Object.keys(fields));
-  // Only the full name is required; missing groups and nulls become ''.
-  const minimal = validateProfile({ job: { fullName: 'Sam Sample', manager: null } });
+  // Only the full name and the department are required; missing groups and
+  // nulls become ''.
+  const minimal = validateProfile({
+    job: { fullName: 'Sam Sample', department: 'Finance', manager: null },
+  });
   assert.equal(minimal.job.manager, '');
   assert.equal(minimal.contact.workEmail, '');
   assert.equal(minimal.homeAddress.country, '');
@@ -43,9 +46,10 @@ test('a complete profile is trimmed and stored with every field present', () => 
 test('unknown fields, wrong types and invalid values are rejected with their paths', () => {
   assert.deepEqual(problems(null), [{ field: 'profile', problem: 'not_object' }]);
   assert.deepEqual(problems([]), [{ field: 'profile', problem: 'not_object' }]);
-  assert.deepEqual(problems({ job: {} }), [{ field: 'job.fullName', problem: 'required' }]);
-  assert.deepEqual(problems({ job: { fullName: '   ' } }), [
-    { field: 'job.fullName', problem: 'required' },
+  const required = (field) => ({ field, problem: 'required' });
+  assert.deepEqual(problems({ job: {} }), [required('job.fullName'), required('job.department')]);
+  assert.deepEqual(problems({ job: { fullName: '   ', department: 'Finance' } }), [
+    required('job.fullName'),
   ]);
   const base = syntheticProfile();
   assert.deepEqual(problems({ ...base, salary: '1' }), [{ field: 'salary', problem: 'unknown' }]);
@@ -81,7 +85,7 @@ test('unknown fields, wrong types and invalid values are rejected with their pat
       extra: 'secret-extra',
     });
   } catch (error) {
-    assert.equal(error.details.fields.length, 3);
+    assert.equal(error.details.fields.length, 4);
     assert.match(error.message, /job\.fullName is required/);
     assert.ok(!error.message.includes('private-value') && !error.message.includes('secret-extra'));
   }
@@ -103,7 +107,7 @@ test('stored profiles are read back with every field, and the list summary leave
     fullName: 'Avery Example',
     preferredName: 'Avery',
     jobTitle: 'Onboarding Analyst',
-    department: 'People Operations',
+    department: 'People & Culture',
     startDate: '2026-11-02',
   });
   // A document missing newer fields still reads with every field present.

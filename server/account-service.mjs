@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { accountErrors } from './account-errors.mjs';
 import { createAccountStore, createDatabasePool } from './account-store.mjs';
+import { departmentPrefix, isDepartment } from './employee-ids.mjs';
 import { createFirestoreClient } from './firestore-client.mjs';
 import {
   createProfileStore,
@@ -10,6 +11,7 @@ import {
 } from './employee-profiles.mjs';
 import {
   dummyPasswordHash,
+  generatePassword,
   hashPassword,
   passwordProblem,
   verifyPassword,
@@ -29,6 +31,14 @@ const tokenPattern = /^[0-9a-f]{64}$/;
 const noAccount = '00000000-0000-0000-0000-000000000000';
 export const tokenHash = (token) => createHash('sha256').update(token).digest('hex');
 const iso = (value) => (value ? new Date(value).toISOString() : null);
+const isPlainObject = (value) =>
+  value !== null &&
+  typeof value === 'object' &&
+  !Array.isArray(value) &&
+  [Object.prototype, null].includes(Object.getPrototypeOf(value));
+// A server-assigned Employee ID can only be taken by an account made outside
+// the counter (hr:create); each try uses up a number, so a few are enough.
+const employeeIdAttempts = 3;
 const lockedAt = (row, at) => Boolean(row.locked_until) && new Date(row.locked_until) > at;
 // Chat-store failures (ChatError STORAGE_*) on HR routes answer like the other
 // Firestore failures there; anything else (CHAT_BUSY) passes through.
@@ -218,48 +228,71 @@ export function createAccountService({
     return { account: accountView(row, now()), profile: await profiles.read(row.id) };
   }
 
-  // Postgres insert, then the Firestore profile, then the commit: a failed
-  // profile write rolls the account back. If the commit itself fails after the
-  // profile was written, the orphaned profile is removed (best effort).
-  async function createEmployee(actor, body) {
-    if (!body || typeof body !== 'object' || Array.isArray(body))
-      throw accountErrors.employeeInvalid();
-    const { username, temporaryPassword, profile: input } = body;
-    if (typeof username !== 'string' || !usernamePattern.test(username.trim()))
-      throw accountErrors.usernameInvalid();
-    const name = username.trim();
-    checkPassword(temporaryPassword, name);
+  // The one way an employee account is created: HR's "Add employee account"
+  // (POST /api/hr/employees) and the employee form import approval (#27).
+  //   profile: ProfileInput. job.department must be one of the six departments
+  //            (departments.mjs); it decides the Employee ID prefix.
+  //   actorId: the HR account creating the employee (created_by, the event
+  //            actor and the profile's updatedBy).
+  // Resolves to { employee: { account: EmployeeAccount, profile: Profile },
+  // temporaryPassword }, or throws 400 PROFILE_INVALID, 503
+  // ACCOUNTS_UNAVAILABLE, 503 PROFILE_STORAGE_UNAVAILABLE or 504
+  // PROFILE_STORAGE_TIMEOUT. The server picks the Employee ID (the department's
+  // next number) and a generated temporary password with a forced change. The
+  // password is returned to the caller only: it is stored as its scrypt hash
+  // and never logged. Consistent across both stores: Postgres insert, then the
+  // Firestore profile, then the commit; a failed profile write rolls the account
+  // back (its number stays used). If the commit itself fails after the profile
+  // was written, the orphaned profile is removed (best effort).
+  async function createEmployeeAccount({ profile: input, actorId } = {}) {
+    if (!validId(actorId)) throw new TypeError('createEmployeeAccount needs the HR actorId.');
     const profile = validateProfile(input);
+    const prefix = departmentPrefix(profile.job.department);
+    const temporaryPassword = generatePassword();
     const passwordHash = await hashing.hash(temporaryPassword);
     const at = now();
-    let createdId = null,
-      saved = null;
-    try {
-      const row = await store.createAccount(
-        {
-          username: name,
-          passwordHash,
-          role: 'employee',
-          mustChangePassword: true,
-          createdBy: actor.account.id,
-          action: 'employee_created',
-          at,
-        },
-        async (account) => {
-          createdId = account.id;
-          saved = await profiles.write(account.id, profile, actor.account.id, at);
-        },
-      );
-      return { account: accountView(row, at), profile: saved };
-    } catch (error) {
-      if (createdId) await profiles.remove(createdId).catch(() => {});
-      throw error;
+    for (let attempt = 1; ; attempt++) {
+      let createdId = null,
+        saved = null;
+      try {
+        const row = await store.createEmployee(
+          { prefix, passwordHash, createdBy: actorId, at },
+          async (account) => {
+            if (passwordProblem(temporaryPassword, account.username))
+              throw new Error('The generated password does not meet the password rules.');
+            createdId = account.id;
+            saved = await profiles.write(account.id, profile, actorId, at);
+          },
+        );
+        return { employee: { account: accountView(row, at), profile: saved }, temporaryPassword };
+      } catch (error) {
+        if (createdId) await profiles.remove(createdId).catch(() => {});
+        if (error?.code !== 'USERNAME_TAKEN') throw error;
+        if (attempt >= employeeIdAttempts) throw accountErrors.unavailable();
+      }
     }
   }
 
+  // POST /api/hr/employees: { profile } only. The Employee ID and the
+  // temporary password are the server's, so any other key (username,
+  // temporaryPassword) is 400 EMPLOYEE_INVALID.
+  async function createEmployee(actor, body) {
+    if (!isPlainObject(body) || Object.keys(body).some((key) => key !== 'profile'))
+      throw accountErrors.employeeInvalid();
+    return createEmployeeAccount({ profile: body.profile, actorId: actor.account.id });
+  }
+
+  // A department outside the six is accepted only when it is the one already
+  // stored (a profile saved before the list existed), so it stays editable.
   async function replaceProfile(actor, id, body) {
     if (!validId(id)) throw accountErrors.employeeNotFound();
-    const profile = validateProfile(body?.profile);
+    const job = isPlainObject(body?.profile) ? body.profile.job : undefined;
+    const requested =
+      isPlainObject(job) && typeof job.department === 'string' ? job.department.trim() : '';
+    const keepDepartment = isDepartment(requested)
+      ? undefined
+      : ((await profiles.read(id))?.job.department ?? '');
+    const profile = validateProfile(body?.profile, { keepDepartment });
     const at = now();
     let saved = null;
     const row = await store.employeeChange(
@@ -355,6 +388,7 @@ export function createAccountService({
     myProfile,
     listEmployees,
     getEmployee,
+    createEmployeeAccount,
     createEmployee,
     replaceProfile,
     resetPassword,

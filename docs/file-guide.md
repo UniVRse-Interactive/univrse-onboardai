@@ -138,11 +138,13 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | File                                    | Purpose                                                                                                                       |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `server/account-settings.mjs`           | When accounts are on, and the start-up guard (Firestore emulator off Cloud Run)                                               |
-| `server/account-service.mjs`            | Sign-in, sessions, lockout, password changes and HR actions (deletion and support summaries too)                              |
-| `server/account-store.mjs`              | PostgreSQL pool, queries and transactions; code-only error logs                                                               |
+| `server/account-service.mjs`            | Sign-in, sessions, lockout, password changes and HR actions; `createEmployeeAccount`, the one way employees are created       |
+| `server/account-store.mjs`              | PostgreSQL pool, queries and transactions (Employee ID allocation too); code-only error logs                                  |
 | `server/account-routes.mjs`             | `/api/auth`, `/api/me` and `/api/hr` routes and the `onboardai_account` cookie                                                |
 | `server/account-errors.mjs`             | Account error codes and messages                                                                                              |
-| `server/password-hashing.mjs`           | scrypt password hashes and password rules                                                                                     |
+| `server/password-hashing.mjs`           | scrypt password hashes, password rules and generated passwords (temporary and local HR)                                       |
+| `server/departments.mjs`                | The six departments and their Employee ID prefixes; import-free, the browser imports it too                                   |
+| `server/employee-ids.mjs`               | Department checks and the `PE-0001` Employee ID format                                                                        |
 | `server/employee-profiles.mjs`          | Profile validation and `employeeProfiles/{accountId}` in Firestore; removes an account's profile and `employeeImports` drafts |
 | `server/company-knowledge.mjs`          | HR company knowledge uploads and their search for account-owned chats                                                         |
 | `server/company-documents.mjs`          | Firestore `companyDocuments` and the library rules (one document per topic, twelve documents)                                 |
