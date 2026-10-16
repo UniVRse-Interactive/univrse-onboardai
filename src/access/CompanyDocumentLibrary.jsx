@@ -74,8 +74,8 @@ export default function CompanyDocumentLibrary({ workspace, onRefresh }) {
   return (
     <section className="hr-knowledge" id="company-documents" aria-labelledby="hr-knowledge-title">
       <div className="hr-knowledge-intro">
-        <span className="access-eyebrow">02 / COMPANY KNOWLEDGE</span>
-        <h2 id="hr-knowledge-title">Company documents.</h2>
+        <span className="access-eyebrow">02 / COMPANY DOCUMENTATION</span>
+        <h2 id="hr-knowledge-title">Company Documentation.</h2>
         <p>
           Add the guidance employees need. Alya uses the readable text in these files and shows its
           sources in the answer.

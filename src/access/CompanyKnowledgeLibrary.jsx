@@ -1,11 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from '../portal/Icon';
 import { onboardingDocumentTopics } from '../../server/onboarding-document-topics.mjs';
-import { connectedOnboardingTopics } from './onboarding-document-status.mjs';
-import './google-docs-library.css';
+import {
+  connectedOnboardingTopics,
+  documentLabel,
+  relatedDocuments,
+} from './onboarding-document-status.mjs';
+import {
+  acceptAttribute,
+  formatCharacters,
+  knowledgeText as text,
+  uploadSuccessMessage,
+  validateAdditionalName,
+  validateUploadFile,
+} from './company-knowledge-upload.mjs';
+import './company-knowledge-library.css';
 
 // Two-step in-page confirmation (no browser dialog).
-function DisconnectControl({ document, busy, confirming, onAsk, onConfirm, className }) {
+function RemoveControl({ document, busy, confirming, onAsk, onConfirm, className }) {
   if (!confirming)
     return (
       <button
@@ -14,19 +26,19 @@ function DisconnectControl({ document, busy, confirming, onAsk, onConfirm, class
         disabled={busy}
         onClick={() => onAsk(document.id)}
       >
-        Disconnect
+        {text.removeAction}
       </button>
     );
   return (
-    <span role="group" aria-label="Confirm disconnect" className="gd-confirm-disconnect">
-      <span>Disconnect this guide? New answers will use the remaining company guidance.</span>
+    <span role="group" aria-label="Confirm remove" className="gd-confirm-disconnect">
+      <span>{text.confirmRemove}</span>
       <button
         type="button"
         className={className}
         disabled={busy}
         onClick={() => onConfirm(document)}
       >
-        Yes, disconnect
+        Yes, remove
       </button>
       <button type="button" className={className} onClick={() => onAsk('')}>
         Keep
@@ -35,80 +47,72 @@ function DisconnectControl({ document, busy, confirming, onAsk, onConfirm, class
   );
 }
 
-// `api` is a createKnowledgeApi(...) adapter, so the same library serves the
-// guest workspace and signed-in HR company knowledge.
-export default function GoogleDocsLibrary({ workspace, onRefresh, api }) {
+// `api` is a createKnowledgeApi(...) adapter for the signed-in HR company
+// knowledge endpoints.
+export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
   const [topicId, setTopicId] = useState('company');
-  const [url, setUrl] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [relatedIndex, setRelatedIndex] = useState(0);
-  const [editing, setEditing] = useState(false);
   const [confirmingId, setConfirmingId] = useState('');
   const abortRef = useRef(null);
-  const inputRef = useRef(null);
+  const fileRef = useRef(null);
+  const nameRef = useRef(null);
   useEffect(() => () => abortRef.current?.abort(), []);
   const documents = workspace.documents || [];
   const fileLimit = workspace.limits?.files ?? 12;
   const topic = onboardingDocumentTopics.find((item) => item.id === topicId);
-  const drive = workspace.companyKnowledge?.drive;
-  const moveToDrive = workspace.driveMoves?.enabled === true;
-  const moveBlocked = workspace.driveMoves?.configured && !moveToDrive;
-  const sharedDocuments = drive?.state === 'connected' ? drive.documents : [];
-  const sharedIds = new Set(
-    sharedDocuments.map((document) => document.googleDocId).filter(Boolean),
-  );
-  const connections = connectedOnboardingTopics(documents, drive);
+  const connections = connectedOnboardingTopics(documents);
   const connected = connections[topicId];
   const completed = Object.keys(connections).length;
-  const related = [
-    ...documents.filter(
-      (document) =>
-        !sharedIds.has(document.googleDocId) &&
-        !onboardingDocumentTopics.some((item) => item.id === document.category),
-    ),
-    ...sharedDocuments
-      .filter((document) => document.category === 'additional')
-      .map((document) => ({ ...document, shared: true })),
-  ];
+  const related = relatedDocuments(documents);
   const index = Math.min(relatedIndex, Math.max(0, related.length - 1));
   const relatedDoc = related[index];
-  const sharedFull = moveToDrive && sharedDocuments.length >= fileLimit;
-  const full = sharedFull || documents.length >= fileLimit;
+  const full = documents.length >= fileLimit;
+  const blocked = full && !connected && !!topic;
   function choose(id) {
     setTopicId(id);
-    setUrl('');
     setName('');
     setStatus('');
     setError('');
-    setEditing(false);
-    if (!connections[id]) requestAnimationFrame(() => inputRef.current?.focus());
+    setConfirmingId('');
   }
-  async function connect(event) {
-    event.preventDefault();
+  function pick() {
     if (busy) return;
+    if (!topic) {
+      const problem = validateAdditionalName(name);
+      if (problem) {
+        setError(problem);
+        nameRef.current?.focus();
+        return;
+      }
+    }
+    setError('');
+    fileRef.current?.click();
+  }
+  async function upload(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || busy) return;
+    const problem = validateUploadFile(file);
+    if (problem) {
+      setError(problem);
+      setStatus('');
+      return;
+    }
     const abort = new AbortController();
     abortRef.current = abort;
     setBusy(true);
-    setStatus(
-      moveToDrive ? 'Checking and saving to company Drive…' : 'Checking Google Docs access…',
-    );
+    setStatus(`Uploading ${file.name}…`);
     setError('');
     try {
-      const result = await api.connect({ category: topicId, url, name }, abort.signal);
+      const result = await api.upload(file, { category: topicId, name }, abort.signal);
       await onRefresh();
       if (abort.signal.aborted) return;
-      setUrl('');
-      setEditing(false);
-      setStatus(
-        result.driveMove
-          ? 'Saved in the company folder. Alya can use this guidance for employees.'
-          : result.duplicate
-            ? 'This Google Doc is already connected.'
-            : 'Connected. Alya will use the current guidance in its next answer.',
-      );
+      setName('');
+      setStatus(uploadSuccessMessage(result, file.name));
     } catch (err) {
       if (err.name !== 'AbortError') {
         setError(err.message);
@@ -123,15 +127,26 @@ export default function GoogleDocsLibrary({ workspace, onRefresh, api }) {
     setBusy(true);
     setError('');
     try {
-      await api.disconnect(document.id);
+      await api.remove(document.id);
       await onRefresh();
-      setStatus('Guide disconnected. The Google Doc itself has not been deleted.');
+      setStatus('Guide removed. New answers use the remaining company guidance.');
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy(false);
     }
   }
+  const uploadButton = (label, primary) => (
+    <button
+      type="button"
+      className={'hr-screen-button' + (primary ? ' primary' : '')}
+      disabled={busy || blocked}
+      onClick={pick}
+    >
+      <Icon name="book" size={17} />
+      {busy ? 'Uploading…' : label}
+    </button>
+  );
   return (
     <section className="gd-library" aria-labelledby="gd-heading">
       <div className="gd-topic-area">
@@ -149,11 +164,11 @@ export default function GoogleDocsLibrary({ workspace, onRefresh, api }) {
           </span>
         </header>
         <p className="gd-intro">
-          Connected guidance is ticked below. Add a Google Doc only for a topic that is missing.
+          Uploaded guidance is ticked below. Upload a document only for a topic that is missing.
         </p>
         <div className="gd-topic-grid" aria-label="Core onboarding documents">
           {onboardingDocumentTopics.map((item, number) => {
-            const ready = !!connections[item.id];
+            const doc = connections[item.id];
             return (
               <button
                 type="button"
@@ -168,10 +183,14 @@ export default function GoogleDocsLibrary({ workspace, onRefresh, api }) {
                   <span>{String(number + 1).padStart(2, '0')}</span>
                 </span>
                 <strong>{item.title}</strong>
-                <span className="gd-topic-description">{item.description}</span>
-                <span className={'gd-topic-state' + (ready ? ' is-ready' : '')}>
-                  <Icon name={ready ? 'check' : 'arrow'} size={13} />
-                  {ready ? 'Connected' : 'Add Google Doc'}
+                <span className="gd-topic-description">
+                  {doc
+                    ? `${documentLabel(doc)} · ${formatCharacters(doc.characters)}`
+                    : item.description}
+                </span>
+                <span className={'gd-topic-state' + (doc ? ' is-ready' : '')}>
+                  <Icon name={doc ? 'check' : 'arrow'} size={13} />
+                  {doc ? text.connected : text.uploadAction}
                 </span>
               </button>
             );
@@ -188,39 +207,27 @@ export default function GoogleDocsLibrary({ workspace, onRefresh, api }) {
             disabled={busy || full}
             onClick={() => choose('additional')}
           >
-            <span aria-hidden="true">+</span> Add another Google Doc
+            <span aria-hidden="true">+</span> {text.addAnother}
           </button>
         </div>
         {relatedDoc && (
           <div className="gd-related-record">
             <Icon name="book" size={17} />
             <span>
-              <strong>
-                {relatedDoc.googleDocId
-                  ? relatedDoc.title
-                  : 'Existing company guidance ' + String(index + 1).padStart(2, '0')}
-              </strong>
+              <strong>{relatedDoc.title || documentLabel(relatedDoc)}</strong>
               <small>
-                {relatedDoc.googleDocId
-                  ? 'Related Google Doc'
-                  : 'Previously added guidance · retained for Alya'}
+                {formatCharacters(relatedDoc.characters)}
+                {relatedDoc.fileName ? ' · ' + relatedDoc.fileName : ''}
               </small>
             </span>
-            {!relatedDoc.shared && (
-              <DisconnectControl
-                document={relatedDoc}
-                busy={busy}
-                confirming={confirmingId === relatedDoc.id}
-                onAsk={setConfirmingId}
-                onConfirm={remove}
-                className="gd-small-action"
-              />
-            )}
-            {relatedDoc.shared && (
-              <span className="gd-available">
-                <Icon name="check" size={14} /> In company Drive
-              </span>
-            )}
+            <RemoveControl
+              document={relatedDoc}
+              busy={busy}
+              confirming={confirmingId === relatedDoc.id}
+              onAsk={setConfirmingId}
+              onConfirm={remove}
+              className="gd-small-action"
+            />
             {related.length > 1 && (
               <div className="gd-pager">
                 <button
@@ -253,138 +260,58 @@ export default function GoogleDocsLibrary({ workspace, onRefresh, api }) {
       >
         <div className="gd-doc-symbol" aria-hidden="true">
           <Icon name="book" size={28} />
-          <span>DOC</span>
         </div>
-        <span className="hr-kicker">GOOGLE DOCS ONLY</span>
-        <h2 id="gd-connect-heading">
-          {connected && !editing
-            ? 'Already connected.'
-            : connected
-              ? 'Update this guide.'
-              : moveToDrive
-                ? 'Save your guide.'
-                : 'Connect your guide.'}
-        </h2>
-        <p>
-          {connected && !editing
-            ? 'No need to add this guide again.'
-            : moveToDrive
-              ? 'Add a Doc to your company folder.'
-              : 'Link a Google Doc your company can read.'}
-        </p>
-        {connected && !editing ? (
-          <div className="gd-connected-guide">
-            <span className="gd-connected-check">
-              <Icon name="check" size={30} />
-            </span>
-            <h3>{topic.title}</h3>
-            <span className="gd-available">
-              <Icon name="check" size={15} /> Available to Alya
-            </span>
-            <p>
-              {connected.source === 'drive'
-                ? 'Your company Drive already provides this guidance.'
-                : 'This guidance is already in your company library.'}
-            </p>
-            {connected.source === 'workspace' &&
-              connected.googleDocId &&
-              connected.category === topicId && (
-                <button
-                  className="hr-screen-button"
-                  type="button"
-                  onClick={() => {
-                    setEditing(true);
-                    requestAnimationFrame(() => inputRef.current?.focus());
-                  }}
-                >
-                  Change Google Doc
-                </button>
-              )}
-          </div>
-        ) : (
-          <form onSubmit={connect} aria-busy={busy}>
-            <div className="gd-current-topic">
-              <Icon name={topic?.icon || 'book'} size={18} />
-              <strong>{topic?.title || 'Another related guide'}</strong>
-            </div>
-            {!topic && (
-              <label>
-                Guide topic
-                <input
-                  maxLength={80}
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="For example, Workplace Safety"
-                  required
-                  disabled={busy}
-                />
-              </label>
-            )}
-            <label htmlFor="gd-link">Google Docs link</label>
-            <input
-              id="gd-link"
-              ref={inputRef}
-              type="url"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://docs.google.com/document/d/…"
-              maxLength={2048}
-              autoComplete="off"
-              spellCheck={false}
-              required
-              disabled={busy}
-            />
-            <button
-              type="submit"
-              className="hr-screen-button primary"
-              disabled={busy || moveBlocked || (full && !connected)}
-            >
-              <Icon name="book" size={17} />
-              {busy
-                ? moveToDrive
-                  ? 'Saving to company Drive…'
-                  : 'Checking document…'
-                : moveToDrive
-                  ? 'Save to company Drive'
-                  : connected
-                    ? 'Replace connected Google Doc'
-                    : 'Connect Google Doc'}
-              <Icon name="arrow" size={17} />
-            </button>
-            <small>
-              {moveBlocked
-                ? 'Adding company-wide guidance requires verified HR access. Use the local HR workspace for now.'
-                : moveToDrive
-                  ? 'Moves this Doc into shared company guidance. Editor access required.'
-                  : 'Only native Google Docs. Give the connected company account Viewer access.'}
-            </small>
-          </form>
-        )}
-        {connected?.source === 'workspace' && (
+        <span className="hr-kicker">{topic ? topic.title.toUpperCase() : 'ANOTHER GUIDE'}</span>
+        <h2 id="gd-connect-heading">{connected ? text.replaceHeading : text.heading}</h2>
+        <p>{text.hint}</p>
+        <div className="gd-current-topic">
+          <Icon name={topic?.icon || 'book'} size={18} />
+          <strong>{topic?.title || 'Another related guide'}</strong>
+        </div>
+        {connected && (
           <div className="gd-current-connection">
             <span>
-              <Icon name="check" size={15} /> Connected for this topic
+              <Icon name="check" size={15} /> {text.connected}: {documentLabel(connected)} ·{' '}
+              {formatCharacters(connected.characters)}
             </span>
-            <div>
-              {connected.googleDocId && (
-                <a
-                  href={'https://docs.google.com/document/d/' + connected.googleDocId + '/edit'}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open Google Doc <Icon name="external" size={13} />
-                </a>
-              )}
-              <DisconnectControl
-                document={connected}
-                busy={busy}
-                confirming={confirmingId === connected.id}
-                onAsk={setConfirmingId}
-                onConfirm={remove}
-              />
-            </div>
           </div>
         )}
+        {!topic && (
+          <>
+            <label htmlFor="gd-name">{text.nameLabel}</label>
+            <input
+              id="gd-name"
+              ref={nameRef}
+              maxLength={80}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder={text.namePlaceholder}
+              autoComplete="off"
+              disabled={busy}
+            />
+          </>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          hidden
+          accept={acceptAttribute}
+          aria-label={text.chooseFile}
+          onChange={upload}
+        />
+        <div className="gd-actions">
+          {uploadButton(connected ? text.replaceAction : text.uploadAction, true)}
+          {connected && (
+            <RemoveControl
+              document={connected}
+              busy={busy}
+              confirming={confirmingId === connected.id}
+              onAsk={setConfirmingId}
+              onConfirm={remove}
+              className="hr-screen-button"
+            />
+          )}
+        </div>
         <div className="gd-feedback" aria-live="polite">
           {status && (
             <p role="status">
@@ -397,32 +324,13 @@ export default function GoogleDocsLibrary({ workspace, onRefresh, api }) {
               {error}
             </p>
           )}
-          {full && !connected && (
-            <p className="gd-error">
-              {sharedFull
-                ? 'The company folder has twelve documents. Ask HR to organise it before adding another.'
-                : 'Your library has twelve documents. Disconnect an unused guide first.'}
-            </p>
-          )}
+          {blocked && <p className="gd-error">{text.limitReached}</p>}
         </div>
         {!status && !error && (
-          <footer className="gd-drive-status">
+          <footer className="gd-note">
             <Icon name="shield" size={17} />
             <div>
-              <strong>
-                {drive?.state === 'connected'
-                  ? 'Company Drive is connected'
-                  : drive?.state === 'unavailable'
-                    ? 'Company Drive needs attention'
-                    : 'Your existing Drive connection'}
-              </strong>
-              <span>
-                {drive?.state === 'connected'
-                  ? `${drive.documents.length} guides stay available to Alya.`
-                  : drive?.state === 'unavailable'
-                    ? drive.error
-                    : 'Individual Google Docs can be connected above.'}
-              </span>
+              <span>{text.privacy}</span>
             </div>
           </footer>
         )}
