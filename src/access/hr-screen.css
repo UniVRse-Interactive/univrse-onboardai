@@ -832,10 +832,14 @@
   .hr-screen-header nav {
     order: 3;
     flex-basis: 100%;
+    flex-wrap: wrap;
+    min-width: 0;
   }
+  /* Two buttons per row, so four sections never push the page wider. */
   .hr-screen-header nav button {
     justify-content: center;
-    flex: 1;
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
     padding-inline: 8px;
     font-size: 12px;
   }
