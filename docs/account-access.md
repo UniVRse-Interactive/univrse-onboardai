@@ -107,6 +107,35 @@ about profiles name the operation and Firestore status only, never values.
   `FIRESTORE_EMULATOR_HOST` is set. Local test personal data therefore never reaches a cloud
   Firestore database.
 
+## Local setup in Docker (one command)
+
+`npm run local` builds and starts the whole local stack in Docker (PostgreSQL, the Firestore
+emulator, the API, the voice service and the website) and prints the HR login. It starts
+Docker Desktop on macOS if it is not running, waits for it (up to 120 s), then runs
+`docker compose build` and `docker compose up -d --wait web`.
+
+The one-shot `setup` service runs `node server/local-setup.mjs` in the api image. It refuses to
+run if `K_SERVICE` is set, `FIRESTORE_EMULATOR_HOST` is missing or the `DATABASE_URL` host is
+not `localhost`, `127.0.0.1`, `::1` or `postgres`. It waits up to 60 s for PostgreSQL, applies
+the migrations and makes sure the local HR account (`LOCAL_HR_ID`, default `HR-0001`) exists:
+
+- No such account: it creates an HR account with a generated password (no forced change) and
+  writes `.cache/local-stack/hr-login.json` (mode 0600; `hrId`, `password`, `appUrl`,
+  `emulatorUiUrl`, `updatedAt`).
+- Account and a stored password that still works: reused, nothing changes.
+- Account but no usable stored password (for example an account made with `hr:create`): nothing
+  changes. The summary says the password is not stored here and suggests `npm run local:reset-hr`.
+- Other accounts are never touched.
+
+| Command                  | What it does                                                                                                                 |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `npm run local`          | Build, start and print the summary (App, HR ID, HR password, Emulator UI, Postgres)                                          |
+| `npm run local:reset-hr` | `docker compose run --rm -e LOCAL_HR_RESET=1 setup`: new generated password for the HR account, lock cleared, sessions ended |
+| `npm run local:down`     | `docker compose stop web api tts`. The databases keep running; nothing is removed                                            |
+| `npm run local:logs`     | `docker compose logs -f web api tts setup`                                                                                   |
+
+The login file holds local test data only and is ignored by Git (`.cache/`).
+
 ## Local setup
 
 The Docker stack in `compose.yaml` runs PostgreSQL (127.0.0.1:5442) and the Firebase

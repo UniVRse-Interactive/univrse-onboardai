@@ -121,6 +121,7 @@ The persisted/API field named `card` remains compatible with existing chats and 
 - `migrate-database.mjs`: apply the account database migrations (`npm run db:migrate`).
 - `create-hr-account.mjs`: create an HR account (`npm run hr:create`).
 - `reset-hr-password.mjs`: recover an HR account (`npm run hr:reset-password`).
+- `local-stack.mjs`: start, reset, stop and log the local Docker stack (`npm run local`, `local:reset-hr`, `local:down`, `local:logs`).
 
 Use the `npm` commands in the README rather than remembering these file paths.
 
@@ -149,6 +150,8 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | `scripts/migrate-database.mjs`   | `npm run db:migrate`                                                                            |
 | `scripts/create-hr-account.mjs`  | `npm run hr:create`: the first HR account, password never shown or passed as an argument        |
 | `scripts/reset-hr-password.mjs`  | `npm run hr:reset-password`: recover an HR account (new password, lock cleared, sessions ended) |
+| `server/local-setup.mjs`         | The compose `setup` service: guard, migrations, local HR login, `hr-login.json`, banner         |
+| `scripts/local-stack.mjs`        | Host command for `npm run local*`: starts Docker, runs compose, prints the login summary        |
 | `scripts/hr-account-tool.mjs`    | Input (terminal without echo, or piped lines) and rules shared by both HR scripts               |
 
 ## Uploaded company guidance

@@ -19,6 +19,10 @@ npm.cmd run dev
 
 Open [the website](http://localhost:3000/) or [Alya's chat](http://localhost:3000/mira).
 
+### One command in Docker
+
+`npm run local` starts everything in Docker (PostgreSQL, the Firestore emulator, the API, the voice service and the website), creates the tables and a local HR account, and prints the website address, the HR ID and password, and the Emulator UI address. It starts Docker Desktop on macOS if needed. `npm run local:reset-hr` sets a new HR password, `npm run local:down` stops the app containers (the databases keep running) and `npm run local:logs` follows their logs. See [Account access](docs/account-access.md#local-setup-in-docker-one-command).
+
 ### Local setup with HR and employee accounts
 
 Accounts are optional. They need Docker for PostgreSQL and the Firestore emulator (`compose.yaml`):
@@ -99,6 +103,10 @@ The original avatar is kept as lossless gzip. Its transfer is about 52.4 MiB; it
 | `npm.cmd run db:migrate`        | Create or update the account tables; safe to repeat                                        |
 | `npm.cmd run hr:create`         | Create an HR account; the password is prompted for, never passed as an argument            |
 | `npm.cmd run hr:reset-password` | Recover an HR account: new password, lock cleared, its sessions ended                      |
+| `npm.cmd run local`             | Start the whole stack in Docker and print the local HR login                               |
+| `npm.cmd run local:reset-hr`    | Set a new password for the local HR account and print it                                   |
+| `npm.cmd run local:down`        | Stop the app containers (databases keep running)                                           |
+| `npm.cmd run local:logs`        | Follow the app container logs                                                              |
 
 ## Local settings and data
 

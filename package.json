@@ -18,7 +18,11 @@
     "db:up": "docker compose up -d --wait",
     "db:migrate": "node scripts/migrate-database.mjs",
     "hr:create": "node scripts/create-hr-account.mjs",
-    "hr:reset-password": "node scripts/reset-hr-password.mjs"
+    "hr:reset-password": "node scripts/reset-hr-password.mjs",
+    "local": "node scripts/local-stack.mjs start",
+    "local:reset-hr": "node scripts/local-stack.mjs reset",
+    "local:down": "node scripts/local-stack.mjs down",
+    "local:logs": "node scripts/local-stack.mjs logs"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.3.1",
