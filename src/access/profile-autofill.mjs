@@ -35,17 +35,19 @@ const text = (value) => (typeof value === 'string' ? value.trim() : '');
 // Fills only the empty form fields from result.profile. Employee ID and the
 // password fields are not profile fields, so they are never touched.
 // -> { form, filled: ['job.fullName'], skipped: ['contact.workEmail'] }
-// `skipped` are fields the document had a value for but HR had already typed.
+// `filled` is the server's `filled` list narrowed to the fields actually filled
+// here. `skipped` are fields the document had a value for but HR had typed.
 export function mergeAutofill(form, result) {
   const next = {};
   for (const group of profileGroups) next[group.key] = { ...(form?.[group.key] || {}) };
+  const serverFilled = new Set(Array.isArray(result?.filled) ? result.filled : []);
   const filled = [];
   const skipped = [];
   for (const group of profileGroups)
     for (const field of group.fields) {
       const path = `${group.key}.${field.key}`;
       const found = text(result?.profile?.[group.key]?.[field.key]);
-      if (!found) continue;
+      if (!found || !serverFilled.has(path)) continue;
       if (text(next[group.key][field.key])) skipped.push(path);
       else {
         next[group.key][field.key] = found;
@@ -57,13 +59,18 @@ export function mergeAutofill(form, result) {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-export function autofillSummary({ filled, skipped, fileName }) {
+export function autofillSummary({ filled, skipped, fileName, dropped = [] }) {
   const base = filled.length
     ? `Filled ${plural(filled.length, 'field')} from ${fileName}. Check them before saving.`
     : `Nothing new was filled from ${fileName}.`;
-  return skipped.length
-    ? `${base} Skipped ${plural(skipped.length, 'field')} you had already filled in.`
-    : base;
+  const parts = [base];
+  if (skipped.length)
+    parts.push(`Skipped ${plural(skipped.length, 'field')} you had already filled in.`);
+  if (dropped.length)
+    parts.push(
+      `${plural(dropped.length, 'value')} in the document wasn't valid and was left out: ${dropped.join(', ')}.`,
+    );
+  return parts.join(' ');
 }
 
 const problemPhrase = {
@@ -86,6 +93,18 @@ export function warningNotes(warnings, form) {
     notes[field] = `The document's ${def.label.toLowerCase()} ${phrase}, so it was left empty.`;
   }
   return notes;
+}
+
+// Labels of fields with a warning that already hold text (typed by HR), so they
+// get no per-field note. -> ['Personal email']
+export function droppedLabels(warnings, form) {
+  const labels = [];
+  for (const { field } of Array.isArray(warnings) ? warnings : []) {
+    const def = fieldIndex.get(field);
+    if (def && text(form?.[def.group]?.[def.key]) && !labels.includes(def.label))
+      labels.push(def.label);
+  }
+  return labels;
 }
 
 // Editing a field removes its "from document" mark and its warning note.

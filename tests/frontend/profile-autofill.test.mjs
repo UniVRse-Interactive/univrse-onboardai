@@ -6,6 +6,7 @@ import {
   autofillSummary,
   checkAutofillFile,
   clearFieldMarks,
+  droppedLabels,
   emptyAutofillState,
   markFilled,
   mergeAutofill,
@@ -20,7 +21,7 @@ const result = (patch = {}) => ({
     contact: { ...profileToForm(null).contact, workEmail: 'ada@example.com' },
     ...patch,
   },
-  filled: [],
+  filled: ['job.fullName', 'job.jobTitle', 'contact.workEmail'],
   warnings: [],
 });
 
@@ -50,6 +51,7 @@ test('merge fills only empty fields and reports filled and skipped', () => {
 test('merge never adds an ID or password and ignores unknown fields', () => {
   const merged = mergeAutofill(profileToForm(null), {
     profile: { username: 'X', temporaryPassword: 'p', job: { fullName: 'A', password: 'p' } },
+    filled: ['username', 'temporaryPassword', 'job.fullName', 'job.password'],
   });
   assert.deepEqual(Object.keys(merged.form).sort(), [
     'contact',
@@ -128,4 +130,32 @@ test('error codes map to messages', () => {
     'Too big.',
   );
   assert.match(autofillErrorMessage({}), /couldn't read/);
+});
+
+test('filled counts only the server filled list that was also filled here', () => {
+  const merged = mergeAutofill(profileToForm(null), {
+    ...result(),
+    filled: ['job.fullName', 'job.manager'],
+  });
+  assert.deepEqual(merged.filled, ['job.fullName']);
+  assert.equal(merged.form.job.jobTitle, '', 'not in the server list, so not filled');
+});
+
+test('warnings on fields HR already filled go in the summary', () => {
+  const form = profileToForm(null);
+  form.contact.personalEmail = 'me@example.com';
+  const warnings = [
+    { field: 'contact.personalEmail', problem: 'invalid_email' },
+    { field: 'job.startDate', problem: 'invalid_date' },
+  ];
+  assert.deepEqual(droppedLabels(warnings, form), ['Personal email']);
+  assert.equal(
+    autofillSummary({
+      filled: ['a'],
+      skipped: [],
+      fileName: 'cv.pdf',
+      dropped: ['Personal email'],
+    }),
+    "Filled 1 field from cv.pdf. Check them before saving. 1 value in the document wasn't valid and was left out: Personal email.",
+  );
 });

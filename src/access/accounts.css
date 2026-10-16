@@ -522,12 +522,49 @@
   border: 1px dashed #6c8995;
   border-radius: 6px;
 }
-.account-autofill input[type='file'] {
+.hr-preview-page .hr-accounts .account-autofill label {
+  color: #1f3047;
+  font-size: 13px;
+  font-weight: 600;
+}
+.hr-preview-page .hr-accounts .account-autofill input[type='file'] {
+  box-sizing: border-box;
+  width: 100%;
   max-width: 100%;
+  height: auto;
+  min-height: 0;
+  padding: 8px 10px;
   font-size: 13px;
   color: #1f3047;
+  background: #fff;
+  border: 1px solid #6c8995;
+  border-radius: 6px;
 }
-.account-autofill input[type='file']:disabled {
+.hr-preview-page .hr-accounts .account-autofill input[type='file']::file-selector-button {
+  min-height: 36px;
+  margin-right: 12px;
+  padding: 6px 14px;
+  font: inherit;
+  font-weight: 500;
+  color: #1f3047;
+  background: #fff;
+  border: 1px solid #6c8995;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.hr-preview-page .hr-accounts .account-autofill input[type='file']::file-selector-button:hover {
+  background: #eaf2f7;
+}
+.hr-preview-page .hr-accounts .account-autofill input[type='file']:disabled {
+  cursor: not-allowed;
+  color: #3e5368;
+  background: #eef3f6;
+  border-color: #6c8995;
+}
+.hr-preview-page .hr-accounts .account-autofill input[type='file']:disabled::file-selector-button {
+  color: #3e5368;
+  background: #eef3f6;
+  border-color: #6c8995;
   cursor: not-allowed;
 }
 .account-autofill input[type='file']:focus-visible {

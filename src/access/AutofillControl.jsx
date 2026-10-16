@@ -9,6 +9,7 @@ import {
   autofillSummary,
   checkAutofillFile,
   clearFieldMarks,
+  droppedLabels,
   emptyAutofillState,
   markFilled,
   mergeAutofill,
@@ -52,7 +53,13 @@ export function useProfileAutofill(form, setForm) {
       const notes = warningNotes(result.warnings, merged.form);
       setForm(merged.form);
       setMarksState((previous) => markFilled(previous, merged.filled, notes));
-      setSummary(autofillSummary({ ...merged, fileName: file.name }));
+      setSummary(
+        autofillSummary({
+          ...merged,
+          fileName: file.name,
+          dropped: droppedLabels(result.warnings, merged.form),
+        }),
+      );
     } catch (err) {
       if (!alive.current) return;
       if (err?.name === 'AbortError') setError('Cancelled. Nothing was filled in.');
