@@ -18,6 +18,8 @@ import {
   sampleSourceTitle,
 } from '../server/company-document-retriever.mjs';
 import { createApp } from '../server/api-routes.mjs';
+import { randomUUID } from 'node:crypto';
+import { signedInFetch, stubAccounts } from './server/signed-in.mjs';
 
 // Synthetic Vertex AI Search configuration and chunk-mode responses. No test
 // calls Google: every request goes to an injected fetch and token provider.
@@ -417,21 +419,38 @@ test('without VERTEX_SEARCH_ENGINE_ID, retrieval uses the labelled sample guide 
   assert.deepEqual(await retrieve('Is this guidance unapproved?'), []);
 });
 
+// Chat needs a signed-in account (issue #55): the server below has a
+// synthetic employee, and each question is a turn of a new in-memory chat.
+const signedIn = signedInFetch();
 async function withServer(options, check) {
-  const server = createApp({ getAccessToken: token, ...options }).listen(0, '127.0.0.1');
+  const app = createApp({
+    getAccessToken: token,
+    accountService: stubAccounts(),
+    ...options,
+    env: { CHAT_DATABASE_PATH: ':memory:', ...options.env },
+  });
+  const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {
     await check(`http://127.0.0.1:${server.address().port}`);
   } finally {
     await new Promise((resolve) => server.close(resolve));
+    await app.locals.closeChat();
   }
 }
-const ask = (url, question = 'What are the working hours?') =>
-  fetch(url + '/api/chat', {
+const ask = async (url, question = 'What are the working hours?') => {
+  const chat = await (await signedIn(url + '/api/conversations', { method: 'POST' })).json();
+  return signedIn(url + '/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, taskId: 'quiz-part-1' }),
+    body: JSON.stringify({
+      question,
+      taskId: 'quiz-part-1',
+      conversationId: chat.id,
+      requestId: randomUUID(),
+    }),
   });
+};
 
 test('document-search mode quotes Vertex AI Search passages by file name and never calls Gemini', async () => {
   const { calls, fetchImpl } = fakeSearch();

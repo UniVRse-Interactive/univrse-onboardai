@@ -916,6 +916,27 @@ Run answers 403 before the api sees the request.
 `staging.tfvars`, plan, apply, then run the staging deploy again: the api and
 the agent both read the latest version.
 
+### The checklist agent (#51) and Gemini voice (#52)
+
+The onboarding checklist agent runs on Vertex AI Agent Engine like the intake
+agent, in the same region (`deploy.yml` `INTAKE_AGENT_LOCATION`, equal to
+`var.intake_agent_location`). `checklist_agent.tf` creates its runtime account
+`onboardai-checklist<suffix>` with `roles/aiplatform.user` and
+`roles/datastore.user` (limited by an IAM condition to the environment's own
+Firestore database), and lets the deployer act as it. Staging always has them.
+Production only with `checklist_agent_production = true`; apply that after
+staging is verified, then set the GitHub variable `CHECKLIST_AGENT_ENABLED=true`
+on production. The `checklist_agent` job of `deploy.yml` deploys the agent with
+`npm run checklist-agent:deploy` and hands the engine to the api as
+`CHECKLIST_AGENT_ENGINE`; it skips with a notice while the commit has no such
+script, or on production while the variable is not true.
+
+The api speaks with Gemini TTS using its own `roles/aiplatform.user`; no new
+grant. `deploy.yml` passes `VOICE_PROVIDER` (default `gemini`),
+`GEMINI_TTS_MODEL` (`gemini-3.8-flash-tts`), `GEMINI_TTS_LOCATION` (`global`)
+and, when the GitHub variable `GEMINI_TTS_VOICE` is set, that voice. Set
+`VOICE_PROVIDER=kokoro` to fall back to the tts service.
+
 ### Cost of staging
 
 Every staging service scales to zero, so an idle staging stack costs little.

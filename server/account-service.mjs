@@ -3,9 +3,10 @@ import { accountErrors, departmentErrors } from './account-errors.mjs';
 import { createAccountStore, createDatabasePool } from './account-store.mjs';
 import { formatEmployeeId, prefixPattern, reservedPrefix } from './employee-ids.mjs';
 import { createFirestoreClient } from './firestore-client.mjs';
+import { trackOf } from './onboarding-content.mjs';
 import {
+  asProfileStorageError,
   createProfileStore,
-  profileStorageErrors,
   profileSummary,
   validateProfile,
 } from './employee-profiles.mjs';
@@ -40,14 +41,6 @@ const isPlainObject = (value) =>
 // the counter (hr:create); each try uses up a number, so a few are enough.
 const employeeIdAttempts = 3;
 const lockedAt = (row, at) => Boolean(row.locked_until) && new Date(row.locked_until) > at;
-// Chat-store failures (ChatError STORAGE_*) on HR routes answer like the other
-// Firestore failures there; anything else (CHAT_BUSY) passes through.
-const asProfileStorageError = (error) =>
-  error?.code === 'STORAGE_TIMEOUT'
-    ? profileStorageErrors.timeout()
-    : typeof error?.code === 'string' && error.code.startsWith('STORAGE_')
-      ? profileStorageErrors.unavailable()
-      : error;
 
 // Department names (issue #36): one line, trimmed, 1 to 60 characters.
 export const departmentNameMax = 60;
@@ -67,10 +60,6 @@ function checkDepartmentField(field, raw) {
   }
   return { value };
 }
-
-// The chat store's summary scope describes a browser's chats; an account's
-// chats follow the employee, so HR's summaries say so.
-export const accountSummaryScope = 'This employee’s saved conversations';
 
 // What a signed-in browser learns about its own account.
 const selfView = (row, expiresAt) => ({
@@ -232,6 +221,8 @@ export function createAccountService({
     return profiles.read(account.id);
   }
 
+  // Each item: { account, profile (the list summary), track }. The track is
+  // job.track, or employee when the profile has none.
   async function listEmployees() {
     const rows = await store.listEmployees();
     const found = await profiles.readMany(rows.map((row) => row.id));
@@ -239,6 +230,7 @@ export function createAccountService({
     return rows.map((row) => ({
       account: accountView(row, at),
       profile: profileSummary(found.get(row.id)) || null,
+      track: trackOf(found.get(row.id)),
     }));
   }
 
@@ -449,11 +441,12 @@ export function createAccountService({
 
   // Deletes an employee's personal data, then the account. eraseChats(owner)
   // removes the account's chats, checkpoints and support preferences from the
-  // chat store. The account is signed out first, Firestore is cleaned next (every
-  // step is safe to repeat), and only then is the PostgreSQL account deleted,
+  // chat store; eraseAgentSessions(accountId), when given, the checklist
+  // agent's sessions (#51). The account is signed out first, Firestore is
+  // cleaned next (every step is safe to repeat), and only then is the PostgreSQL account deleted,
   // so a Firestore failure leaves the account in place and a retry finishes the
   // job. HR accounts are never deleted here (404 EMPLOYEE_NOT_FOUND).
-  async function deleteEmployee(actor, id, { eraseChats }) {
+  async function deleteEmployee(actor, id, { eraseChats, eraseAgentSessions = null }) {
     const row = await employeeOrThrow(id);
     await store.endEmployeeSessions(row.id);
     try {
@@ -461,40 +454,32 @@ export function createAccountService({
     } catch (error) {
       throw asProfileStorageError(error);
     }
+    // The checklist agent's sessions (best effort; it never throws).
+    if (eraseAgentSessions) await eraseAgentSessions(row.id);
     await profiles.removeAccountData(row.id);
     const deleted = await store.deleteEmployee(actor.account.id, row.id, now());
     if (!deleted) throw accountErrors.employeeNotFound();
   }
 
-  // One entry per employee account, in the /employees order: the display name
-  // (preferred name, else full name, else the ID) and the support summary of
-  // the account's chats. summaryOf(owner) is the chat store's supportSummary:
-  // aggregates only, never questions, answers or document text. Only its
-  // `scope` text is replaced.
-  async function supportSummaries(summaryOf) {
-    const listed = await listEmployees();
-    const employees = [];
-    for (let i = 0; i < listed.length; i += 10) {
-      const batch = listed.slice(i, i + 10);
-      employees.push(
-        ...(await Promise.all(
-          batch.map(async ({ account, profile }) => {
-            let summary;
-            try {
-              summary = await summaryOf(`account:${account.id}`);
-            } catch (error) {
-              throw asProfileStorageError(error);
-            }
-            return {
-              account,
-              name: profile?.preferredName || profile?.fullName || account.username,
-              summary: { ...summary, scope: accountSummaryScope },
-            };
-          }),
-        )),
-      );
-    }
-    return employees;
+  // An HR change to an employee's Firestore data with its audit row: the
+  // account_events row is inserted, then during(account) runs (the Firestore
+  // write), then the commit. A failure in during() rolls the row back. Resolves
+  // to what during() returned; 404 EMPLOYEE_NOT_FOUND for an unknown or HR id.
+  async function recordEmployeeChange(actor, id, action, during, detail = null) {
+    if (!validId(id)) throw accountErrors.employeeNotFound();
+    let result;
+    const row = await store.employeeChange(
+      actor.account.id,
+      id,
+      action,
+      now(),
+      async (account) => {
+        result = await during(account);
+      },
+      detail,
+    );
+    if (!row) throw accountErrors.employeeNotFound();
+    return result;
   }
 
   return {
@@ -516,7 +501,7 @@ export function createAccountService({
     resetPassword,
     setStatus,
     deleteEmployee,
-    supportSummaries,
+    recordEmployeeChange,
     close: async () => {
       await Promise.allSettled([store.close?.(), profiles.close?.()]);
     },

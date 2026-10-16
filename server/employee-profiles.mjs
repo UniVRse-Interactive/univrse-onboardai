@@ -2,6 +2,8 @@ import { AccountError } from './account-errors.mjs';
 import { commitInBatches, deleteOperation } from './firestore-checkpointer.mjs';
 import { createStorageCall } from './firestore-client.mjs';
 import { departments as seedDepartments } from './departments.mjs';
+import { journeyCollections } from './onboarding-collections.mjs';
+import { tracks } from './onboarding-content.mjs';
 
 // Each employee's personal profile is one Firestore document,
 // employeeProfiles/{accountId}. Only HR writes it; an employee reads their own.
@@ -20,6 +22,8 @@ export const importMentions = (data, accountId) =>
 // group -> field -> rule. Every field is optional text except job.fullName and
 // job.department, which validateProfile requires to be one of the
 // active departments (departmentProblem below; `max` still bounds stored values).
+// job.track (issue #47) is employee, intern or contractor, stored in lower
+// case; '' (missing) means employee.
 export const profileSchema = Object.freeze({
   job: {
     fullName: { max: 120, required: true },
@@ -28,6 +32,7 @@ export const profileSchema = Object.freeze({
     department: { max: 120 },
     startDate: { max: 10, kind: 'date' },
     manager: { max: 120 },
+    track: { max: 20, kind: 'track' },
   },
   contact: {
     workEmail: { max: 254, kind: 'email' },
@@ -78,6 +83,7 @@ const problemText = {
   invalid_date: 'must be a date in YYYY-MM-DD form',
   invalid_phone: 'must be a phone number using digits, spaces, +, -, ( ) or .',
   invalid_department: 'must be one of the departments in the list',
+  invalid_track: 'must be employee, intern or contractor',
 };
 
 function fieldProblem(value, rule) {
@@ -90,6 +96,10 @@ function fieldProblem(value, rule) {
   if (rule.kind === 'email' && !emailPattern.test(text)) return ['invalid_email'];
   if (rule.kind === 'date' && !validDate(text)) return ['invalid_date'];
   if (rule.kind === 'phone' && !phonePattern.test(text)) return ['invalid_phone'];
+  if (rule.kind === 'track') {
+    const track = text.toLowerCase();
+    return tracks.includes(track) ? [null, track] : ['invalid_track'];
+  }
   return [null, text];
 }
 
@@ -211,6 +221,15 @@ export const profileStorageErrors = {
       'Employee profiles are temporarily unavailable. Please try again shortly.',
     ),
 };
+// Chat-store and other Firestore failures (ChatError STORAGE_*) on account
+// routes answer like the profile failures there; anything else (CHAT_BUSY,
+// a rule error) passes through.
+export const asProfileStorageError = (error) =>
+  error?.code === 'STORAGE_TIMEOUT'
+    ? profileStorageErrors.timeout()
+    : typeof error?.code === 'string' && error.code.startsWith('STORAGE_')
+      ? profileStorageErrors.unavailable()
+      : error;
 const profileStorageError = (error) =>
   error?.code === 'STORAGE_TIMEOUT'
     ? profileStorageErrors.timeout()
@@ -315,20 +334,33 @@ export function createProfileStore({
       guarded('delete employee profile', async () => {
         await ref(await database(), accountId).delete();
       }),
-    // Deletes the profile and every import draft that mentions the account (a
+    // Deletes the profile, every import draft that mentions the account (a
     // full scan of the small employeeImports collection; nothing when it does
-    // not exist). Safe to repeat.
+    // not exist) and the onboarding journey data (issues #47-#51): progress,
+    // first-day details, support requests and proposed checklist changes
+    // (agentActions). Anonymous knowledgeGaps stay.
+    // The profile goes last, so an interrupted run is found again. Safe to repeat.
     removeAccountData: (accountId) =>
       guarded('delete employee data', async () => {
         const db = await database();
-        const drafts = await db
-          .collection(importCollection)
-          .select('targetEmployee', 'createdBy', 'possibleDuplicates')
-          .get();
+        const owned = (name) =>
+          db.collection(name).where('accountId', '==', accountId).select().get();
+        const [drafts, requests, actions] = await Promise.all([
+          db
+            .collection(importCollection)
+            .select('targetEmployee', 'createdBy', 'possibleDuplicates')
+            .get(),
+          owned(journeyCollections.supportRequests),
+          owned(journeyCollections.agentActions),
+        ]);
         await commitInBatches(db, [
           ...drafts.docs
             .filter((doc) => importMentions(doc.data(), accountId))
             .map((doc) => deleteOperation(doc.ref)),
+          ...requests.docs.map((doc) => deleteOperation(doc.ref)),
+          ...actions.docs.map((doc) => deleteOperation(doc.ref)),
+          deleteOperation(db.collection(journeyCollections.progress).doc(accountId)),
+          deleteOperation(db.collection(journeyCollections.firstDay).doc(accountId)),
           deleteOperation(ref(db, accountId)),
         ]);
       }),

@@ -11,6 +11,7 @@
     "voice:prepare": "node scripts/download-voice-model.mjs",
     "check:share": "node scripts/check-shareable-files.mjs",
     "check:gemini": "node scripts/check-gemini-connection.mjs",
+    "check:voice": "node scripts/check-gemini-voice.mjs",
     "check:search": "node scripts/check-vertex-ai-search.mjs",
     "docs:import": "node scripts/import-company-documents.mjs",
     "format": "prettier --write .",
@@ -23,7 +24,10 @@
     "local": "node scripts/local-stack.mjs start",
     "local:reset-hr": "node scripts/local-stack.mjs reset",
     "local:down": "node scripts/local-stack.mjs down",
-    "local:logs": "node scripts/local-stack.mjs logs"
+    "local:logs": "node scripts/local-stack.mjs logs",
+    "checklist-agent": "node scripts/start-checklist-agent.mjs",
+    "checklist-agent:test": "node scripts/start-checklist-agent.mjs --test",
+    "checklist-agent:deploy": "node scripts/deploy-checklist-agent.mjs"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.3.1",

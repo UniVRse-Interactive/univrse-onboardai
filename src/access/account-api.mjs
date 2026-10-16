@@ -147,7 +147,6 @@ export const accountApi = {
   // body holds only the changed fields: { name?, prefix?, archived? }
   updateDepartment: (id, body) =>
     accountRequest('/api/hr/departments/' + enc(id), { method: 'PATCH', body }),
-  supportSummaries: (options) => accountRequest('/api/hr/support-summaries', options),
   setStatus: (id, status) =>
     accountRequest('/api/hr/employees/' + enc(id) + '/status', {
       method: 'PUT',

@@ -12,6 +12,7 @@ import { createProfileAutofill } from '../../server/profile-autofill.mjs';
 import { createFirestoreChatMemory } from '../../server/firestore-chat-memory.mjs';
 import { createConversationService } from '../../server/gemini-chat-workflow.mjs';
 import { hashPassword, verifyPassword } from '../../server/password-hashing.mjs';
+import { builtInTemplate } from '../../server/onboarding-content.mjs';
 import { FakeFirestore } from './fake-firestore.mjs';
 import { createTestDatabase } from './test-database.mjs';
 
@@ -138,6 +139,7 @@ export class Browser {
   get = (path, headers) => this.request('GET', path, undefined, headers);
   post = (path, body = {}, headers) => this.request('POST', path, body, headers);
   put = (path, body = {}, headers) => this.request('PUT', path, body, headers);
+  patch = (path, body = {}, headers) => this.request('PATCH', path, body, headers);
   // A raw file upload, as the HR Company knowledge page sends it.
   upload = (path, buffer, fileName, headers) =>
     this.request(
@@ -160,7 +162,9 @@ export class Browser {
 // given, is passed to createProfileAutofill (model, fetchImpl, timeoutMs, ...)
 // with its log lines kept in `logs`; without it the app builds its default
 // autofill service, whose Vertex AI requests fail. The company search is the
-// synthetic handbook (`companyRetrieve`).
+// synthetic handbook (`companyRetrieve`). `models` replaces the fake Gemini
+// models of gemini-chat mode; the onboarding journey uses the same fake
+// Firestore and clock, with no template cache.
 export async function startAccountsApp({
   mode = 'document-search',
   env: extraEnv = {},
@@ -168,6 +172,17 @@ export async function startAccountsApp({
   storageTimeoutMs = 300,
   autofill = undefined,
   companyRetrieve = fakeRetrieve,
+  models = fakeModels,
+  // Optional voice stand-ins (POST /api/voice and /api/tts/local).
+  sharedVoice = undefined,
+  localVoice = null,
+  // The checklist agent (#51) and Gemini voice (#52) stand-ins; off by default.
+  checklistAgent = null,
+  geminiVoice = null,
+  // The written-check grader (check-grader.mjs); off by default.
+  checkGrader = null,
+  // The api -> tts ID token provider (service-auth.mjs); createApp's default when undefined.
+  idTokenProvider = undefined,
 } = {}) {
   const database = await createTestDatabase();
   const firestore = new FakeFirestore();
@@ -188,7 +203,7 @@ export async function startAccountsApp({
   // The app passes in its retriever, which adds the company library for
   // account-owned chats.
   const conversationService = ({ retrieve }) =>
-    createConversationService({ env, memory, models: fakeModels(), retrieve });
+    createConversationService({ env, memory, models: models(), retrieve });
   const getAccessToken = async () => 'synthetic-token';
   const fetchImpl = async () => {
     throw new Error('No Google request is expected in account tests.');
@@ -201,6 +216,13 @@ export async function startAccountsApp({
     companyRetrieve,
     getAccessToken,
     fetchImpl,
+    journeyStorage: enabled ? { firestore, now: clock.now, cacheMs: 0, log } : null,
+    localVoice,
+    checklistAgent,
+    geminiVoice,
+    checkGrader,
+    ...(idTokenProvider !== undefined ? { idTokenProvider } : {}),
+    ...(sharedVoice ? { sharedVoice } : {}),
     ...(autofill
       ? {
           profileAutofill: createProfileAutofill({
@@ -269,6 +291,20 @@ export async function startAccountsApp({
       });
       if (changed.status !== 200) throw new Error(`Password change failed: ${changed.text}`);
       return { employee, browser, temporaryPassword };
+    },
+    // Records Alya's briefing (contract v1.5) of every required step of the
+    // track, straight in the progress document, as POST .../briefing would.
+    // For tests about something else; the briefing gate has its own tests.
+    briefAll(accountId, { track = 'employee', by = 'read' } = {}) {
+      const path = `onboardingProgress/${accountId}`;
+      const current = firestore.read(path) || { accountId, steps: {} };
+      const at = clock.now().toISOString();
+      const steps = { ...current.steps };
+      for (const area of builtInTemplate(track).areas)
+        for (const step of area.steps)
+          if (step.required && step.briefing)
+            steps[step.id] = { ...(steps[step.id] || {}), briefedAt: at, briefedBy: by };
+      firestore.write(path, { accountId, updatedAt: at, steps });
     },
     rows: database.rows,
     memory,

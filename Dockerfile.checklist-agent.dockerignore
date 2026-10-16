@@ -1,0 +1,13 @@
+# Context of Dockerfile.checklist-agent: only the agent package's files the
+# image copies. BuildKit reads this file instead of .dockerignore for that
+# Dockerfile.
+*
+!agent-platform/onboarding-checklist/pyproject.toml
+!agent-platform/onboarding-checklist/uv.lock
+!agent-platform/onboarding-checklist/.python-version
+!agent-platform/onboarding-checklist/onboarding_checklist
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.venv
+**/.adk

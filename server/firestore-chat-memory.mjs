@@ -456,6 +456,36 @@ export function createFirestoreChatMemory({
       return { updated: a.at };
     });
   }
+  // A message added outside a turn (the checklist agent's reply after the
+  // employee decides on a proposed change, #51): the next message slot, with
+  // no support observation. 409 CHAT_BUSY while an answer is running.
+  function appendMessage(owner, id, message) {
+    return call('save agent reply', async () => {
+      const p = await paths(),
+        ref = chatRef(p, id);
+      await p.db.runTransaction(async (tx) => {
+        const data = (await tx.get(ref)).data(),
+          at = now();
+        if (!visible(data, owner, at)) throw chatNotFound();
+        if (leased(data, at)) throw chatBusy(busyMessages.answer);
+        tx.set(messagesOf(ref).doc(messageDocId(data.messageCount)), {
+          id: message.id,
+          role: message.role,
+          data: JSON.stringify(message),
+        });
+        tx.update(ref, { messageCount: data.messageCount + 1, updated: at });
+      });
+    });
+  }
+  // Merges fields into one saved assistant message (a proposed action's new
+  // status, #51). Not chat activity.
+  async function amendMessage(owner, id, messageId, fields) {
+    await answerEvent('update answer', owner, id, messageId, (a) => {
+      Object.assign(a.message, fields);
+      a.tx.update(a.doc.ref, { data: JSON.stringify(a.message) });
+      return null;
+    });
+  }
   // Removes everything this owner has: every chat with its messages, support
   // observations and checkpoints (expired and half-deleted chats included), then
   // the support preferences. Nothing is removed while one of the owner's answers
@@ -518,6 +548,8 @@ export function createFirestoreChatMemory({
     feedback,
     voiceEvent,
     humanHelp,
+    appendMessage,
+    amendMessage,
     close: async () => {
       const open = client;
       client = null;

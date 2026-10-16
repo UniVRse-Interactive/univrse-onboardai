@@ -1,0 +1,520 @@
+/* One continuous presentation stage; chat remains a separate reading surface. */
+.alya-live-page .alya-live-shell {
+  grid-template-columns: minmax(0, 7fr) minmax(300px, 3fr);
+  grid-template-areas: 'presentation answers';
+  gap: 18px;
+}
+.alya-presentation-stage {
+  grid-area: presentation;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid #738c9e;
+  border-radius: 16px;
+  background: #c4d6dc;
+  container-type: inline-size;
+}
+.alya-presentation-stage > .alya-office {
+  background: linear-gradient(120deg, #b7cbd2, #d8e3e3 50%, #91a9b7);
+  filter: blur(5px);
+  opacity: 0.7;
+}
+.alya-presentation-stage .alya-office-window {
+  border-color: #718a95;
+  background: repeating-linear-gradient(0deg, #e8efec 0, #d7e3df 7px, #b5c9cc 8px);
+}
+.alya-presentation-stage .alya-office-frame {
+  border-color: #657d8b;
+  opacity: 0.6;
+}
+.ap-stage-heading {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 23px 27px;
+  color: #223d56;
+  background: linear-gradient(#e3edefee, #e3edef99 75%, transparent);
+}
+.ap-stage-heading > div > span {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+.ap-stage-heading h1 {
+  margin: 7px 0 0;
+  font-size: clamp(26px, 3cqw, 38px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  color: #2d4365;
+}
+.ap-answer-picker {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  font-size: 10px;
+  color: #2f4c58;
+  width: min(44%, 250px);
+}
+.ap-answer-picker select {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid #5f7d8d;
+  border-radius: 6px;
+  color: #2d4365;
+  background: #edf4f5;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+.ap-presenter {
+  position: absolute;
+  top: 0;
+  bottom: 30px;
+  left: 0;
+  width: 72%;
+  transition:
+    left 500ms ease,
+    width 500ms ease;
+}
+.ap-presenter .alya-canvas,
+.ap-presenter .alya-avatar-poster {
+  transform: scale(1.16);
+  transform-origin: center 60%;
+  transition:
+    transform 650ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 450ms;
+}
+.is-presenting .ap-presenter .alya-canvas,
+.is-presenting .ap-presenter .alya-avatar-poster {
+  transform: scale(1);
+}
+.ap-presenter .alya-avatar-stage {
+  height: 100%;
+  background: transparent;
+}
+.ap-presenter .alya-stage-top {
+  display: none;
+}
+.ap-presenter .alya-stage-bottom {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 70px 24px 25px;
+  background: linear-gradient(transparent, #243b53ed);
+  /* Fade the shade out sideways so it never ends in a hard edge mid-stage. */
+  mask-image: linear-gradient(to right, #000 55%, transparent);
+}
+.ap-presenter .alya-avatar-name strong {
+  font-size: clamp(29px, 4cqw, 48px);
+  color: #f7fafd;
+}
+.ap-presenter .alya-avatar-name small {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ap-presenter .alya-presence {
+  white-space: normal;
+  font-size: 11px;
+  border: 0;
+  background: none;
+  padding: 0;
+}
+.ap-presenter .alya-model-state {
+  top: 120px;
+  left: 12px;
+  right: 12px;
+}
+.ap-welcome {
+  position: absolute;
+  right: 5%;
+  top: 30%;
+  width: 28%;
+  color: #233d56;
+  z-index: 3;
+}
+.ap-welcome-rule {
+  display: block;
+  width: 38px;
+  height: 3px;
+  background: #256a91;
+  margin-bottom: 23px;
+}
+.ap-welcome h2 {
+  font-size: clamp(24px, 3.5cqw, 43px);
+  letter-spacing: -0.045em;
+  line-height: 1.15;
+  white-space: pre-line;
+}
+.ap-welcome p {
+  margin-top: 20px;
+  font-size: clamp(13px, 1.5cqw, 16px);
+  line-height: 1.85;
+}
+.ap-stage-caption {
+  position: absolute;
+  inset: auto 0 0;
+  height: 30px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #2d4365;
+  color: #e3f3f4;
+  font-size: 10px;
+  z-index: 5;
+}
+.ap-avatar-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ap-avatar-status > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ap-avatar-status button {
+  min-height: 24px;
+  padding: 0 4px;
+  color: #b8dfe3;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.alya-presentation-stage .ap-avatar-status button:hover:not(:disabled) {
+  background: transparent;
+  color: #f7fafd;
+}
+.alya-presentation-stage .ap-avatar-status button:focus-visible {
+  outline-color: #e3f3f4;
+}
+.ap-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #79a1b3;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+/* The chat column: the short reply first, the full answer on request. */
+.alya-live-page .alya-chat-heading {
+  min-height: 62px;
+  padding: 12px 20px;
+  background: #2d4365;
+}
+.alya-live-page .alya-chat-heading h2 {
+  font-size: 21px;
+}
+.alya-live-page .alya-chat-log {
+  padding: 20px 19px 28px;
+}
+.alya-live-page .alya-message.user {
+  margin-left: 24px;
+}
+.alya-live-page .alya-message.assistant {
+  padding-left: 0;
+}
+.alya-live-page .alya-message p {
+  font-size: 14px;
+  line-height: 1.85;
+}
+.alya-live-page .alya-short-reply {
+  display: block;
+  overflow: visible;
+}
+.alya-live-page .alya-short-reply .alya-answer-lead {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.65;
+  color: #f1f6fa;
+  margin-bottom: 10px;
+}
+.alya-live-page .alya-short-reply p + p {
+  margin-top: 0;
+}
+.alya-live-page .alya-short-steps {
+  margin: 0;
+  padding-left: 23px;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.85;
+}
+.alya-short-steps li + li {
+  margin-top: 9px;
+}
+.alya-short-steps li::marker {
+  color: #b8dfe3;
+  font-weight: 650;
+}
+/* Shown with the reply but never spoken: a label above it, a hint below it. */
+.alya-live-page .alya-message p.alya-reply-heading {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  color: #b8dfe3;
+}
+.alya-live-page .alya-message p.alya-reply-note {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #c1d1d6;
+}
+.alya-full-reply {
+  margin: 12px 0 0;
+}
+.alya-full-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 0;
+  color: #b8dfe3;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.alya-full-toggle:hover {
+  color: #e3f3f4;
+}
+.alya-full-toggle > svg {
+  flex-shrink: 0;
+}
+.alya-full-reply.is-open > .alya-full-toggle {
+  border-bottom: 1px solid #637b9460;
+  margin-bottom: 12px;
+}
+.alya-full-reply.is-open > .alya-full-toggle > svg {
+  transform: rotate(180deg);
+}
+.alya-full-body > p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #dfe8e8;
+}
+.alya-live-page .alya-composer-area {
+  padding: 12px 16px 10px;
+}
+.alya-live-page .alya-composer textarea {
+  font-size: 13px;
+}
+.alya-live-page .alya-chat-caption {
+  font-size: 9px;
+  line-height: 1.6;
+}
+.alya-live-page .alya-voice-options {
+  max-height: min(420px, 65dvh);
+  overflow-y: auto;
+}
+.alya-live-page .alya-chat-panel .alya-full-toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+.alya-presentation-stage button:focus-visible,
+.alya-presentation-stage select:focus-visible {
+  outline: 2px solid #1f4f64;
+  outline-offset: 3px;
+}
+.alya-presentation-stage button:hover:not(:disabled) {
+  background: #d8e9ed;
+}
+.alya-presentation-stage.reduce-motion *,
+.alya-presentation-stage.reduce-motion *::after {
+  animation: none !important;
+  transition: none !important;
+}
+@media (max-height: 780px) and (min-width: 981px) {
+  .ap-stage-heading {
+    padding: 18px 22px;
+  }
+}
+@media (max-width: 1100px) and (min-width: 981px) {
+  /* A little more room for the transcript on small laptops (QA F-4). */
+  .alya-live-page .alya-live-shell {
+    grid-template-columns: minmax(0, 13fr) minmax(320px, 7fr);
+    gap: 12px;
+  }
+}
+@media (max-width: 980px) {
+  .alya-live-page .alya-live-shell {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'presentation' 'answers';
+    gap: 10px;
+  }
+  .ap-stage-heading {
+    padding: 14px 18px;
+  }
+  .ap-stage-heading > div > span {
+    font-size: 8px;
+  }
+  .ap-stage-heading h1 {
+    font-size: 24px;
+    margin-top: 5px;
+  }
+  .ap-presenter {
+    width: 58%;
+    bottom: 24px;
+  }
+  .ap-presenter .alya-stage-bottom {
+    padding: 34px 16px 14px;
+    gap: 8px;
+  }
+  .ap-presenter .alya-avatar-name strong {
+    font-size: 26px;
+  }
+  .ap-presenter .alya-avatar-name small {
+    display: none;
+  }
+  .ap-presenter .alya-presence {
+    font-size: 10px;
+  }
+  .ap-stage-caption {
+    height: 24px;
+    font-size: 9px;
+    padding: 0 15px;
+  }
+  .ap-welcome {
+    top: 31%;
+    width: 36%;
+  }
+  .ap-welcome h2 {
+    font-size: 26px;
+  }
+  .ap-welcome p {
+    margin-top: 12px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .ap-welcome-rule {
+    margin-bottom: 12px;
+  }
+  .alya-live-page .alya-chat-heading {
+    min-height: 43px;
+    padding: 5px 16px;
+  }
+  .alya-live-page .alya-chat-heading h2 {
+    font-size: 17px;
+  }
+  .alya-live-page .alya-composer-area {
+    padding: 8px 13px 7px;
+  }
+  .alya-live-page .alya-composer textarea {
+    min-height: 44px;
+    height: 44px;
+  }
+  .alya-live-page .alya-chat-caption {
+    display: none;
+  }
+  .alya-live-page .alya-voice-toolbar {
+    margin-top: 5px;
+    min-height: 24px;
+  }
+}
+@media (max-width: 560px) {
+  .ap-stage-heading > div > span {
+    display: none;
+  }
+  .ap-answer-picker {
+    max-width: 48%;
+  }
+  .ap-answer-picker-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .ap-presenter {
+    width: 60%;
+  }
+  .ap-welcome {
+    width: 38%;
+  }
+  .ap-welcome h2 {
+    font-size: 21px;
+  }
+  .ap-welcome p {
+    font-size: 11px;
+  }
+  .ap-presenter .alya-stage-bottom {
+    padding: 32px 9px 16px;
+  }
+  .ap-presenter .alya-avatar-name {
+    gap: 5px;
+  }
+  .ap-presenter .alya-avatar-name strong {
+    font-size: 22px;
+  }
+  .ap-presenter .alya-presence {
+    font-size: 9px;
+  }
+  .ap-stage-caption {
+    font-size: 9px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alya-presentation-stage *,
+  .alya-presentation-stage *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* While a guide is showing, Alya stands at the centre of the stage. The stage
+   heading already names her, so only her status stays, on a readable pill. */
+.scene-presentation.is-presenting .ap-presenter .alya-stage-bottom {
+  align-items: center;
+  padding: 50px 18px 20px;
+}
+.automatic-stage .ap-presenter .alya-avatar-name {
+  display: none;
+}
+.automatic-stage .ap-presenter .alya-presence {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #243b53e6;
+  color: #f1f6fa;
+}
+
+/* One column (tablets and phones): the stage sits above the chat and the page
+   scrolls, instead of squeezing both into one screen. The chat keeps at least
+   600px, so the transcript stays readable (340px or more) and the composer is
+   in reach; on a phone the stage's caption and step buttons stay in view above it. */
+@media (max-width: 980px) {
+  .alya-live-page {
+    --alya-stage-height: clamp(390px, 108vw, 460px);
+  }
+  .uv-assistant-workspace {
+    height: auto;
+    min-height: 100dvh;
+    overflow-x: clip;
+    overflow-y: visible;
+  }
+  .uv-assistant-workspace > .uv-main,
+  .alya-live-page,
+  .alya-live-page .alya-live-shell {
+    flex: 1 0 auto;
+  }
+  .alya-live-page .alya-live-shell {
+    grid-template-rows: var(--alya-stage-height) auto;
+  }
+  .alya-live-page .alya-answer-space {
+    height: max(600px, calc(100dvh - var(--alya-stage-height) - 110px));
+  }
+}
+@media (max-width: 680px) {
+  .alya-live-page .alya-live-shell {
+    gap: 8px;
+  }
+}

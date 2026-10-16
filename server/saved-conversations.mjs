@@ -4,7 +4,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
 import { normaliseLearning } from './answer-style-preferences.mjs';
 import { createSupportStore } from './employee-support-tracking.mjs';
-import { ChatError, busyMessages, chatBusy, chatLimit, chatNotFound } from './chat-errors.mjs';
+import {
+  ChatError,
+  answerNotFound,
+  busyMessages,
+  chatBusy,
+  chatLimit,
+  chatNotFound,
+} from './chat-errors.mjs';
 
 export { ChatError };
 export const sessionHash = (token) => createHash('sha256').update(token).digest('hex');
@@ -152,6 +159,31 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
     for (const chat of chats) remove(chat.id);
     db.prepare('DELETE FROM support_preferences WHERE owner=?').run(owner);
   });
+  // The checklist agent's reply (#51), added outside a turn, with no support
+  // observation; and a merge into one saved assistant message.
+  const appendMessage = db.transaction((owner, id, message) => {
+    const row = owned(owner, id);
+    if (busy.has(id)) throw chatBusy(busyMessages.answer);
+    db.prepare('UPDATE conversations SET messages=?,updated=? WHERE id=? AND owner=?').run(
+      JSON.stringify([...JSON.parse(row.messages), message]),
+      Date.now(),
+      id,
+      owner,
+    );
+  });
+  const amendMessage = db.transaction((owner, id, messageId, fields) => {
+    const row = owned(owner, id);
+    if (busy.has(id)) throw chatBusy(busyMessages.feedback);
+    const messages = JSON.parse(row.messages);
+    const found = messages.find((m) => m.id === messageId && m.role === 'assistant');
+    if (!found) throw answerNotFound();
+    Object.assign(found, fields);
+    db.prepare('UPDATE conversations SET messages=? WHERE id=? AND owner=?').run(
+      JSON.stringify(messages),
+      id,
+      owner,
+    );
+  });
   function setLearning(owner, id, learning) {
     owned(owner, id);
     if (busy.has(id)) throw chatBusy(busyMessages.learning);
@@ -171,7 +203,7 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
     read: async (owner, id) => read(owner, id),
     erase: async (owner, id) => erase(owner, id),
     // Removes one owner's chats, checkpoints and support records together, or
-    // nothing while one is busy (guest removal; Firestore has the same method).
+    // nothing while one is busy (Firestore has the same method).
     eraseOwner: async (owner) => eraseOwner(owner),
     acquire: async (owner, id) => acquire(owner, id),
     setLearning: async (owner, id, learning) => setLearning(owner, id, learning),
@@ -184,6 +216,9 @@ export function createChatMemory(path = resolve('.cache/chat/conversations.sqlit
       support.feedback(owner, id, messageId, rating),
     voiceEvent: async (owner, id, messageId) => support.voice(owner, id, messageId),
     humanHelp: async (owner, id, messageId) => support.humanHelp(owner, id, messageId),
+    appendMessage: async (owner, id, message) => appendMessage(owner, id, message),
+    amendMessage: async (owner, id, messageId, fields) =>
+      amendMessage(owner, id, messageId, fields),
     close: async () => db.close(),
   };
 }

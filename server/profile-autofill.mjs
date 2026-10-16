@@ -15,7 +15,7 @@ import { autofillFileBytes, workspaceLimits } from './workspace-limits.mjs';
 // operation, file type, duration and outcome code.
 export const autofillLimits = Object.freeze({
   bytes: autofillFileBytes,
-  // The guest-upload document limit; longer extracted text is cut to this.
+  // The upload reader's document limit; longer extracted text is cut to this.
   characters: workspaceLimits.characters,
   timeoutMs: 45000,
 });
@@ -30,7 +30,7 @@ const pngSignature = (buffer) =>
 const zipSignature = startsWith([0x50, 0x4b, 0x03, 0x04]); // PK\3\4
 
 // PDFs (scanned ones too) and images go to Gemini as inline data; DOCX, TXT and
-// MD go through the guest-upload text reader and only their text is sent.
+// MD go through the shared upload text reader and only their text is sent.
 const fileTypes = {
   '.pdf': { mimeType: 'application/pdf', signature: pdfSignature },
   '.png': { mimeType: 'image/png', signature: pngSignature },
@@ -74,6 +74,8 @@ const fieldNotes = {
       'The department the employee’s role best belongs to: exactly one of the listed names, or null when unclear.',
     startDate: 'The employment start date, YYYY-MM-DD.',
     manager: 'The name of the person the employee reports to.',
+    track:
+      'The kind of engagement, only when the document states it: employee, intern or contractor, in lower case.',
   },
   contact: {
     _: 'The employee’s own contact details.',

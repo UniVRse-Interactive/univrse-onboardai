@@ -128,3 +128,18 @@ output "intake_agent_deploy_settings" {
     mcp_token_secret = google_secret_manager_secret.intake_mcp_token[0].secret_id
   } : null
 }
+
+output "checklist_agent_service_account_email" {
+  description = "Runtime service account of the onboarding checklist agent on Agent Engine (--service-account of npm run checklist-agent:deploy); null where the agent is off."
+  value       = local.checklist_agent ? google_service_account.checklist_agent[0].email : null
+}
+
+output "checklist_agent_deploy_settings" {
+  description = "What the deploy workflow passes to npm run checklist-agent:deploy; null where the agent is off."
+  value = local.checklist_agent ? {
+    location           = var.intake_agent_location
+    display_name       = local.checklist_agent_display_name
+    service_account    = google_service_account.checklist_agent[0].email
+    firestore_database = local.firestore_database_name
+  } : null
+}

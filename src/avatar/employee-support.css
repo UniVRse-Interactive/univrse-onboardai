@@ -1,0 +1,231 @@
+/* Signed-in employee extras in the chat: chips, Ask HR, approval cards, consent dialog. */
+.alya-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 0 10px;
+}
+.alya-chips button {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid #8fa8bb;
+  border-radius: 20px;
+  font-size: 13px;
+  color: #edf3f7;
+  text-align: left;
+}
+.alya-chips button:hover:not(:disabled) {
+  background: #3b5572;
+}
+.alya-ask-hr {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-left: 3px solid #bddfe5;
+  background: #2f4966;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.alya-ask-hr button,
+.alya-action-buttons button {
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid #bddfe5;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #edf3f7;
+}
+.alya-ask-hr button:hover:not(:disabled),
+.alya-action-buttons button:hover:not(:disabled) {
+  background: #3b5572;
+}
+.alya-action-buttons button:first-child {
+  background: #bddfe5;
+  color: #1f3047;
+}
+.alya-action-buttons button:first-child:hover:not(:disabled) {
+  background: #d0e9ed;
+}
+.alya-ask-hr-sent {
+  color: #d4e1ea;
+}
+.alya-action-card {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #5d7893;
+  background: #2f4966;
+  display: grid;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.alya-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.alya-action-resolved {
+  color: #d4e1ea;
+}
+.alya-action-error {
+  color: #ffd9d4;
+  font-size: 13px;
+}
+.sr-body {
+  padding: 22px 28px 28px;
+}
+.sr-lead {
+  font-size: 15px;
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+.sr-hint {
+  font-size: 13px;
+  color: #b8cad6;
+}
+.sr-preview {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+  max-height: 40dvh;
+  overflow: auto;
+  padding: 14px 16px;
+  background: #293f5b;
+  border: 1px solid #4b637e;
+}
+.sr-preview dt {
+  font-size: 12px;
+  color: #b8cad6;
+  margin-bottom: 3px;
+}
+.sr-preview dd {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.sr-preview ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.sr-note {
+  margin-top: 16px;
+  display: grid;
+  gap: 6px;
+}
+.sr-note label {
+  margin-bottom: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sr-note textarea {
+  width: 100%;
+  padding: 10px 12px;
+  background: #19273b;
+  color: #edf3f7;
+  border: 1px solid #7d94aa;
+  border-radius: 6px;
+  resize: vertical;
+}
+.sr-note textarea[aria-invalid='true'] {
+  border-color: #ffb4ab;
+  border-width: 2px;
+}
+.sr-note p {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #b8cad6;
+}
+.sr-note .sr-error-text {
+  color: #ffd9d4;
+}
+.sr-error {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #4a2f35;
+  border-left: 3px solid #ffb4ab;
+  color: #ffd9d4;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* v1.5: Alya's briefing on a step, shown in the transcript but not saved. */
+.alya-briefing .alya-briefing-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+  color: #edf3f7;
+}
+.alya-live-page .alya-message p.alya-briefing-source,
+.alya-live-page .alya-message p.alya-briefing-saved {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #c1d1d6;
+}
+.alya-live-page .alya-message p.alya-briefing-source {
+  margin-top: 8px;
+}
+.alya-briefing-status {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #d4e1ea;
+}
+.alya-briefing-status:empty {
+  display: none;
+}
+.alya-briefing-error {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: #4a2f35;
+  border-left: 3px solid #ffb4ab;
+  color: #ffd9d4;
+  font-size: 13px;
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+.alya-briefing-error button,
+.alya-briefing-card button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid #bddfe5;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #edf3f7;
+}
+.alya-briefing-card {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #5d7893;
+  background: #2f4966;
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.alya-briefing-card button {
+  background: #bddfe5;
+  color: #1f3047;
+}
+.alya-briefing-card button:hover:not(:disabled) {
+  background: #d0e9ed;
+}
+.alya-briefing-error button:hover:not(:disabled) {
+  background: #3b5572;
+}
+.alya-briefing button:focus-visible {
+  outline: 2px solid #bddfe5;
+  outline-offset: 2px;
+}

@@ -3,12 +3,17 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createApp } from '../server/api-routes.mjs';
 import { encodeWav } from '../server/kokoro-voice.mjs';
+import { signedInFetch, stubAccounts } from './server/signed-in.mjs';
 
-test('different visitors receive the same server voice and cannot override its identity', async () => {
+// /api/voice needs a signed-in account (issue #55).
+const fetch = signedInFetch();
+
+test('different signed-in visitors receive the same server voice and cannot override its identity', async () => {
   const calls = [],
     audio = encodeWav(new Float32Array([0, 0.25, -0.25, 1, -1]));
   const server = createApp({
     env: {},
+    accountService: stubAccounts(),
     sharedVoice: {
       render: async (...args) => {
         calls.push(args);
@@ -20,8 +25,11 @@ test('different visitors receive the same server voice and cannot override its i
   try {
     const url = `http://127.0.0.1:${server.address().port}/api/voice`;
     const outputs = [];
-    for (const agent of ['Windows', 'iPhone']) {
-      const response = await fetch(url, {
+    for (const [agent, who] of [
+      ['Windows', 'a'],
+      ['iPhone', 'b'],
+    ]) {
+      const response = await signedInFetch(who)(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'User-Agent': agent },
         body: JSON.stringify({ text: 'Hello', voice: agent }),
@@ -42,6 +50,13 @@ test('different visitors receive the same server voice and cannot override its i
       body: JSON.stringify({ text: 'x'.repeat(701) }),
     });
     assert.equal(bad.status, 400);
+    // Signed out: 401 and no synthesis.
+    const signedOut = await globalThis.fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'Hello' }),
+    });
+    assert.deepEqual([signedOut.status, (await signedOut.json()).code], [401, 'AUTH_REQUIRED']);
     assert.equal(calls.length, 2);
   } finally {
     await new Promise((resolve) => server.close(resolve));

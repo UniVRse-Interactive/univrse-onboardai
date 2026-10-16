@@ -1,13 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { accountApi } from './account-api.mjs';
-import { supportSummaryPeople } from './people-support.mjs';
-import PeopleSupport, { PeopleTotals } from './PeopleSupport';
+import { journeyErrorMessage } from './journey-errors.mjs';
+import { journeyApi } from './journey-api.mjs';
+import { supportCounter } from './hr-journey.mjs';
+import HrSupportRequests from './HrSupportRequests';
+import { HrKnowledgeGaps, HrTeamInsights } from './HrInsights';
 import { ScreenAlert, ScreenFooter, ScreenHeading } from './HrScreenParts';
+import './hr-journey.css';
 
-// People & Support for a signed-in HR session: real employee accounts, by name.
+// People & Support for a signed-in HR session. HR sees an individual's
+// struggles only when the employee confirmed a support request.
 export default function SignedInPeopleSupport({ headingRef }) {
-  const [people, setPeople] = useState(null);
-  const [selectedId, setSelectedId] = useState('');
+  const [requests, setRequests] = useState(null);
+  const [gaps, setGaps] = useState(null);
+  const [insights, setInsights] = useState(null);
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [updated, setUpdated] = useState(null);
@@ -19,16 +24,22 @@ export default function SignedInPeopleSupport({ headingRef }) {
     const abort = new AbortController();
     abortRef.current = abort;
     if (!quiet) setRefreshing(true);
+    const options = { signal: abort.signal };
     try {
-      const data = await accountApi.supportSummaries({ signal: abort.signal });
+      const [r, g, i] = await Promise.all([
+        journeyApi.hrSupportRequests(options),
+        journeyApi.hrKnowledgeGaps(options),
+        journeyApi.hrTeamInsights(options),
+      ]);
       if (token !== sequence.current) return;
-      const next = supportSummaryPeople(data);
-      setPeople(next);
-      setSelectedId((id) => (next.some((person) => person.id === id) ? id : next[0]?.id || ''));
+      setRequests(r);
+      setGaps(g);
+      setInsights(i);
       setError('');
       setUpdated(Date.now());
     } catch (err) {
-      if (err.name !== 'AbortError' && token === sequence.current) setError(err.message);
+      if (err.name !== 'AbortError' && token === sequence.current)
+        setError(journeyErrorMessage(err));
     } finally {
       if (token === sequence.current) setRefreshing(false);
     }
@@ -49,32 +60,50 @@ export default function SignedInPeopleSupport({ headingRef }) {
       document.removeEventListener('visibilitychange', visible);
     };
   }, [load]);
+  // A saved request replaces its row at once; the next refresh confirms it.
+  function saved(request) {
+    setRequests((current) => {
+      if (!current) return current;
+      const list = current.requests.map((item) =>
+        item.id === request.id ? { ...item, ...request } : item,
+      );
+      const counts = { open: 0, briefing_scheduled: 0, resolved: 0 };
+      for (const item of list) counts[item.status] = (counts[item.status] || 0) + 1;
+      return { ...current, requests: list, counts };
+    });
+    load(true);
+  }
   return (
     <>
       <ScreenHeading
         headingRef={headingRef}
         kicker="PEOPLE & SUPPORT"
-        title="A clearer picture of your people."
-        text="See the support employees ask for, and what you can offer next."
+        title="Support when people ask for it."
+        text="See the requests employees chose to send, the gaps in your documents and how the team is doing."
       >
-        {people && <PeopleTotals people={people} />}
+        {requests && (
+          <dl className="hr-screen-totals">
+            <div>
+              <dt>Support requests</dt>
+              <dd aria-label={`${supportCounter(requests.counts)} open support requests`}>
+                {supportCounter(requests.counts)}
+              </dd>
+            </div>
+          </dl>
+        )}
       </ScreenHeading>
       <ScreenAlert message={error} onRetry={() => load()} />
-      {!people ? (
-        !error && (
-          <div className="hr-screen-loading" role="status">
-            <h2>Getting your people ready…</h2>
-          </div>
-        )
-      ) : (
-        <PeopleSupport people={people} selectedId={selectedId} onSelect={setSelectedId} />
-      )}
+      <div className="hrj">
+        <HrSupportRequests data={requests} onChanged={saved} />
+        <HrKnowledgeGaps data={gaps} />
+        <HrTeamInsights data={insights} />
+      </div>
       <ScreenFooter
         updated={updated}
         refreshing={refreshing}
         onRefresh={() => load()}
         scope="Employee accounts"
-        retention="Reports update from saved conversations"
+        retention="Only requests employees confirmed are shown"
       />
     </>
   );

@@ -48,7 +48,6 @@ const autofillTooLarge = autofillErrors.tooLarge();
 // limit, and the 413 answer when a file is larger. Autofill keeps the API's
 // own AUTOFILL_FILE_TOO_LARGE answer.
 const uploads = new Map([
-  ['/guest-workspace/documents', { limit: workspaceLimits.bytes, tooLarge }],
   ['/hr/company-knowledge/documents', { limit: workspaceLimits.bytes, tooLarge: fileTooLarge }],
   [
     '/hr/employees/autofill',

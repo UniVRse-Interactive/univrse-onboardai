@@ -20,6 +20,8 @@ import { createChatMemory } from './saved-conversations.mjs';
 //   supportSummary(owner)              -> summary
 //   supportSettings(owner, patch)      -> summary
 //   feedback(owner, id, messageId, rating), voiceEvent(...), humanHelp(...) -> summary
+//   appendMessage(owner, id, message)  adds a message outside a turn (no observation)
+//   amendMessage(owner, id, messageId, fields)  merges fields into an assistant message
 //   close()
 //
 // `owner` is an opaque string chosen by api-routes: the hashed anonymous

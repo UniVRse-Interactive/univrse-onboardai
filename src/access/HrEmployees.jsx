@@ -19,7 +19,29 @@ import {
   profileToForm,
   validateProfileForm,
 } from './profile-validation.mjs';
+import { journeyApi } from './journey-api.mjs';
+import {
+  firstDayBody,
+  firstDayErrorView,
+  firstDayLimits,
+  firstDayToForm,
+  hrStepAction,
+  hrStepError,
+  hrStepStatus,
+  onboardingCell,
+  trackLabel,
+  tracks,
+  validateFirstDay,
+} from './hr-journey.mjs';
+import {
+  areaBadge,
+  areaSummary,
+  areasSummary,
+  optionalStepLabel,
+  thresholdOf,
+} from './onboarding-view.mjs';
 import './accounts.css';
+import './hr-journey.css';
 
 const inputTypes = { date: 'date', email: 'email', phone: 'tel' };
 
@@ -47,6 +69,29 @@ export function ProfileFields({
             onEdit?.(path);
             onChange({ ...form, [group.key]: { ...form[group.key], [field.key]: value } });
           };
+          if (field.kind === 'track')
+            return (
+              <div className="access-field account-field" key={path}>
+                <label htmlFor={`${idPrefix}-${group.key}-${field.key}`}>{field.label}</label>
+                <select
+                  id={`${idPrefix}-${group.key}-${field.key}`}
+                  value={form[group.key][field.key]}
+                  aria-invalid={errors[path] ? true : undefined}
+                  aria-describedby={`${idPrefix}-track-hint`}
+                  onChange={(event) => change(event.target.value)}
+                >
+                  {tracks.map((track) => (
+                    <option key={track.value} value={track.value}>
+                      {track.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="account-field-hint" id={`${idPrefix}-track-hint`}>
+                  Sets which onboarding steps and quick questions this person gets.
+                </p>
+                {errors[path] && <p className="account-field-error">{errors[path]}</p>}
+              </div>
+            );
           if (field.kind === 'department')
             return (
               <DepartmentField
@@ -554,6 +599,253 @@ function DeletePanel({ employee, onClose, onDone, onMissing }) {
   );
 }
 
+// Per-employee onboarding progress, with Verify / Unverify for steps HR confirms.
+function OnboardingPanel({ employee, onClose, onChanged }) {
+  const username = employee.account.username;
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const [notice, setNotice] = useState('');
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    journeyApi
+      .employeeOnboarding(employee.account.id)
+      .then((value) => alive.current && setData(value))
+      .catch((err) => alive.current && setError(err.message));
+    return () => {
+      alive.current = false;
+    };
+  }, [employee.account.id]);
+  async function change(step, status) {
+    setBusy(step.id);
+    setError('');
+    setNotice('');
+    try {
+      const next = await journeyApi.setEmployeeStep(employee.account.id, step.id, status);
+      if (!alive.current) return;
+      setData(next);
+      setNotice(status === 'done' ? `Verified “${step.title}”.` : `Moved “${step.title}” back.`);
+      onChanged();
+    } catch (err) {
+      if (alive.current) setError(hrStepError(err));
+    } finally {
+      if (alive.current) setBusy('');
+    }
+  }
+  return (
+    <Panel headingId="onboarding-heading" title={`Onboarding for ${username}`} onClose={onClose}>
+      {error && (
+        <p className="account-error-summary" role="alert">
+          {error}
+        </p>
+      )}
+      {!data && !error && <p role="status">Loading onboarding…</p>}
+      {data && (
+        <>
+          <p className="account-note">
+            {trackLabel(data.track)} track · {data.percent}% done · {areasSummary(data)}
+            {data.complete ? ' · Onboarding complete' : ''}
+            {data.waitingOnHr ? ` · ${data.waitingOnHr} waiting for you to verify` : ''}
+          </p>
+          <p role="status" className="account-notice" hidden={!notice}>
+            {notice}
+          </p>
+          <div className="hrj-areas">
+            {data.areas.map((area) => (
+              <section className="hrj-area" key={area.id} aria-labelledby={'hrj-' + area.id}>
+                <h4 id={'hrj-' + area.id}>
+                  <span aria-hidden="true">{area.icon}</span> {area.title}{' '}
+                  <span>
+                    {area.percent}% · {areaSummary(area)}
+                  </span>
+                  {areaBadge(area, data) && (
+                    <span className="account-badge hrj-complete">{areaBadge(area, data)}</span>
+                  )}
+                </h4>
+                <span
+                  className="hrj-bar"
+                  role="progressbar"
+                  aria-label={`${area.title} progress`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={area.percent}
+                >
+                  <span style={{ width: area.percent + '%' }} />
+                  <i
+                    style={{ left: thresholdOf(data) + '%' }}
+                    title={thresholdOf(data) + '% marker'}
+                  />
+                </span>
+                <ul className="hrj-steps">
+                  {area.steps.map((step) => {
+                    const action = hrStepAction(step);
+                    return (
+                      <li key={step.id} className={'hrj-step ' + step.status}>
+                        <div>
+                          <strong>{step.title}</strong>
+                          <small>
+                            {hrStepStatus(step)}
+                            {optionalStepLabel(step) ? ' · Optional' : ''}
+                          </small>
+                        </div>
+                        {action && (
+                          <button
+                            type="button"
+                            disabled={busy === step.id}
+                            aria-label={`${action.label}: ${step.title}`}
+                            onClick={() =>
+                              change(step, action.action === 'verify' ? 'done' : 'todo')
+                            }
+                          >
+                            {action.label}
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+// Per-employee first-day details (what the employee's "Your first day" card shows).
+function FirstDayPanel({ employee, onClose, onDone }) {
+  const username = employee.account.username;
+  const [form, setForm] = useState(null);
+  const [startDate, setStartDate] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [summary, setSummary] = useState('');
+  const [busy, setBusy] = useState(false);
+  const formRef = useRef(null),
+    summaryRef = useRef(null),
+    alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    journeyApi
+      .employeeFirstDay(employee.account.id)
+      .then((data) => {
+        if (!alive.current) return;
+        setForm(firstDayToForm(data.firstDay));
+        setStartDate(data.startDate);
+      })
+      .catch((err) => alive.current && setSummary(err.message));
+    return () => {
+      alive.current = false;
+    };
+  }, [employee.account.id]);
+  useFocusFirstError(formRef, errors, summaryRef, summary);
+  const set = (key) => (value) => setForm((current) => ({ ...current, [key]: value }));
+  async function submit(event) {
+    event.preventDefault();
+    if (busy || !form) return;
+    const found = validateFirstDay(form);
+    setSummary('');
+    setErrors(found);
+    if (Object.keys(found).length) return;
+    setBusy(true);
+    try {
+      await journeyApi.saveFirstDay(employee.account.id, firstDayBody(form));
+      onDone(`Saved first-day details for ${username}.`);
+    } catch (error) {
+      if (!alive.current) return;
+      const view = firstDayErrorView(error);
+      setErrors(view.errors);
+      setSummary(view.message);
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }
+  return (
+    <Panel
+      headingId="first-day-heading"
+      title={`First-day details for ${username}`}
+      onClose={onClose}
+    >
+      {!form ? (
+        summary ? (
+          <p className="account-error-summary" role="alert">
+            {summary}
+          </p>
+        ) : (
+          <p role="status">Loading first-day details…</p>
+        )
+      ) : (
+        <form className="account-form" onSubmit={submit} ref={formRef} noValidate>
+          <p className="account-note">
+            {startDate
+              ? `Start date: ${formatDay(startDate)}. `
+              : 'No start date in the profile yet. '}
+            The employee sees this on their dashboard and when they ask Alya where to go.
+          </p>
+          <div className="account-group-fields">
+            <TextField
+              id="first-day-location"
+              label="Where to go"
+              required
+              maxLength={firstDayLimits.location}
+              value={form.location}
+              onChange={set('location')}
+              error={errors.location}
+            />
+            <TextField
+              id="first-day-time"
+              label="Arrival time"
+              required
+              type="time"
+              value={form.arrivalTime}
+              onChange={set('arrivalTime')}
+              error={errors.arrivalTime}
+              hint="24-hour time, for example 09:00."
+            />
+            <TextField
+              id="first-day-host"
+              label="Host name"
+              required
+              maxLength={firstDayLimits.hostName}
+              value={form.hostName}
+              onChange={set('hostName')}
+              error={errors.hostName}
+            />
+            <TextField
+              id="first-day-contact"
+              label="Host contact"
+              maxLength={firstDayLimits.hostContact}
+              value={form.hostContact}
+              onChange={set('hostContact')}
+              error={errors.hostContact}
+              hint="Phone or email. Optional."
+            />
+            <TextField
+              id="first-day-notes"
+              label="Notes"
+              maxLength={firstDayLimits.notes}
+              value={form.notes}
+              onChange={set('notes')}
+              error={errors.notes}
+              hint="Anything else to know, such as what to bring. Optional."
+            />
+          </div>
+          <ErrorSummary message={summary} summaryRef={summaryRef} />
+          <div className="account-actions">
+            <button className="account-primary" type="submit" disabled={busy}>
+              {busy ? 'Saving…' : 'Save first-day details'}
+            </button>
+            <button type="button" className="account-secondary" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </Panel>
+  );
+}
+
 export default function HrEmployees() {
   const [employees, setEmployees] = useState(null);
   const [error, setError] = useState('');
@@ -686,6 +978,12 @@ export default function HrEmployees() {
           autofillEnabled={autofillEnabled}
         />
       )}
+      {panel?.type === 'onboarding' && selected && (
+        <OnboardingPanel key={panel.id} employee={selected} onClose={close} onChanged={load} />
+      )}
+      {panel?.type === 'firstday' && selected && (
+        <FirstDayPanel key={panel.id} employee={selected} onClose={close} onDone={done} />
+      )}
       {panel?.type === 'reset' && selected && (
         <ResetPasswordPanel key={panel.id} employee={selected} onClose={close} onDone={done} />
       )}
@@ -721,6 +1019,8 @@ export default function HrEmployees() {
                 <th scope="col">Name</th>
                 <th scope="col">Job title</th>
                 <th scope="col">Department</th>
+                <th scope="col">Track</th>
+                <th scope="col">Onboarding</th>
                 <th scope="col">Start date</th>
                 <th scope="col">Status</th>
                 <th scope="col">Last sign-in</th>
@@ -743,6 +1043,21 @@ export default function HrEmployees() {
                     </td>
                     <td data-label="Job title">{profile?.jobTitle || '—'}</td>
                     <td data-label="Department">{profile?.department || '—'}</td>
+                    <td data-label="Track">{trackLabel(employee.track)}</td>
+                    <td data-label="Onboarding">
+                      <span
+                        className="hr-table-percent"
+                        aria-label={onboardingCell(employee).label}
+                      >
+                        {onboardingCell(employee).percent}
+                        {onboardingCell(employee).complete && (
+                          <span className="account-badge hrj-complete">Complete</span>
+                        )}
+                        {onboardingCell(employee).waiting > 0 && (
+                          <small>{onboardingCell(employee).waiting} waiting for HR</small>
+                        )}
+                      </span>
+                    </td>
                     <td data-label="Start date">{formatDay(profile?.startDate) || '—'}</td>
                     <td data-label="Status">
                       <ul className="account-badges" aria-label={'Status of ' + account.username}>
@@ -770,6 +1085,20 @@ export default function HrEmployees() {
                           onClick={() => open({ type: 'edit', id: account.id })}
                         >
                           Edit profile
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={'Onboarding for ' + account.username}
+                          onClick={() => open({ type: 'onboarding', id: account.id })}
+                        >
+                          Onboarding
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={'First-day details for ' + account.username}
+                          onClick={() => open({ type: 'firstday', id: account.id })}
+                        >
+                          First day
                         </button>
                         <button
                           type="button"

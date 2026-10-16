@@ -18,7 +18,7 @@ For example, ask “What should I wear?” and then “What if I wear a tshirt?�
 
 ## Use it
 
-Open `/mira`. Send a question normally. **Saved chats** reopens earlier conversations; refresh or leave and return to continue the selected chat. **New chat** starts separate context. **Delete current chat** removes its visible history and LangGraph checkpoints after the on-screen confirmation.
+Open `/alya`. Send a question normally. **Saved chats** reopens earlier conversations; refresh or leave and return to continue the selected chat. **New chat** starts separate context. **Delete current chat** removes its visible history and LangGraph checkpoints after the on-screen confirmation.
 
 Without an account, memory is tied to an opaque HttpOnly browser cookie, not the website's editable profile name. A different browser/device has separate history, and clearing browser cookies loses access to that browser's history. When accounts are on (`DATABASE_URL`, see [Account access](account-access.md)) and the browser is signed in, chats belong to the account instead (owner `account:<accountId>`): they follow the employee to any browser and are saved in every answer mode, including `AI_MODE=document-search`, sample answers and single-turn Gemini. An expired or invalid account session gets `401 SESSION_EXPIRED` and never falls back to the anonymous cookie. New chats do not automatically reuse personal facts from other chats; reopen the original conversation to continue it.
 
@@ -159,7 +159,7 @@ npm run docs:import -- ./company-docs --apply
 
 ## Information boundaries
 
-Chats owned by a signed-in account also search the company knowledge library that HR uploads (Firestore `companyDocuments`), interleaved with Vertex AI Search or the sample guide; see [Account access](account-access.md#account-chats-and-the-company-library). Anonymous and guest chats do not.
+Chats owned by a signed-in account also search the company knowledge library that HR uploads (Firestore `companyDocuments`), interleaved with Vertex AI Search or the sample guide; see [Account access](account-access.md#company-documentation). Every chat belongs to a signed-in account (issue #55).
 
 Only documents approved for the intended employees belong in the data store. Prompt instructions cannot reliably hide PNC information that the model has already received. Exclude restricted HR records, passwords, individual salary/medical details and other material employees should not access. Employee sign-in now exists (see [Account access](account-access.md)), but every signed-in employee searches the same company documents: for multiple employee roles, apply document permissions **before retrieval**. The anonymous browser-session isolation is not employee authentication.
 
@@ -203,8 +203,4 @@ Response times with Vertex AI Search have not been measured yet. The earlier mea
 
 Run `npm test` and `npm run build` to check the project. Conversation and search tests use synthetic documents, a fake search endpoint and injected model responses. They verify routing, request shape and persistence, not every real Gemini answer or search ranking. Regression tests confirm old lesson state cannot restrict new questions, and chat history is preserved. See [Answer styles](answer-styles.md) for the current presentation controls and limits.
 
-Visual answers and support summaries: see [Visual guides and HR summary](visual-guides-and-hr-summary.md). The separate visual panel reuses delivered answer text. Support statistics update without an additional Gemini request and remain scoped to the current browser session.
-
-## Uploaded guidance in the guest workspace
-
-The HR workspace can upload PDF, DOCX, TXT and Markdown guidance. Guests reuse the existing LangGraph workflow with a retriever scoped to that browser’s uploaded documents plus, when `VERTEX_SEARCH_ENGINE_ID` is set, the company document search. Company and upload passages alternate in their own rank order (at most six for Gemini, two quoted passages for document search). Uploads are ranked locally (`server/uploaded-document-search.mjs`) and never imported into the shared search data store. Without a search engine, guests answer from the uploads only; the built-in sample guide is not used there. Each guest has a separate memory owner. Document search is an explicit alternative, with saved history and feedback but no generated formats or conversational interpretation. Guest records are stored in their own SQLite file (`FIRESTORE_DATABASE_ID` does not apply), separately from the saved chats, and expire after 24 hours of workspace inactivity. See [Workspace details](account-access.md).
+Visual answers and support summaries: see [Visual guides and HR summary](visual-guides-and-hr-summary.md). Alya's presentation stage reuses the delivered answer text. Support statistics update without an additional Gemini request and belong to the signed-in account; HR sees them only summed over at least 3 employees (team insights).

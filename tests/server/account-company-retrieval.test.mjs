@@ -1,6 +1,6 @@
 // Account-owned chats also search HR's uploaded company knowledge library
-// (issues #32 and #35); anonymous chats do not. Synthetic documents and fake
-// Gemini models only.
+// (issues #32 and #35); signed-out browsers get no answer at all (issue #55).
+// Synthetic documents and fake Gemini models only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -35,7 +35,7 @@ async function uploadHandbook(hr) {
   assert.equal(connected.status, 201, connected.text);
 }
 
-test('document search: an employee’s answer quotes the uploaded handbook first; anonymous answers do not', async () => {
+test('document search: an employee’s answer quotes the uploaded handbook first; signed-out browsers get nothing', async () => {
   await withApp({ mode: 'document-search' }, async (app) => {
     const hr = await app.hrBrowser();
     const { browser } = await app.readyEmployee(hr);
@@ -62,13 +62,10 @@ test('document search: an employee’s answer quotes the uploaded handbook first
     const saved = (await browser.get(`/api/conversations/${chat.id}`)).body.messages;
     assert.equal(saved.at(-1).text, after.body.answer);
 
-    // An anonymous browser keeps the company search only.
-    const anonymous = await ask(app.browser(), null, question);
-    assert.equal(anonymous.status, 200);
-    assert.deepEqual(
-      anonymous.body.passages.map((p) => p.title),
-      ['Synthetic handbook'],
-    );
+    // A signed-out browser is refused and reads nothing.
+    const signedOut = await ask(app.browser(), null, question);
+    assert.deepEqual([signedOut.status, signedOut.body.code], [401, 'AUTH_REQUIRED']);
+    assert.equal(signedOut.body.passages, undefined);
   });
 });
 
@@ -86,14 +83,11 @@ test('gemini-chat: account chats retrieve the uploaded handbook alongside the co
       answered.body.passages.map((p) => [p.id, p.title, p.heading]),
       [[1, 'Employee Handbook', 'Dress Code']],
     );
-    // The anonymous browser's chat sees only the company search.
-    const anonymous = app.browser();
-    const own = (await anonymous.post('/api/conversations')).body;
-    const plain = await ask(anonymous, own.id, 'What should I wear?');
-    assert.deepEqual(
-      plain.body.passages.map((p) => p.title),
-      ['Synthetic handbook'],
-    );
+    // A signed-out browser cannot open a chat or ask.
+    const signedOut = app.browser();
+    assert.equal((await signedOut.post('/api/conversations')).status, 401);
+    const refused = await ask(signedOut, chat.id, 'What should I wear?');
+    assert.deepEqual([refused.status, refused.body.code], [401, 'AUTH_REQUIRED']);
   });
 });
 
@@ -112,9 +106,9 @@ test('an uploaded additional guide is found by its text, and a deleted one is go
     assert.equal(found.status, 200, found.text);
     assert.equal(found.body.passages[0].title, 'Parking');
     assert.match(found.body.passages[0].preview, /blue garage/);
-    // Anonymous answers never read the library.
-    const anonymous = await ask(app.browser(), null, 'Where do staff park?');
-    assert.ok(anonymous.body.passages.every((p) => p.title !== 'Parking'));
+    // Signed-out browsers never read the library.
+    const signedOut = await ask(app.browser(), null, 'Where do staff park?');
+    assert.deepEqual([signedOut.status, signedOut.body.passages], [401, undefined]);
     assert.equal(
       (await hr.delete(`/api/hr/company-knowledge/documents/${up.body.id}`)).status,
       204,

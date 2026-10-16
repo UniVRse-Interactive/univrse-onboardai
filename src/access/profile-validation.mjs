@@ -12,6 +12,7 @@ export const profileGroups = [
       { key: 'department', label: 'Department', max: 120, kind: 'department' },
       { key: 'startDate', label: 'Start date', max: 10, kind: 'date' },
       { key: 'manager', label: 'Manager', max: 120 },
+      { key: 'track', label: 'Track', max: 12, kind: 'track', default: 'employee' },
     ],
   },
   {
@@ -46,6 +47,7 @@ export const profileGroups = [
   },
 ];
 
+export const trackValues = ['employee', 'intern', 'contractor'];
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const phonePattern = /^\+?[0-9 ().-]*[0-9][0-9 ().-]*$/;
 const controlCharacters = /[\u0000-\u001f\u007f]/;
@@ -60,7 +62,7 @@ export const emptyProfile = () =>
   Object.fromEntries(
     profileGroups.map((group) => [
       group.key,
-      Object.fromEntries(group.fields.map((field) => [field.key, ''])),
+      Object.fromEntries(group.fields.map((field) => [field.key, field.default ?? ''])),
     ]),
   );
 
@@ -70,7 +72,14 @@ export function profileToForm(profile) {
   for (const group of profileGroups)
     for (const field of group.fields) {
       const value = profile?.[group.key]?.[field.key];
-      form[group.key][field.key] = typeof value === 'string' ? value : '';
+      form[group.key][field.key] =
+        field.kind === 'track'
+          ? trackValues.includes(value)
+            ? value
+            : field.default
+          : typeof value === 'string'
+            ? value
+            : '';
     }
   return form;
 }
@@ -81,7 +90,8 @@ export function formToProfileInput(form) {
   for (const group of profileGroups) {
     input[group.key] = {};
     for (const field of group.fields)
-      input[group.key][field.key] = String(form?.[group.key]?.[field.key] ?? '').trim();
+      input[group.key][field.key] =
+        String(form?.[group.key]?.[field.key] ?? '').trim() || (field.default ?? '');
   }
   return input;
 }
@@ -92,6 +102,7 @@ function problemFor(text, field) {
   if ([...text].length > field.max) return 'too_long';
   if (field.kind === 'email' && !emailPattern.test(text)) return 'invalid_email';
   if (field.kind === 'date' && !validDate(text)) return 'invalid_date';
+  if (field.kind === 'track' && !trackValues.includes(text)) return 'invalid_track';
   if (field.kind === 'phone' && !phonePattern.test(text)) return 'invalid_phone';
   return null;
 }
@@ -117,6 +128,7 @@ const problemText = {
   invalid_email: 'must be a valid email address.',
   invalid_date: 'must be a real date.',
   invalid_department: 'must be one of the listed departments.',
+  invalid_track: 'must be Employee, Intern or Contractor.',
   invalid_phone: 'can only use digits, spaces, + - ( ) and a full stop.',
 };
 

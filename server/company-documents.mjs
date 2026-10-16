@@ -15,7 +15,7 @@ import { workspaceLimits } from './workspace-limits.mjs';
 //   characters, bytes (the file's size), fingerprint (SHA-256 of text)
 //   connectedBy   the HR account ID; connectedAt: ISO 8601
 //
-// The original file is never stored. The rules mirror the guest workspace
+// The original file is never stored. The rules mirror the former guest workspace
 // library from #28: one document per topic (uploading another replaces it),
 // any number of additional guides, twelve documents and 750,000 characters in
 // total, and no text twice. Every call is bounded by the Firestore deadline;

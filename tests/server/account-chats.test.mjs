@@ -87,18 +87,18 @@ test('document-search: a signed-in employee’s chats are saved per turn and fol
     assert.deepEqual((await other.browser.get('/api/conversations')).body.conversations, []);
     assert.equal((await other.browser.get(`/api/conversations/${chat.id}`)).status, 404);
 
-    // Without an account the search preview is unchanged: no saved chats, and
-    // answers need no conversation.
-    const guest = app.browser();
-    assert.equal((await guest.get('/api/config')).body.conversationMemory, false);
-    assert.equal((await guest.get('/api/conversations')).status, 404);
-    const stateless = await guest.post('/api/chat', {
+    // Without an account nothing answers (issue #55): no saved chats and no
+    // stateless answers.
+    const signedOut = app.browser();
+    assert.equal((await signedOut.get('/api/config')).body.conversationMemory, false);
+    const listing = await signedOut.get('/api/conversations');
+    assert.deepEqual([listing.status, listing.body.code], [401, 'AUTH_REQUIRED']);
+    const stateless = await signedOut.post('/api/chat', {
       question: 'How do I finish the onboarding quiz?',
       taskId: 'quiz-part-1',
     });
-    assert.equal(stateless.status, 200);
-    assert.equal(stateless.body.conversationId, undefined);
-    assert.equal(stateless.body.answer, answered.body.answer);
+    assert.deepEqual([stateless.status, stateless.body.code], [401, 'AUTH_REQUIRED']);
+    assert.equal(stateless.body.answer, undefined);
 
     assert.equal((await phone.delete(`/api/conversations/${chat.id}`)).status, 204);
     assert.deepEqual((await laptop.get('/api/conversations')).body.conversations, []);
@@ -133,19 +133,21 @@ test('demo and single-turn Gemini modes save a signed-in turn too, and a failed 
   });
 });
 
-test('gemini-chat: the account owns the chats instead of the anonymous browser cookie', async () => {
+test('gemini-chat: the account owns its chats; a signed-out browser gets no anonymous chats', async () => {
   await withApp({ mode: 'gemini-chat' }, async (app) => {
     const hr = await app.hrBrowser();
     const { employee, browser: laptop } = await app.readyEmployee(hr);
-    // An anonymous browser keeps its own cookie-owned chats, as before.
-    const anonymous = app.browser();
-    const anonymousChat = (await anonymous.post('/api/conversations')).body;
-    assert.ok(anonymous.cookies.has('alya_session'));
-    assert.match(app.firestore.read(`conversations/${anonymousChat.id}`).owner, /^[0-9a-f]{64}$/);
+    // Issue #55: a signed-out browser is refused and gets no session cookie.
+    const signedOut = app.browser();
+    const refused = await signedOut.post('/api/conversations');
+    assert.deepEqual([refused.status, refused.body.code], [401, 'AUTH_REQUIRED']);
+    assert.equal(signedOut.cookies.size, 0);
+    // An old anonymous cookie is ignored.
+    signedOut.cookies.set('alya_session', 'f'.repeat(64));
+    assert.equal((await signedOut.get('/api/conversations')).status, 401);
+    assert.deepEqual(app.firestore.paths('conversations/'), []);
 
-    // The same browser signs in: its account chats replace the anonymous ones.
-    laptop.cookies.set('alya_session', anonymous.cookies.get('alya_session'));
-    assert.deepEqual((await laptop.get('/api/conversations')).body.conversations, []);
+    laptop.cookies.set('alya_session', 'f'.repeat(64));
     const chat = (await laptop.post('/api/conversations')).body;
     const answered = await ask(laptop, chat.id, 'What should I wear?');
     assert.equal(answered.status, 200);
@@ -161,16 +163,16 @@ test('gemini-chat: the account owns the chats instead of the anonymous browser c
       (await phone.get('/api/conversations')).body.conversations.map((c) => c.id),
       [chat.id],
     );
+    // HR accounts chat too, in their own chats.
+    const hrChat = await hr.post('/api/conversations');
+    assert.equal(hrChat.status, 201);
     assert.deepEqual(
-      (await anonymous.get('/api/conversations')).body.conversations.map((c) => c.id),
-      [anonymousChat.id],
+      (await hr.get('/api/conversations')).body.conversations.map((c) => c.id),
+      [hrChat.body.id],
     );
-    // Signing out returns the browser to its anonymous chats.
+    // Signing out leaves the browser with nothing.
     await laptop.post('/api/auth/sign-out');
-    assert.deepEqual(
-      (await laptop.get('/api/conversations')).body.conversations.map((c) => c.id),
-      [anonymousChat.id],
-    );
+    assert.equal((await laptop.get('/api/conversations')).status, 401);
   });
 });
 
@@ -214,7 +216,7 @@ test('an expired or invalid account cookie is 401 SESSION_EXPIRED on conversatio
       // /api/config still answers, as a signed-out browser.
       const config = await browser.get('/api/config');
       assert.equal(config.status, 200);
-      assert.equal(config.body.conversationMemory, mode === 'gemini-chat');
+      assert.equal(config.body.conversationMemory, false);
       assert.equal(config.headers.get('cache-control'), 'no-store');
       assert.equal(app.firestore.read(`conversations/${chat.id}`).messageCount, 0);
     });

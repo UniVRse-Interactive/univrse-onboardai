@@ -18,6 +18,7 @@ import {
 } from '../server/company-document-retriever.mjs';
 import { createVertexSearch, vertexSearchConfig } from '../server/vertex-ai-search.mjs';
 import { createApp } from '../server/api-routes.mjs';
+import { accountCookieFor, stubAccounts } from './server/signed-in.mjs';
 
 // Synthetic Vertex AI Search configuration and chunk response; requests go to a fake fetch.
 const searchEnv = {
@@ -305,23 +306,27 @@ for (const store of chatStores)
   });
 
 for (const store of chatStores)
-  test(`${store.name}: API browser sessions own their saved chats; a guessed ID and cross-origin mutations grant no access`, async () => {
+  test(`${store.name}: signed-in accounts own their saved chats; a guessed ID and cross-origin mutations grant no access`, async () => {
     const service = createConversationService({
       env: {},
       models: models(),
       memory: store.create(),
     });
-    const app = createApp({ env: { AI_MODE: 'gemini-chat' }, conversationService: service });
+    const app = createApp({
+      env: { AI_MODE: 'gemini-chat' },
+      conversationService: service,
+      accountService: stubAccounts(),
+    });
     const server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const url = `http://127.0.0.1:${server.address().port}`;
     try {
-      const first = await fetch(url + '/api/conversations'),
-        second = await fetch(url + '/api/conversations');
-      const cookieA = first.headers.get('set-cookie').split(';')[0],
-        cookieB = second.headers.get('set-cookie').split(';')[0];
-      assert.match(first.headers.get('set-cookie'), /HttpOnly/);
-      assert.match(first.headers.get('set-cookie'), /SameSite=Strict/);
+      // Issue #55: no anonymous browser cookie; two signed-in accounts.
+      const cookieA = accountCookieFor('a'),
+        cookieB = accountCookieFor('b');
+      const signedOut = await fetch(url + '/api/conversations');
+      assert.equal(signedOut.status, 401);
+      assert.equal(signedOut.headers.get('set-cookie'), null);
       const created = await fetch(url + '/api/conversations', {
           method: 'POST',
           headers: { cookie: cookieA },
@@ -522,14 +527,21 @@ for (const store of chatStores)
       memory: store.create(),
       retrieve: fakeSearch().retrieve,
     });
-    const app = createApp({ env: { AI_MODE: 'gemini-chat' }, conversationService: service });
+    const app = createApp({
+      env: { AI_MODE: 'gemini-chat' },
+      conversationService: service,
+      accountService: stubAccounts(),
+    });
     const server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const url = `http://127.0.0.1:${server.address().port}`;
     try {
-      const created = await fetch(url + '/api/conversations', { method: 'POST' });
-      const cookie = created.headers.get('set-cookie').split(';')[0],
-        chat = await created.json();
+      const cookie = accountCookieFor('a');
+      const created = await fetch(url + '/api/conversations', {
+        method: 'POST',
+        headers: { cookie },
+      });
+      const chat = await created.json();
       const response = await fetch(url + '/api/chat', {
         method: 'POST',
         headers: { cookie, 'Content-Type': 'application/json' },

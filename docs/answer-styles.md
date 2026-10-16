@@ -8,7 +8,7 @@ Company answers must cite retrieved passages. If the documents do not establish 
 
 ## Answer style
 
-Open /mira, type a question and send it. Choose **Answer style** beside Saved chats to see the current explanation format and its reason, select a fixed format or reset the style.
+Open /alya, type a question and send it. Choose **Answer style** beside Saved chats to see the current explanation format and its reason, select a fixed format or reset the style.
 
 | Request or setting                                          | Presentation                                               |
 | ----------------------------------------------------------- | ---------------------------------------------------------- |
@@ -18,6 +18,8 @@ Open /mira, type a question and send it. Choose **Answer style** beside Saved ch
 | “Keep it short”                                             | One or two short sentences, retaining necessary conditions |
 | Three consecutive recognised queries about the same subject | Smaller steps with the reason shown                        |
 | “I understand now”                                          | Standard explanation when automatic support is selected    |
+
+An example answer begins with the sentence “Here is a fictional example to show how this works.” (unless its first sentence already says the example is fictional). It is part of the answer, so it is both shown and spoken. It replaces the earlier “Fictional worked example:” label line, which speech now drops.
 
 A manually selected format takes priority until changed. English and selected Malay requests are recognised; some paraphrases may not trigger a change. Internal subject hints help detect repeated questions only; they never restrict retrieval or the questions employees can ask.
 

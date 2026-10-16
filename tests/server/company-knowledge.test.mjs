@@ -10,6 +10,7 @@ import { planUpload } from '../../server/company-documents.mjs';
 import { createApiProxy } from '../../server/api-proxy.mjs';
 import { onboardingDocumentTopics } from '../../server/onboarding-document-topics.mjs';
 import { workspaceLimits } from '../../server/workspace-limits.mjs';
+import { interleavePassages } from '../../server/company-knowledge.mjs';
 
 const path = '/api/hr/company-knowledge/documents';
 const handbook = 'Dress Code Staff wear smart casual clothing from Monday to Thursday.';
@@ -127,9 +128,9 @@ test('HR uploads PDF, DOCX, text and Markdown files; only text and metadata are 
     }
     assert.ok(!JSON.stringify(listed).includes('Laptops'));
 
-    // Guest workspaces keep their own library.
+    // The guest workspace and its library are gone (issue #55).
     const guest = await app.browser().get('/api/guest-workspace');
-    assert.deepEqual(guest.body.documents, []);
+    assert.deepEqual([guest.status, guest.body.code], [404, 'NOT_FOUND']);
   });
 });
 
@@ -428,4 +429,14 @@ test('the web proxy forwards the upload path as a 5 MiB raw upload with the read
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+// Moved from the deleted workspace-company-knowledge.test.mjs (issue #55): the
+// library and the company retriever are interleaved this way.
+test('passages from two ranked sources alternate, keep their own order and stop at the limit', () => {
+  assert.deepEqual(interleavePassages([1, 2, 3], ['a', 'b'], 6), [1, 'a', 2, 'b', 3]);
+  assert.deepEqual(interleavePassages([1, 2, 3], ['a', 'b'], 2), [1, 'a']);
+  assert.deepEqual(interleavePassages([], ['a', 'b', 'c'], 2), ['a', 'b']);
+  assert.deepEqual(interleavePassages([1], [], 6), [1]);
+  assert.deepEqual(interleavePassages([], [], 6), []);
 });

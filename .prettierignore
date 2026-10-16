@@ -14,3 +14,6 @@ application_default_credentials.json
 *.db
 *.pem
 *.key
+.venv/
+__pycache__/
+.pytest_cache/

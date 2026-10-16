@@ -122,7 +122,7 @@ resource "google_secret_manager_secret_iam_member" "intake_mcp_token" {
 # project-level role any deployer holds, staging's only. It is reachable only
 # from the deploy workflow on the staging branch (identity.tf).
 resource "google_project_iam_member" "deployer_deploys_agents" {
-  count = local.intake_agent ? 1 : 0
+  count = local.intake_agent || local.checklist_agent ? 1 : 0
 
   project = var.project_id
   role    = "roles/aiplatform.user"

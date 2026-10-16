@@ -32,3 +32,10 @@ crash.log
 crash.*.log
 # Credentials file google-github-actions/auth writes into the workspace.
 gha-creds-*.json
+
+# Python (agent-platform/onboarding-checklist).
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.adk/

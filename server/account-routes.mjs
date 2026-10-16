@@ -4,6 +4,7 @@ import { accountErrors, autofillErrors } from './account-errors.mjs';
 import { companyKnowledgeRequestErrors } from './company-knowledge.mjs';
 import { readUploadedDocument } from './read-uploaded-document.mjs';
 import { workspaceLimits } from './workspace-limits.mjs';
+import { mountOnboardingRoutes } from './onboarding-routes.mjs';
 
 // HTTP routes for accounts (see docs/account-access.md for the contract):
 //   /api/auth/*           sign in, session, sign out, change password
@@ -11,8 +12,11 @@ import { workspaceLimits } from './workspace-limits.mjs';
 //   /api/hr/employees*    HR-only employee administration, including deletion
 //   /api/hr/employees/autofill  HR-only profile autofill (profile-autofill.mjs)
 //   /api/hr/departments*        HR-only departments and Employee ID prefixes (Settings)
-//   /api/hr/support-summaries   HR-only support summaries of employee accounts
 //   /api/hr/company-knowledge*  HR-only company knowledge uploads (company-knowledge.mjs)
+//   onboarding journey routes   /api/me/onboarding*, /api/hr/support-requests*, ...
+//                               (onboarding-routes.mjs, docs/onboarding-journey.md)
+// GET /api/hr/support-summaries (named per-employee summaries) was removed by
+// D1 Option A (issue #48); GET /api/hr/team-insights replaces it.
 // Every route checks the browser's Origin like the saved-chat routes, answers
 // 503 ACCOUNTS_NOT_CONFIGURED without DATABASE_URL, is never cached, and sits
 // behind the app's POST rate limiter.
@@ -55,11 +59,20 @@ export function sendAccountError(res, error) {
 
 // profileAutofill: the service from createProfileAutofill, or null (503
 // AUTOFILL_NOT_CONFIGURED). chatMemory(): the saved-chat store holding account
-// chats (deletion and support summaries). companyKnowledge: the service from
-// createCompanyKnowledge (the HR library).
+// chats (deletion). companyKnowledge: the service from createCompanyKnowledge
+// (the HR library). journey: { onboarding, support, gaps, actions? } from
+// onboarding-journey.mjs, support-requests.mjs, knowledge-gaps.mjs and
+// agent-actions.mjs.
 export function mountAccountRoutes(
   app,
-  { env, accounts, profileAutofill = null, chatMemory = null, companyKnowledge = null },
+  {
+    env,
+    accounts,
+    profileAutofill = null,
+    chatMemory = null,
+    companyKnowledge = null,
+    journey = null,
+  },
 ) {
   const setSession = (req, res, result) =>
     res.cookie(accountCookie, result.token, {
@@ -88,11 +101,13 @@ export function mountAccountRoutes(
       }
       if (session.account.mustChangePassword && !allowPasswordChange)
         throw accountErrors.passwordChangeRequired();
-      if (role && session.account.role !== role) throw accountErrors.hrRequired();
+      if (role && session.account.role !== role)
+        throw role === 'hr' ? accountErrors.hrRequired() : accountErrors.employeeRequired();
       req.accountSession = session;
       next();
     };
   const hr = signedIn({ role: 'hr' });
+  const employee = signedIn({ role: 'employee' });
 
   const auth = express.Router();
   auth.post('/sign-in', async (req, res) => {
@@ -133,8 +148,10 @@ export function mountAccountRoutes(
     if (!profileAutofill) throw autofillErrors.notConfigured();
     await profileAutofill.handle(req, res);
   });
+  // Each item: { account, profile, track, onboarding: { percent, waitingOnHr } }.
   employees.get('/employees', hr, async (req, res) => {
-    res.json({ employees: await accounts.listEmployees() });
+    const listed = await accounts.listEmployees();
+    res.json({ employees: journey ? await journey.onboarding.withOnboarding(listed) : listed });
   });
   // { profile } in; { employee, temporaryPassword } out. The server assigns the
   // Employee ID and the temporary password; this response is the only place
@@ -160,13 +177,12 @@ export function mountAccountRoutes(
   employees.delete('/employees/:id', hr, async (req, res) => {
     await accounts.deleteEmployee(req.accountSession, req.params.id, {
       eraseChats: (owner) => chatMemory().eraseOwner(owner),
+      // The checklist agent's sessions (#51); never fails the deletion.
+      eraseAgentSessions: journey?.actions
+        ? (accountId) => journey.actions.forgetAccount(accountId)
+        : null,
     });
     res.status(204).end();
-  });
-  employees.get('/support-summaries', hr, async (req, res) => {
-    res.json({
-      employees: await accounts.supportSummaries((owner) => chatMemory().supportSummary(owner)),
-    });
   });
 
   // HR Settings: the departments and their Employee ID prefixes.
@@ -189,7 +205,7 @@ export function mountAccountRoutes(
     res.json(await library().snapshot());
   });
   // A raw file body (application/octet-stream, X-File-Name), read into text
-  // like a guest upload. Only the text and metadata are stored.
+  // with the shared upload reader. Only the text and metadata are stored.
   const rawFile = express.raw({ type: 'application/octet-stream', limit: workspaceLimits.bytes });
   employees.post(
     '/company-knowledge/documents',
@@ -229,6 +245,18 @@ export function mountAccountRoutes(
     await library().remove(req.params.id);
     res.status(204).end();
   });
+
+  if (journey)
+    mountOnboardingRoutes({
+      me,
+      hr: employees,
+      employee,
+      hrOnly: hr,
+      journey: journey.onboarding,
+      support: journey.support,
+      gaps: journey.gaps,
+      actions: journey.actions ?? null,
+    });
 
   for (const [path, router] of [
     ['/api/auth', auth],

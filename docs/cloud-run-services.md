@@ -2,11 +2,11 @@
 
 In the cloud, OnboardAi runs as three separate Cloud Run services built from one `Dockerfile`. Each has its own Docker target and starts from its own file in `server/`. Every service listens on `HOST` (default `0.0.0.0`) and `PORT` (default `8080`) and stops cleanly on SIGTERM.
 
-| Service | Entry file               | Docker target | Health path   | What it does                                                                                           |
-| ------- | ------------------------ | ------------- | ------------- | ------------------------------------------------------------------------------------------------------ |
-| `web`   | `server/web-service.mjs` | `web`         | `/web-health` | Serves `dist/` and the avatar, and proxies `/api/*` to the api service. Holds no secrets.              |
-| `api`   | `server/api-service.mjs` | `api`         | `/api/health` | Serves every `/api/*` route: chat, saved conversations, support summary, document search, `/api/voice` |
-| `tts`   | `server/tts-service.mjs` | `tts`         | `/health`     | `POST /voice` renders speech with Kokoro. `/health` returns 503 until the model has loaded.            |
+| Service | Entry file               | Docker target | Health path   | What it does                                                                                                        |
+| ------- | ------------------------ | ------------- | ------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `web`   | `server/web-service.mjs` | `web`         | `/web-health` | Serves `dist/` and the avatar, and proxies `/api/*` to the api service. Holds no secrets.                           |
+| `api`   | `server/api-service.mjs` | `api`         | `/api/health` | Serves every `/api/*` route: accounts, chat, saved conversations, onboarding journey, document search, `/api/voice` |
+| `tts`   | `server/tts-service.mjs` | `tts`         | `/health`     | `POST /voice` renders speech with Kokoro. `/health` returns 503 until the model has loaded.                         |
 
 The `tts` image carries the Kokoro model (downloaded at build time by `npm run voice:prepare`). The `web` image carries `dist/`. The `api` image carries neither.
 
@@ -34,7 +34,7 @@ The `tts` image carries the Kokoro model (downloaded at build time by `npm run v
 browser -> web -> api -> tts
 ```
 
-The browser only ever talks to the web origin. `/api/*` is a same-origin request to web, which forwards it to api; the api calls tts only for `/api/voice`. On Cloud Run, web signs each forwarded request and api signs each tts call with a Google ID token (see [Private api and tts](#private-api-and-tts)). This keeps the `alya_session` cookie first-party (it is `httpOnly`, `sameSite=strict`, path `/api`), so it keeps working and the api's same-origin check still makes sense. The proxy passes the api's `Set-Cookie` headers back unchanged, streams the response, and answers 502 or 504 if the api is down or too slow. Request bodies are limited to 64 KiB, except raw file uploads (`application/octet-stream`) to `/api/guest-workspace/documents` and `/api/hr/employees/autofill`, which may be 5 MiB; a larger autofill file gets the api's own `413 AUTOFILL_FILE_TOO_LARGE` answer.
+The browser only ever talks to the web origin. `/api/*` is a same-origin request to web, which forwards it to api; the api calls tts only for `/api/voice`. On Cloud Run, web signs each forwarded request and api signs each tts call with a Google ID token (see [Private api and tts](#private-api-and-tts)). This keeps the `onboardai_account` session cookie first-party (it is `httpOnly`, `sameSite=strict`, path `/api`), so it keeps working and the api's same-origin check still makes sense. The proxy passes the api's `Set-Cookie` headers back unchanged, streams the response, and answers 502 or 504 if the api is down or too slow. Request bodies are limited to 64 KiB, except raw file uploads (`application/octet-stream`) to `/api/hr/company-knowledge/documents` and `/api/hr/employees/autofill`, which may be 5 MiB; a larger autofill file gets the api's own `413 AUTOFILL_FILE_TOO_LARGE` answer.
 
 ## Trusted proxy hops
 
@@ -98,18 +98,11 @@ Any other service that calls the api directly needs the api's invoker role for i
 
 ## The avatar
 
-`/avatars/alya/alya.glb` is the pre-compressed `alya.glb.gz` (about 55 MB, 52 MiB) sent with `Content-Encoding: gzip`. It is streamed **without** a `Content-Length`. Cloud Run caps HTTP/1 responses that are not chunked at 32 MiB, so an exact length would break the download; without it Node uses chunked transfer. The shared code is `server/avatar-route.mjs`, used by both the web service and `server/index.mjs`.
+`/avatars/alya/alya.glb` is the pre-compressed `alya.glb.gz` (22,085,850 bytes, about 21 MiB; the ALYA model of #61) sent with `Content-Encoding: gzip`. It is streamed **without** a `Content-Length`, so Node uses chunked transfer. Cloud Run caps HTTP/1 responses that are not chunked at 32 MiB; the current file is under that, and streaming keeps a larger model working. The shared code is `server/avatar-route.mjs`, used by both the web service and `server/index.mjs`.
 
 ## Conversation storage
 
-In the cloud the api sets `FIRESTORE_DATABASE_ID` (`(default)` in production, `onboardai-staging` in staging), so saved chats, answer-style settings, support observations and LangGraph checkpoints are in Firestore and survive restarts and redeploys. It authenticates as the api runtime service account, which holds `roles/datastore.user` on that database only. Chats under the same browser cookie are shared by every api instance, and an answer leases its chat in Firestore, so saved chats alone would not need `max-instances=1`. Layout, retention and errors: [Where chats are stored](chat-and-memory.md#where-chats-are-stored).
-
-The api still runs with `max-instances=1`, because two kinds of state are per instance:
-
-- **The guest workspace store** (`server/guest-workspace-store.mjs`) is always SQLite on the instance's disk (`.cache/guest-workspaces/workspaces.sqlite`), also when `FIRESTORE_DATABASE_ID` is set: guest workspaces, their guests, uploaded document text, guest chats and their LangGraph checkpoints. A second instance would not see them, and they are lost when the instance is replaced. See [Guest workspace](guest-workspace.md#ownership-and-storage).
-- **The rate limit** above is counted in memory per instance.
-
-Moving both off the instance, so the api can scale out, is #58.
+In the cloud the api sets `FIRESTORE_DATABASE_ID` (`(default)` in production, `onboardai-staging` in staging), so saved chats, answer-style settings, support observations and LangGraph checkpoints are in Firestore and survive restarts and redeploys. It authenticates as the api runtime service account, which holds `roles/datastore.user` on that database only. Chats under the same browser cookie are shared by every api instance, and an answer leases its chat in Firestore, so storage no longer needs `max-instances=1`. The remaining per-instance state is the rate limit above (moving it off the instance is #58). Layout, retention and errors: [Where chats are stored](chat-and-memory.md#where-chats-are-stored).
 
 Without `FIRESTORE_DATABASE_ID` the api falls back to SQLite in `.cache/chat/conversations.sqlite` on the instance's disk (override with `CHAT_DATABASE_PATH`). That disk is lost on restart or redeploy, and SQLite only suits one instance, so it is for local development.
 

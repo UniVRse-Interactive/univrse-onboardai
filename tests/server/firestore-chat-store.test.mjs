@@ -17,6 +17,7 @@ import {
   TURN_LEASE_MS,
 } from '../../server/firestore-chat-memory.mjs';
 import { FakeFirestore } from './fake-firestore.mjs';
+import { accountCookieFor, ownerFor, stubAccounts } from './signed-in.mjs';
 
 const owner = 'a'.repeat(64);
 const DAY = 24 * 60 * 60 * 1000;
@@ -255,14 +256,21 @@ test('Firestore failures reach the browser as fixed messages and are logged with
     sweepIntervalMs: Infinity,
   });
   const service = serviceOn(memory);
-  const app = createApp({ env: { AI_MODE: 'gemini-chat' }, conversationService: service });
+  const app = createApp({
+    env: { AI_MODE: 'gemini-chat' },
+    conversationService: service,
+    accountService: stubAccounts(),
+  });
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const url = `http://127.0.0.1:${server.address().port}`;
   try {
-    const created = await fetch(url + '/api/conversations', { method: 'POST' });
-    const cookie = created.headers.get('set-cookie').split(';')[0],
-      chat = await created.json();
+    const cookie = accountCookieFor();
+    const created = await fetch(url + '/api/conversations', {
+      method: 'POST',
+      headers: { cookie },
+    });
+    const chat = await created.json();
     for (const [grpc, status, expected, options = {}] of [
       [7, 503, 'STORAGE_ACCESS_DENIED'],
       [16, 503, 'STORAGE_ACCESS_DENIED'],
@@ -308,6 +316,7 @@ test('Firestore failures reach the browser as fixed messages and are logged with
         /^Firestore request failed: \{"operation":"[a-z ]+","code":"STORAGE_[A-Z_]+","reason":"[A-Z_0-9]+"\}$/,
       );
       assert.ok(!line.includes('PRIVATE') && !line.includes(chat.id) && !line.includes(owner));
+      assert.ok(!line.includes(ownerFor()));
     }
   } finally {
     await new Promise((resolve) => server.close(resolve));
@@ -371,11 +380,16 @@ test('FIRESTORE_DATABASE_ID selects Firestore, blank keeps SQLite, and a missing
     describeChatStorage({ FIRESTORE_DATABASE_ID: '(default)', GOOGLE_CLOUD_PROJECT: 'p' }),
     'Firestore database (default) in p',
   );
-  const app = createApp({ env: { AI_MODE: 'gemini-chat', FIRESTORE_DATABASE_ID: '(default)' } });
+  const app = createApp({
+    env: { AI_MODE: 'gemini-chat', FIRESTORE_DATABASE_ID: '(default)' },
+    accountService: stubAccounts(),
+  });
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/conversations`);
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/conversations`, {
+      headers: { cookie: accountCookieFor() },
+    });
     assert.equal(response.status, 503);
     const body = await response.json();
     assert.equal(body.code, 'STORAGE_NOT_CONFIGURED');
