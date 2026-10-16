@@ -1,0 +1,37 @@
+/* Layout glue for the HR workspace views. hr-screen.css fits People & Support
+   in one screen; the other views (accounts, company knowledge) scroll naturally. */
+.hr-preview-page.hr-screen.hr-screen-flow {
+  height: auto;
+  min-height: 100dvh;
+}
+.hr-preview-page.hr-screen.hr-screen-flow .hr-screen-main {
+  min-height: auto;
+}
+.hr-preview-page.hr-screen .hr-screen-main > .hr-accounts {
+  margin-top: 4px;
+}
+.hr-preview-page.hr-screen .hr-screen-scroll {
+  flex: 1;
+}
+.hr-preview-page.hr-screen .hr-screen-header .account-session {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: #edf3f7;
+  font-size: 12px;
+}
+.hr-preview-page.hr-screen .hr-screen-header .account-session button {
+  min-height: 40px;
+  padding: 0 14px;
+  color: #edf3f7;
+  border: 1px solid #647992;
+  border-radius: 6px;
+}
+.hr-preview-page.hr-screen .hr-screen-header .account-session button:hover {
+  background: #3c5474;
+}
+.hr-preview-page.hr-screen .account-delete-confirm {
+  display: grid;
+  gap: 10px;
+  max-width: 520px;
+}

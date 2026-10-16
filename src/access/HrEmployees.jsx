@@ -3,6 +3,7 @@ import Icon from '../portal/Icon';
 import { accountApi } from './account-api.mjs';
 import AutofillControl, { useProfileAutofill } from './AutofillControl';
 import { SecretField, TextField, useFocusFirstError } from './account-fields';
+import { canConfirmDelete, deleteErrorMessage } from './delete-confirm.mjs';
 import { accountBadges, employeeNames, formatDateTime, formatDay } from './profile-display.mjs';
 import {
   employeeErrorTarget,
@@ -468,6 +469,75 @@ function StatusPanel({ employee, next, onClose, onDone }) {
   );
 }
 
+function DeletePanel({ employee, onClose, onDone, onMissing }) {
+  const username = employee.account.username;
+  const [typed, setTyped] = useState('');
+  const [summary, setSummary] = useState('');
+  const [busy, setBusy] = useState(false);
+  const alive = useRef(true);
+  useEffect(
+    () => () => {
+      alive.current = false;
+    },
+    [],
+  );
+  async function confirm(event) {
+    event.preventDefault();
+    if (busy || !canConfirmDelete(typed, username)) return;
+    setBusy(true);
+    setSummary('');
+    try {
+      await accountApi.deleteEmployee(employee.account.id);
+      onDone(`Deleted ${username}. The account, profile, chats and support summary were removed.`);
+    } catch (error) {
+      if (error?.code === 'EMPLOYEE_NOT_FOUND' || error?.status === 404) onMissing(username);
+      else if (alive.current) setSummary(deleteErrorMessage(error));
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }
+  return (
+    <Panel headingId="delete-heading" title={`Delete ${username}?`} onClose={onClose}>
+      <form className="account-form account-delete-confirm" onSubmit={confirm} noValidate>
+        <p className="account-note">
+          This permanently removes {username}: their account, profile, saved chats and support
+          summary. It cannot be undone.
+        </p>
+        <div className="access-field account-field">
+          <label htmlFor="delete-confirm-id">Type {username} to confirm</label>
+          <input
+            id="delete-confirm-id"
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            disabled={busy}
+          />
+        </div>
+        {summary && (
+          <div className="account-error-summary" role="alert">
+            <Icon name="info" size={18} />
+            <p>{summary}</p>
+          </div>
+        )}
+        <div className="account-actions">
+          <button
+            type="submit"
+            className="account-danger"
+            disabled={busy || !canConfirmDelete(typed, username)}
+          >
+            {busy ? 'Deleting…' : 'Delete account'}
+          </button>
+          <button type="button" className="account-secondary" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Panel>
+  );
+}
+
 export default function HrEmployees() {
   const [employees, setEmployees] = useState(null);
   const [error, setError] = useState('');
@@ -529,6 +599,9 @@ export default function HrEmployees() {
     load();
     requestAnimationFrame(() => headingRef.current?.focus());
   }
+  function missing(username) {
+    done(`${username} no longer exists. The list has been refreshed.`);
+  }
   const selected = panel?.id && employees?.find((e) => e.account.id === panel.id);
   return (
     <section className="hr-accounts" id="employee-accounts" aria-labelledby="hr-accounts-heading">
@@ -584,6 +657,15 @@ export default function HrEmployees() {
           next={panel.next}
           onClose={close}
           onDone={done}
+        />
+      )}
+      {panel?.type === 'delete' && selected && (
+        <DeletePanel
+          key={panel.id}
+          employee={selected}
+          onClose={close}
+          onDone={done}
+          onMissing={missing}
         />
       )}
       {!employees && !error && <p role="status">Loading employee accounts…</p>}
@@ -669,6 +751,13 @@ export default function HrEmployees() {
                           }
                         >
                           {disabled ? 'Enable' : 'Disable'}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={'Delete ' + account.username}
+                          onClick={() => open({ type: 'delete', id: account.id })}
+                        >
+                          Delete
                         </button>
                       </div>
                     </td>
