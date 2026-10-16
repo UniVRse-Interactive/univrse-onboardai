@@ -2,28 +2,34 @@ import React, { useRef, useState } from 'react';
 import Icon from '../portal/Icon';
 import OnboardAiBrand from '../brand/OnboardAiBrand';
 import './account-access.css';
+import './login-page.css';
 
 export function AccessBrand() {
   return <OnboardAiBrand />;
 }
 
-function PasswordField({ id, label, confirm = false, value, onChange }) {
+function PasswordField({ id, label, confirm = false, onForgot }) {
   const [visible, setVisible] = useState(false);
   return (
     <div className="access-field">
-      <label htmlFor={id}>{label}</label>
+      <div className="login-field-label">
+        <label htmlFor={id}>{label}</label>
+        {onForgot && (
+          <button type="button" className="access-forgot" onClick={onForgot}>
+            Forgot password?
+          </button>
+        )}
+      </div>
       <div className="access-password">
         <input
           id={id}
           name={confirm ? 'confirmPassword' : 'password'}
           type={visible ? 'text' : 'password'}
           autoComplete={confirm || id.includes('signup') ? 'new-password' : 'current-password'}
-          placeholder={confirm ? 'Enter your password again' : 'Enter your password'}
+          placeholder={confirm ? 'Repeat your password' : 'Enter your password'}
           minLength={id.includes('signup') ? 8 : undefined}
           maxLength={128}
           required
-          value={value}
-          onChange={onChange}
         />
         <button
           type="button"
@@ -39,50 +45,36 @@ function PasswordField({ id, label, confirm = false, value, onChange }) {
 }
 
 function AccountForm({ role, signup, onMode, onGuest }) {
-  const [password, setPassword] = useState('');
-  const [confirmation, setConfirmation] = useState('');
   const [notice, setNotice] = useState('');
   const noticeRef = useRef(null);
-  const heading = signup
-    ? 'Make yourself at home.'
-    : role === 'hr'
-      ? 'Support a better start.'
-      : 'Welcome back.';
   function announce(message) {
     setNotice(message);
     requestAnimationFrame(() => noticeRef.current?.focus());
   }
   function submit(event) {
     event.preventDefault();
-    if (signup && password !== confirmation) {
+    const fields = new FormData(event.currentTarget);
+    if (signup && fields.get('password') !== fields.get('confirmPassword')) {
       announce('The passwords do not match. Please enter the same password in both fields.');
       return;
     }
     // Interface preview only. Never send, save or log credentials without an auth provider.
-    setPassword('');
-    setConfirmation('');
+    event.currentTarget.reset();
     announce(
       signup
-        ? 'Account registration is not connected yet. No account was created and your details were not sent or saved. You can continue without an account.'
-        : 'Account sign-in is not connected yet. Your details were not sent or saved. You can continue without an account.',
+        ? 'Registration is not connected yet. No account was created or details saved. Use guest access for now.'
+        : 'Sign-in is not connected yet. No details were sent or saved. Use guest access for now.',
     );
   }
   return (
     <>
-      <div className="access-form-heading">
-        <span className="access-eyebrow">
-          {signup ? 'YOUR FIRST CHAPTER' : role === 'hr' ? 'HR WORKSPACE' : 'EMPLOYEE WORKSPACE'}
-        </span>
-        <h1>{heading}</h1>
-        <p>
-          {signup
-            ? 'Create your employee account to get started.'
-            : role === 'hr'
-              ? 'Sign in to your company’s HR workspace.'
-              : 'A clearer next step starts here.'}
-        </p>
-      </div>
-      <form className="access-form" onSubmit={submit}>
+      <form
+        className={'access-form' + (signup ? ' login-signup-form' : '')}
+        onSubmit={submit}
+        aria-label={
+          signup ? 'Create employee account' : role === 'hr' ? 'HR sign-in' : 'Employee sign-in'
+        }
+      >
         {signup && (
           <div className="access-field">
             <label htmlFor="access-name">Your name</label>
@@ -119,33 +111,21 @@ function AccountForm({ role, signup, onMode, onGuest }) {
         <PasswordField
           id={signup ? 'access-signup-password' : 'access-password'}
           label="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onForgot={
+            !signup
+              ? () =>
+                  announce(
+                    'Password reset is not connected yet. Contact HR for help with your company account.',
+                  )
+              : undefined
+          }
         />
         {signup ? (
           <>
-            <p className="access-password-hint">Use at least 8 characters.</p>
-            <PasswordField
-              id="access-signup-confirm"
-              label="Confirm password"
-              confirm
-              value={confirmation}
-              onChange={(e) => setConfirmation(e.target.value)}
-            />
+            <PasswordField id="access-signup-confirm" label="Confirm password" confirm />
+            <p className="access-password-hint">Use at least 8 characters for your password.</p>
           </>
-        ) : (
-          <button
-            className="access-forgot"
-            type="button"
-            onClick={() =>
-              announce(
-                'Password reset is not connected yet. Contact HR for help with your company account.',
-              )
-            }
-          >
-            Forgot password?
-          </button>
-        )}
+        ) : null}
         <button className="access-submit" type="submit">
           <span>
             {signup
@@ -155,10 +135,6 @@ function AccountForm({ role, signup, onMode, onGuest }) {
           <Icon name="arrow" size={21} />
         </button>
       </form>
-      <div className="access-notice" role="status" tabIndex={-1} ref={noticeRef} hidden={!notice}>
-        <Icon name="info" size={18} />
-        <p>{notice}</p>
-      </div>
       {role === 'employee' ? (
         <p className="access-switch-mode">
           {signup ? 'Already have an account?' : 'New to the team?'}{' '}
@@ -171,115 +147,161 @@ function AccountForm({ role, signup, onMode, onGuest }) {
         <p className="access-hr-note">Use the HR ID provided by your company.</p>
       )}
       <div className="access-guest-divider">
-        <span /> <span>Just looking around?</span> <span />
+        <span /> <span>Or explore your workspace</span> <span />
       </div>
-      <button className="access-guest" onClick={() => onGuest(role)}>
+      <button
+        className="access-guest"
+        type="button"
+        onClick={() => onGuest(role)}
+        aria-label={'Continue as ' + (role === 'hr' ? 'HR' : 'employee') + ' without an account'}
+      >
         <Icon name={role === 'hr' ? 'people' : 'user'} size={19} />
         <span>Continue without an account</span>
         <Icon name="arrow" size={18} />
       </button>
-      <p className="access-preview-note">
-        <span className="access-preview-dot" /> Interface preview · Accounts are not connected yet.
-      </p>
+      <div
+        className={'login-access-status' + (notice ? ' has-notice' : '')}
+        role="status"
+        tabIndex={-1}
+        ref={noticeRef}
+      >
+        <Icon name="info" size={15} />
+        <p>{notice || 'Account sign-in is being set up. You can continue without an account.'}</p>
+      </div>
     </>
   );
 }
 
-export default function LoginPage({ signup = false, navigate, onGuest }) {
-  const [role, setRole] = useState('employee');
-  function changeRole(next) {
-    setRole(next);
-    if (signup) navigate('/login');
+export default function LoginPage({ role = 'employee', signup = false, navigate, onGuest }) {
+  const isHr = role === 'hr';
+  const loginPath = isHr ? '/login/hr' : '/login/employee';
+  const otherPath = isHr ? '/login/employee' : '/login/hr';
+  function openPage(event, to) {
+    if (
+      event.button === 0 &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.altKey
+    ) {
+      event.preventDefault();
+      navigate(to);
+    }
   }
   return (
-    <main className={'access-page' + (signup ? ' is-signup' : '')}>
+    <main className={'login-page' + (signup ? ' is-signup' : '')}>
       <a className="access-skip" href="#access-form-area">
         Skip to sign-in options
       </a>
-      <section className="access-introduction" aria-label="Welcome to OnboardAi">
+      <header className="login-header">
         <a
-          href="/login"
-          onClick={(e) => {
-            if (!e.metaKey && !e.ctrlKey) {
-              e.preventDefault();
-              navigate('/login');
-            }
-          }}
-          aria-label="OnboardAi welcome"
+          href={loginPath}
+          onClick={(event) => openPage(event, loginPath)}
+          aria-label={'OnboardAi ' + (isHr ? 'HR' : 'employee') + ' sign-in'}
         >
           <AccessBrand />
         </a>
-        <div className="access-intro-copy">
-          <span className="access-eyebrow">A GOOD START LOOKS DIFFERENT FOR EVERYONE</span>
-          <h2>
-            Your next chapter.
-            <br />
-            <span>Your way.</span>
-          </h2>
-          <p>
-            Meet Alya. Ask a question, find your next step,
-            <br className="access-desktop-break" /> and settle in at your own pace.
-          </p>
+        <div className="login-header-access">
+          <span className="login-header-note">{isHr ? 'HR ACCESS' : 'EMPLOYEE ACCESS'}</span>
+          <a
+            className="login-header-switch"
+            href={otherPath}
+            onClick={(event) => openPage(event, otherPath)}
+          >
+            {isHr ? 'Employee sign-in' : 'HR sign-in'}
+            <Icon name="arrow" size={15} />
+          </a>
         </div>
-        <div className="access-alya-scene">
-          <div className="access-scene-line" aria-hidden="true" />
-          <div className="access-avatar-frame">
-            <img src="/avatars/alya/poster.png" alt="Alya, your virtual onboarding companion" />
-          </div>
-          <div className="access-alya-caption">
-            <span className="access-presence-dot" />
-            <span>
-              Alya<small>Your onboarding companion</small>
+      </header>
+      <div className="login-shell">
+        <section className="login-introduction" aria-label="Welcome to OnboardAi">
+          <div className="login-intro-copy">
+            <span className="access-eyebrow">
+              {isHr ? 'PEOPLE FIRST. EVERY STEP OF THE WAY.' : 'PEOPLE FIRST. FROM DAY ONE.'}
             </span>
-            <Icon name="chat" size={24} />
-          </div>
-          <div className="access-scene-note">
-            <span>01 / ONE STEP AT A TIME</span>
+            <h2>
+              {isHr ? 'Help people.' : 'A new chapter.'}
+              <br />
+              <span>{isHr ? 'Start well.' : 'A clearer start.'}</span>
+            </h2>
             <p>
-              A little clarity.
-              <br />A better beginning.
+              {isHr ? (
+                'Bring your people, company guidance and onboarding support into one clear view.'
+              ) : (
+                <>
+                  Find your next step, ask a question,
+                  <br className="login-desktop-break" /> and settle in at your own pace.
+                </>
+              )}
             </p>
           </div>
-        </div>
-        <div className="access-intro-footer">
-          <span>TEXT. VOICE. VISUAL GUIDANCE.</span>
-          <span>
-            YOUR NEXT CHAPTER
-            <Icon name="arrow" size={15} />
-          </span>
-        </div>
-      </section>
-      <section className="access-form-side" id="access-form-area" aria-label="Account access">
-        <div className="access-top-note">
-          <span className="access-presence-dot" /> YOUR ONBOARDING SPACE
-        </div>
-        <div className="access-form-container">
-          <fieldset className="access-role-options">
-            <legend>Choose your workspace</legend>
-            {['employee', 'hr'].map((value) => (
-              <label key={value} className={role === value ? 'is-selected' : ''}>
-                <input
-                  type="radio"
-                  name="workspace"
-                  value={value}
-                  checked={role === value}
-                  onChange={() => changeRole(value)}
-                />
-                <Icon name={value === 'hr' ? 'people' : 'user'} size={18} />
-                <span>{value === 'hr' ? 'HR team' : 'Employee'}</span>
-              </label>
-            ))}
-          </fieldset>
-          <AccountForm
-            key={role + (signup ? '-signup' : '-login')}
-            role={role}
-            signup={signup && role === 'employee'}
-            onMode={(mode) => navigate(mode === 'signup' ? '/signup' : '/login')}
-            onGuest={onGuest}
-          />
-        </div>
-        <p className="access-form-footer">A space to ask. A way to move forward.</p>
-      </section>
+          <div className="login-alya-scene">
+            <div className="login-avatar-frame">
+              <img src="/avatars/alya/poster.png" alt="Alya, your virtual onboarding companion" />
+            </div>
+            <div className="login-alya-copy">
+              <span className="login-alya-name">Meet Alya.</span>
+              <p>
+                {isHr ? 'Clearer guidance.' : 'Ask a question.'}
+                <br />
+                {isHr ? 'Practical support.' : 'See the steps.'}
+                <br />
+                {isHr ? 'A better start.' : 'Go at your pace.'}
+              </p>
+              <span className="login-alya-formats">
+                <Icon name="chat" size={16} />
+                <span>
+                  Text, voice
+                  <br />& visual guidance
+                </span>
+              </span>
+            </div>
+          </div>
+          <p className="login-intro-footer">Different people. A shared beginning.</p>
+        </section>
+        <section
+          className="login-form-side"
+          id="access-form-area"
+          aria-label="Account access"
+          tabIndex={-1}
+        >
+          <div className="login-form-container">
+            <div className="login-form-heading">
+              <span className="login-workspace-label">
+                <Icon name={isHr ? 'people' : 'user'} size={17} />
+                {isHr ? 'PEOPLE & GUIDANCE' : 'YOUR ONBOARDING'}
+              </span>
+              <h1>
+                {signup && !isHr
+                  ? 'Create your account.'
+                  : isHr
+                    ? 'HR sign-in.'
+                    : 'Employee sign-in.'}
+              </h1>
+              <p>
+                {signup && !isHr
+                  ? 'Join your company’s employee workspace.'
+                  : isHr
+                    ? 'Access your people, reports and company guidance.'
+                    : 'Your next chapter starts here. Welcome back.'}
+              </p>
+            </div>
+            <AccountForm
+              key={role + (signup ? '-signup' : '-login')}
+              role={role}
+              signup={signup && role === 'employee'}
+              onMode={(mode) =>
+                navigate(mode === 'signup' ? '/signup/employee' : '/login/employee')
+              }
+              onGuest={onGuest}
+            />
+          </div>
+        </section>
+      </div>
+      <footer className="login-footer">
+        <span>A clearer start. At your own pace.</span>
+        <span>Guest workspace · Activity retained for 24 hours</span>
+      </footer>
     </main>
   );
 }

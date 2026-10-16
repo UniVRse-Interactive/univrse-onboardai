@@ -3,7 +3,12 @@ import { GoogleAuth } from 'google-auth-library';
 
 import { tasks, demoAnswer, systemPrompt } from './sample-onboarding-content.mjs';
 
-import { readDriveKnowledge, driveSystemPrompt, driveFailure } from './google-drive-documents.mjs';
+import {
+  readDriveKnowledge,
+  readGoogleDocument,
+  driveSystemPrompt,
+  driveFailure,
+} from './google-drive-documents.mjs';
 import { searchDocuments } from './document-search.mjs';
 import { createSharedVoice, sharedVoiceName } from './kokoro-voice.mjs';
 import { createRemoteVoice } from './remote-voice.mjs';
@@ -12,6 +17,7 @@ import { randomBytes } from 'node:crypto';
 import { sessionHash } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
 import { mountGuestWorkspaceRoutes } from './guest-workspace-routes.mjs';
+import { moveGoogleDocumentToFolder } from './google-drive-document-moves.mjs';
 import { vertexConfig, vertexGenerateContentUrl, createAccessTokenProvider } from './vertex-ai.mjs';
 
 export function createApp({
@@ -19,6 +25,8 @@ export function createApp({
   fetchImpl = fetch,
   localVoice = null,
   loadDriveKnowledge = readDriveKnowledge,
+  loadGoogleDocument = readGoogleDocument,
+  moveGoogleDocument = moveGoogleDocumentToFolder,
   sharedVoice = env.TTS_SERVICE_URL
     ? createRemoteVoice({ url: env.TTS_SERVICE_URL })
     : createSharedVoice(),
@@ -89,6 +97,8 @@ export function createApp({
     models: guestModels,
     store: guestStore,
     loadDrive: loadDriveKnowledge,
+    loadGoogleDoc: loadGoogleDocument,
+    moveGoogleDoc: moveGoogleDocument,
   });
   app.locals.closeChat = () => {
     conversations?.close();

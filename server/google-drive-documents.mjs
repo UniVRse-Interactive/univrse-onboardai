@@ -1,4 +1,6 @@
 import { GoogleAuth } from 'google-auth-library';
+import { workspaceLimits } from './workspace-limits.mjs';
+import { onboardingDocumentTopics } from './onboarding-document-topics.mjs';
 
 const auth = new GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/drive.readonly'],
@@ -14,6 +16,71 @@ export class DriveKnowledgeError extends Error {
     this.name = 'DriveKnowledgeError';
     this.code = code;
   }
+}
+
+export function parseGoogleDocLink(value) {
+  let url;
+  try {
+    if (typeof value !== 'string' || value.length > 2048) throw new Error();
+    url = new URL(value.trim());
+  } catch {
+    throw new DriveKnowledgeError(
+      'GOOGLE_DOC_LINK_INVALID',
+      'Paste a Google Docs document link beginning with https://docs.google.com/document/d/.',
+    );
+  }
+  const id = url.pathname.match(/^\/document\/(?:u\/\d+\/)?d\/([A-Za-z0-9_-]{8,200})(?:\/|$)/)?.[1];
+  if (url.origin !== 'https://docs.google.com' || url.username || url.password || !id)
+    throw new DriveKnowledgeError(
+      'GOOGLE_DOC_LINK_INVALID',
+      'Use a native Google Docs document link. Links to PDFs, Word files, Sheets and other websites are not supported.',
+    );
+  return { id, url: `https://docs.google.com/document/d/${id}/edit` };
+}
+
+// Verify the real Drive file type; changing a link or filename cannot bypass this check.
+export async function readGoogleDocument(id, { client: suppliedClient } = {}) {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{8,200}$/.test(id))
+    throw new DriveKnowledgeError(
+      'GOOGLE_DOC_LINK_INVALID',
+      'Choose a valid Google Docs document.',
+    );
+  const client = suppliedClient || (await auth.getClient());
+  const endpoint = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id);
+  const { data: file } = await client.request({
+    url: endpoint,
+    timeout: 15000,
+    params: { fields: 'id,mimeType,trashed,capabilities(canDownload)', supportsAllDrives: true },
+  });
+  if (file.trashed || file.mimeType !== 'application/vnd.google-apps.document')
+    throw new DriveKnowledgeError(
+      'GOOGLE_DOC_TYPE_REQUIRED',
+      'Only native Google Docs are accepted. Open the file in Google Docs and save it as a Google Doc first.',
+    );
+  if (file.capabilities?.canDownload === false)
+    throw new DriveKnowledgeError(
+      'DRIVE_DOCUMENT_RESTRICTED',
+      'This Google Doc cannot be read with the current permissions. Ask the document owner to allow the connected company account to read it.',
+    );
+  const exported = await client.request({
+    url: endpoint + '/export',
+    timeout: 15000,
+    params: { mimeType: 'text/plain' },
+    responseType: 'text',
+    maxContentLength: workspaceLimits.bytes,
+  });
+  const text = String(exported.data).trim();
+  if (!text)
+    throw new DriveKnowledgeError(
+      'DRIVE_EMPTY_DOCUMENTS',
+      'This Google Doc is empty. Add the guidance and let Google Docs save it before connecting it.',
+    );
+  if (text.length > workspaceLimits.characters)
+    throw new DriveKnowledgeError(
+      'GOOGLE_DOC_TOO_LARGE',
+      'This Google Doc is too long. Connect a shorter guide with up to 250,000 readable characters.',
+    );
+  return { text };
 }
 
 // Never forward raw Google errors, request headers, credentials or document
@@ -75,8 +142,9 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
         `'${folderId}' in parents ` +
         'and trashed = false ' +
         "and mimeType = 'application/vnd.google-apps.document'",
-      fields: 'nextPageToken,files(id,name,version,modifiedTime,capabilities(canDownload))',
-      pageSize: 5,
+      fields:
+        'nextPageToken,files(id,name,version,modifiedTime,appProperties,capabilities(canDownload))',
+      pageSize: workspaceLimits.files,
       orderBy: 'name',
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
@@ -86,7 +154,7 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
   if (listing.data.nextPageToken) {
     throw new DriveKnowledgeError(
       'DRIVE_TOO_MANY_DOCUMENTS',
-      'This preview reads up to five Google Docs directly inside the knowledge folder. Reduce the document count before trying again.',
+      'The knowledge folder supports up to twelve Google Docs. Remove an unused document before adding another.',
     );
   }
 
@@ -111,6 +179,16 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
 
   const documents = await Promise.all(
     files.map(async (file) => {
+      const category = file.appProperties?.onboardaiTopic;
+      const topic = onboardingDocumentTopics.find((item) => item.id === category);
+      const metadata = {
+        googleDocId: file.id,
+        title:
+          topic?.title ||
+          (category === 'additional' && file.appProperties?.onboardaiLabel) ||
+          file.name,
+        category: topic ? topic.id : category === 'additional' ? category : '',
+      };
       if (file.capabilities?.canDownload === false) {
         throw new DriveKnowledgeError(
           'DRIVE_DOCUMENT_RESTRICTED',
@@ -122,12 +200,12 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
         typeof file.version === 'string' &&
         typeof file.modifiedTime === 'string' &&
         file.capabilities?.canDownload === true
-          ? JSON.stringify([file.version, file.modifiedTime, file.name])
+          ? JSON.stringify([file.version, file.modifiedTime, file.name, file.appProperties])
           : null;
       const saved = previous.get(file.id);
       if (revision && saved?.revision === revision) {
         nextSnapshot.set(file.id, saved);
-        return { title: file.name, text: saved.text };
+        return { ...metadata, text: saved.text };
       }
       const exported = await client.request({
         url: 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(file.id) + '/export',
@@ -140,7 +218,7 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
 
       const text = String(exported.data).trim();
       if (revision) nextSnapshot.set(file.id, { revision, text });
-      return { title: file.name, text };
+      return { ...metadata, text };
     }),
   );
 
@@ -155,10 +233,10 @@ export async function readDriveKnowledge(folderId, { client: suppliedClient } = 
 
   const totalCharacters = readable.reduce((total, doc) => total + doc.text.length, 0);
 
-  if (totalCharacters > 120000) {
+  if (totalCharacters > workspaceLimits.totalCharacters) {
     throw new DriveKnowledgeError(
       'DRIVE_KNOWLEDGE_TOO_LARGE',
-      `The connected documents contain ${totalCharacters.toLocaleString('en-US')} characters. This preview supports 120,000; reduce the document size before trying again.`,
+      `The connected documents contain ${totalCharacters.toLocaleString('en-US')} characters. The library supports 750,000; use shorter guides before trying again.`,
     );
   }
 

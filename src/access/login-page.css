@@ -1,0 +1,539 @@
+/* Separate employee and HR entry pages share the same slate and aqua design. */
+.login-page {
+  --access-ink: #2d4365;
+  --access-muted: #526b7d;
+  --access-line: #bdcfdc;
+  --access-accent: #256a91;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px clamp(24px, 4vw, 64px) 16px;
+  background: #21354e;
+  color: #2d4365;
+}
+.login-page :is(button, a, input):focus-visible {
+  outline: 3px solid #256a91;
+  outline-offset: 3px;
+}
+.login-page .login-header a:focus-visible {
+  outline-color: #b7dfe5;
+}
+.login-header,
+.login-shell,
+.login-footer {
+  width: min(1160px, 100%);
+  margin-inline: auto;
+}
+.login-header {
+  min-height: 44px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.login-header-note {
+  display: flex;
+  gap: 17px;
+  align-items: center;
+  font-size: 9px;
+  color: #bdd2e0;
+  letter-spacing: 0.1em;
+}
+.login-header-access {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.login-header-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 0 8px 22px;
+  border-left: 1px solid #5d7892;
+  font-size: 11px;
+  color: #d2e9ee;
+}
+.login-header-switch:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.login-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.9fr) minmax(410px, 1.1fr);
+  flex: 1;
+  min-height: 0;
+  border: 1px solid #58738b;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.login-introduction {
+  display: flex;
+  flex-direction: column;
+  padding: 36px;
+  background: #2d4365;
+  color: #edf3f7;
+  min-height: 0;
+}
+.login-introduction .access-eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  color: #bcdde5;
+}
+.login-intro-copy h2 {
+  font-size: clamp(36px, 3.8vw, 53px);
+  line-height: 1.06;
+  font-weight: 500;
+  letter-spacing: -0.055em;
+  margin-top: 16px;
+}
+.login-intro-copy h2 span {
+  color: #bddfe5;
+}
+.login-intro-copy > p {
+  color: #cfdee8;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-top: 17px;
+}
+.login-alya-scene {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 0.8fr;
+  gap: 24px;
+  align-items: end;
+  padding-top: 24px;
+  margin-top: auto;
+  min-height: 0;
+}
+.login-avatar-frame {
+  height: clamp(185px, 31vh, 285px);
+  min-width: 0;
+  max-width: 230px;
+  border: 1px solid #7d99b0;
+  border-radius: 12px 12px 0 0;
+  background: #bfd6df;
+  overflow: hidden;
+}
+.login-avatar-frame img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center 23%;
+}
+.login-alya-copy {
+  padding-bottom: 8px;
+}
+.login-alya-name {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+  color: #edf3f7;
+}
+.login-alya-copy > p {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #cfdee8;
+  margin-top: 11px;
+}
+.login-alya-formats {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 17px;
+  margin-top: 17px;
+  border-top: 1px solid #607791;
+  color: #bddfe5;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.login-alya-formats svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.login-intro-footer {
+  font-size: 10px;
+  letter-spacing: 0.025em;
+  color: #c3d6e3;
+  margin-top: 21px;
+  padding-top: 15px;
+  border-top: 1px solid #607791;
+}
+.login-form-side {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 0;
+  padding: 28px 36px;
+  background: #e5edf1;
+  color-scheme: light;
+}
+.login-form-container {
+  width: min(440px, 100%);
+}
+.login-form-heading h1 {
+  font-size: clamp(25px, 2.35vw, 31px);
+  font-weight: 500;
+  letter-spacing: -0.045em;
+  line-height: 1.15;
+  color: #2d4365;
+}
+.login-workspace-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #256a91;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+.login-form-heading p {
+  color: #526b7d;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 7px;
+}
+.login-page .access-form {
+  margin-top: 20px;
+  gap: 13px;
+}
+.login-page .access-field {
+  gap: 6px;
+  min-width: 0;
+}
+.login-page .access-field > label,
+.login-page .login-field-label > label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2d4365;
+  line-height: 1.5;
+  margin: 0;
+}
+.login-field-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.login-page .access-field input {
+  background: #f1f5f8;
+  border: 1px solid #a9c0cf;
+  color: #2d4365;
+  height: 45px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.login-page .access-field input::placeholder {
+  color: #657b8d;
+}
+.login-page .access-password input {
+  padding-right: 58px;
+}
+.login-page .access-password button {
+  top: 3px;
+  right: 4px;
+  height: 39px;
+  min-width: 46px;
+  font-size: 11px;
+  color: #256a91;
+  border-radius: 3px;
+}
+.login-page .access-forgot {
+  font-size: 10px;
+  margin: 0;
+  padding: 0;
+  line-height: 1.5;
+  align-self: auto;
+  color: #256a91;
+}
+.login-page .access-forgot:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.login-page .access-submit {
+  min-height: 46px;
+  padding: 11px 15px;
+  background: #256a91;
+  color: #f7fafd;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  margin-top: 2px;
+}
+.login-page .access-submit:hover {
+  background: #1e587a;
+}
+.login-page .access-switch-mode,
+.login-page .access-hr-note {
+  margin-top: 12px;
+  color: #526b7d;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.login-page .access-switch-mode button {
+  color: #256a91;
+  padding-left: 4px;
+}
+.login-page .access-switch-mode button:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.login-page .access-guest-divider {
+  margin: 15px 0 12px;
+  gap: 11px;
+  font-size: 10px;
+  color: #526b7d;
+}
+.login-page .access-guest {
+  min-height: 46px;
+  padding: 11px 15px;
+  gap: 10px;
+  color: #2d4365;
+  background: transparent;
+  border: 1px solid #8cabbf;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.login-page .access-guest:hover {
+  background: #d7e9ee;
+  border-color: #256a91;
+}
+.login-access-status {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-height: 37px;
+  margin-top: 13px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #536b7e;
+}
+.login-access-status svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.login-access-status.has-notice {
+  color: #205875;
+}
+.login-access-status:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.login-page .login-signup-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 13px;
+  row-gap: 12px;
+}
+.login-signup-form .access-password-hint {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  line-height: 1.5;
+  margin: -3px 0 0;
+  color: #526b7d;
+}
+.login-signup-form .access-submit {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+.login-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-shrink: 0;
+  min-height: 18px;
+  color: #b7ccdb;
+  font-size: 9px;
+  letter-spacing: 0.01em;
+}
+@media (min-width: 761px) and (min-height: 620px) {
+  .login-page {
+    height: 100dvh;
+  }
+}
+@media (min-width: 761px) and (max-height: 740px) {
+  .login-page {
+    gap: 13px;
+    padding-block: 13px;
+  }
+  .login-introduction {
+    padding: 28px;
+  }
+  .login-intro-copy h2 {
+    font-size: 43px;
+    margin-top: 13px;
+  }
+  .login-intro-copy > p {
+    margin-top: 13px;
+  }
+  .login-alya-scene {
+    padding-top: 18px;
+  }
+  .login-avatar-frame {
+    height: 205px;
+  }
+  .login-intro-footer {
+    margin-top: 15px;
+    padding-top: 12px;
+  }
+  .login-form-side {
+    padding: 21px 30px;
+  }
+  .login-form-heading h1 {
+    font-size: 27px;
+  }
+  .login-form-heading p {
+    margin-top: 5px;
+  }
+  .login-page .access-form {
+    margin-top: 16px;
+    gap: 11px;
+  }
+  .login-page .access-field input {
+    height: 42px;
+  }
+  .login-page .access-password button {
+    height: 36px;
+  }
+  .login-page .access-submit,
+  .login-page .access-guest {
+    min-height: 43px;
+    padding-block: 9px;
+  }
+  .login-page .access-guest-divider {
+    margin-block: 13px 10px;
+  }
+  .login-page .access-switch-mode,
+  .login-page .access-hr-note {
+    margin-top: 10px;
+  }
+  .login-access-status {
+    margin-top: 10px;
+  }
+}
+@media (min-width: 761px) and (max-width: 1040px) {
+  .login-page {
+    padding-inline: 22px;
+  }
+  .login-shell {
+    grid-template-columns: minmax(275px, 0.78fr) minmax(0, 1.1fr);
+  }
+  .login-introduction {
+    padding-inline: 24px;
+  }
+  .login-intro-copy h2 {
+    font-size: 36px;
+  }
+  .login-intro-copy > p {
+    font-size: 12px;
+  }
+  .login-desktop-break {
+    display: none;
+  }
+  .login-alya-scene {
+    gap: 15px;
+    grid-template-columns: minmax(0, 1fr) 0.8fr;
+  }
+  .login-avatar-frame {
+    height: 180px;
+  }
+  .login-alya-name {
+    font-size: 18px;
+  }
+  .login-alya-copy > p {
+    font-size: 11px;
+  }
+  .login-alya-formats {
+    font-size: 9px;
+    padding-top: 12px;
+    margin-top: 12px;
+    gap: 5px;
+  }
+  .login-form-side {
+    padding-inline: 24px;
+  }
+  .login-form-heading h1 {
+    font-size: 25px;
+  }
+  .login-header-note {
+    font-size: 8px;
+    gap: 10px;
+  }
+  .login-page .access-field input {
+    font-size: 12px;
+  }
+}
+@media (max-width: 760px) {
+  .login-page {
+    padding: 18px 18px 14px;
+    gap: 18px;
+  }
+  .login-header {
+    min-height: 38px;
+  }
+  .login-header-note {
+    display: none;
+  }
+  .login-header-switch {
+    padding-left: 0;
+    border-left: 0;
+    font-size: 11px;
+  }
+  .login-shell {
+    grid-template-columns: minmax(0, 1fr);
+    flex: 1;
+    border-color: #7792a8;
+  }
+  .login-introduction {
+    display: none;
+  }
+  .login-form-side {
+    padding: 27px 22px;
+  }
+  .login-form-heading h1 {
+    font-size: 26px;
+  }
+  .login-page .access-form {
+    margin-top: 19px;
+    gap: 13px;
+  }
+  .login-page .access-field input {
+    font-size: 16px;
+    height: 46px;
+  }
+  .login-page .access-password button {
+    height: 40px;
+    font-size: 11px;
+  }
+  .login-page .access-submit,
+  .login-page .access-guest {
+    min-height: 46px;
+  }
+  .login-page .access-switch-mode {
+    font-size: 10px;
+  }
+  .login-page .login-signup-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .login-footer {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 12px;
+    font-size: 8px;
+    text-align: center;
+  }
+  .login-footer > span:last-child {
+    flex-basis: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-page .access-submit {
+    transition: none;
+  }
+}

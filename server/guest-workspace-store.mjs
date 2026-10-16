@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { createChatMemory, ChatError } from './saved-conversations.mjs';
 import { guestWorkspaceLifetime, workspaceLimits } from './workspace-limits.mjs';
+import { hrOnboardingTasks, validJoiningDate } from './hr-onboarding.mjs';
 export { guestWorkspaceLifetime, workspaceLimits } from './workspace-limits.mjs';
 
 // This database contains isolated guest workspaces, never the existing employee database.
@@ -23,6 +24,31 @@ export function createGuestWorkspaceStore({
     fingerprint TEXT NOT NULL, bytes INTEGER NOT NULL, created INTEGER NOT NULL,
     UNIQUE(workspace_owner, fingerprint)
   );`);
+  const columns = new Set(
+    db
+      .prepare('PRAGMA table_info(workspace_documents)')
+      .all()
+      .map((column) => column.name),
+  );
+  if (!columns.has('category'))
+    db.exec("ALTER TABLE workspace_documents ADD COLUMN category TEXT NOT NULL DEFAULT ''");
+  if (!columns.has('google_doc_id'))
+    db.exec('ALTER TABLE workspace_documents ADD COLUMN google_doc_id TEXT');
+  const guestColumns = new Set(
+    db
+      .prepare('PRAGMA table_info(workspace_guests)')
+      .all()
+      .map((column) => column.name),
+  );
+  for (const [column, definition] of [
+    ['start_date', "TEXT NOT NULL DEFAULT ''"],
+    ['department', "TEXT NOT NULL DEFAULT ''"],
+    ['onboarding_tasks', "TEXT NOT NULL DEFAULT '[]'"],
+    ['onboarding_version', 'INTEGER NOT NULL DEFAULT 0'],
+  ]) {
+    if (!guestColumns.has(column))
+      db.exec(`ALTER TABLE workspace_guests ADD COLUMN ${column} ${definition}`);
+  }
   // Preserve existing identities and activity while updating display labels.
   db.prepare(
     "UPDATE workspace_guests SET name=REPLACE(name,'Guest employee ','Employee ') WHERE name LIKE 'Guest employee %'",
@@ -112,7 +138,7 @@ export function createGuestWorkspaceStore({
   function documents(owner) {
     return db
       .prepare(
-        'SELECT id,title,text,bytes,created FROM workspace_documents WHERE workspace_owner=? ORDER BY created,rowid',
+        'SELECT id,title,text,bytes,created,fingerprint,category,google_doc_id AS googleDocId FROM workspace_documents WHERE workspace_owner=? ORDER BY created,rowid',
       )
       .all(owner);
   }
@@ -144,6 +170,82 @@ export function createGuestWorkspaceStore({
     ).run(id, owner, name, text, fingerprint, bytes, Date.now());
     return { id, duplicate: false };
   });
+  function checkGoogleDocConnection(owner, { text, googleDocId, category }) {
+    const all = documents(owner);
+    const sameLink = all.find((doc) => doc.googleDocId === googleDocId);
+    const slot = category === 'additional' ? null : all.find((doc) => doc.category === category);
+    if (sameLink && sameLink.id !== slot?.id) {
+      if (sameLink.category === category) return { id: sameLink.id, duplicate: true };
+      throw new ChatError(
+        409,
+        'GOOGLE_DOC_ALREADY_CONNECTED',
+        'This Google Doc is already connected to another topic. Choose a different document.',
+      );
+    }
+    const fingerprint = createHash('sha256').update(text).digest('hex');
+    if (all.some((doc) => doc.id !== slot?.id && doc.fingerprint === fingerprint))
+      throw new ChatError(
+        409,
+        'GOOGLE_DOC_ALREADY_CONNECTED',
+        'This guidance is already in your library. Connect a different Google Doc.',
+      );
+    const others = all.filter((doc) => doc.id !== slot?.id);
+    if (!slot && all.length >= workspaceLimits.files)
+      throw new ChatError(
+        409,
+        'WORKSPACE_DOCUMENT_LIMIT',
+        'The workspace supports twelve documents. Remove one before adding another.',
+      );
+    if (
+      text.length > workspaceLimits.characters ||
+      others.reduce((n, doc) => n + doc.text.length, 0) + text.length >
+        workspaceLimits.totalCharacters
+    )
+      throw new ChatError(
+        413,
+        'WORKSPACE_TEXT_LIMIT',
+        'These guides exceed the workspace’s readable text limit. Use a shorter guide.',
+      );
+    const id = slot?.id || randomUUID();
+    return { id, duplicate: false, replaced: !!slot };
+  }
+  const connectGoogleDoc = db.transaction((owner, document) => {
+    const plan = checkGoogleDocConnection(owner, document);
+    if (plan.duplicate) return plan;
+    const { name, text, googleDocId, category } = document;
+    const { id } = plan;
+    const fingerprint = createHash('sha256').update(text).digest('hex');
+    if (plan.replaced) {
+      db.prepare(
+        'UPDATE workspace_documents SET title=?,text=?,fingerprint=?,bytes=?,created=?,category=?,google_doc_id=? WHERE workspace_owner=? AND id=?',
+      ).run(
+        name,
+        text,
+        fingerprint,
+        Buffer.byteLength(text),
+        Date.now(),
+        category,
+        googleDocId,
+        owner,
+        id,
+      );
+    } else {
+      db.prepare(
+        'INSERT INTO workspace_documents(id,workspace_owner,title,text,fingerprint,bytes,created,category,google_doc_id) VALUES(?,?,?,?,?,?,?,?,?)',
+      ).run(
+        id,
+        owner,
+        name,
+        text,
+        fingerprint,
+        Buffer.byteLength(text),
+        Date.now(),
+        category,
+        googleDocId,
+      );
+    }
+    return plan;
+  });
   function removeDocument(owner, id) {
     if (
       !db.prepare('DELETE FROM workspace_documents WHERE workspace_owner=? AND id=?').run(owner, id)
@@ -164,17 +266,27 @@ export function createGuestWorkspaceStore({
         id: person.id,
         name: person.name,
         created: person.created,
+        onboarding: {
+          startDate: person.start_date,
+          department: person.department,
+          completed: JSON.parse(person.onboarding_tasks),
+          version: person.onboarding_version,
+        },
         summary: memory.supportSummary(person.chat_owner),
       }));
     return {
       lastGuestId: workspace.last_guest_id,
       expiresAt: workspace.updated + guestWorkspaceLifetime,
-      documents: documents(owner).map(({ text, ...doc }) => ({ ...doc, characters: text.length })),
+      documents: documents(owner).map(({ text, fingerprint, ...doc }) => ({
+        ...doc,
+        characters: text.length,
+      })),
       guests,
       limits: workspaceLimits,
     };
   }
   return {
+    checkGoogleDocConnection,
     memory,
     ensure,
     guest,
@@ -184,6 +296,42 @@ export function createGuestWorkspaceStore({
       return person;
     },
     newGuest,
+    updateOnboarding: db.transaction((owner, id, input) => {
+      const person = guest(owner, id);
+      const { startDate, department, completed, version } = input || {};
+      if (
+        !input ||
+        Array.isArray(input) ||
+        Object.keys(input).some(
+          (key) => !['startDate', 'department', 'completed', 'version'].includes(key),
+        ) ||
+        !validJoiningDate(startDate) ||
+        typeof department !== 'string' ||
+        department.trim().length > 64 ||
+        /[\u0000-\u001f\u007f]/.test(department) ||
+        !Array.isArray(completed) ||
+        completed.length > hrOnboardingTasks.length ||
+        completed.some((task) => !hrOnboardingTasks.some((item) => item.id === task)) ||
+        new Set(completed).size !== completed.length ||
+        !Number.isSafeInteger(version) ||
+        version < 0
+      )
+        throw new ChatError(
+          400,
+          'ONBOARDING_INVALID',
+          'Check the joining date, department and onboarding milestones.',
+        );
+      if (version !== person.onboarding_version)
+        throw new ChatError(
+          409,
+          'ONBOARDING_CHANGED',
+          'This record changed in another tab. Close this form, refresh the workspace and try again.',
+        );
+      db.prepare(
+        'UPDATE workspace_guests SET start_date=?,department=?,onboarding_tasks=?,onboarding_version=onboarding_version+1 WHERE workspace_owner=? AND id=?',
+      ).run(startDate, department.trim(), JSON.stringify(completed), owner, id);
+      return { startDate, department: department.trim(), completed, version: version + 1 };
+    }),
     removeGuest: db.transaction((owner, id) => {
       const person = guest(owner, id);
       memory.eraseOwner(person.chat_owner);
@@ -199,6 +347,7 @@ export function createGuestWorkspaceStore({
     }),
     documents,
     addDocument,
+    connectGoogleDoc,
     removeDocument,
     snapshot,
     guestForConversation(id) {

@@ -81,11 +81,15 @@ Successful chats are saved in SQLite and belong to an opaque browser-session coo
 
 ## Company uploads and guest reports
 
-On the login page choose HR → Continue without an account. Upload a PDF, DOCX, TXT or Markdown guide on the HR page, then use Employee access from the login page to ask Alya about it. HR sees that employee’s updated support summary automatically. **Add employee** creates a separate employee record; the uploaded library is shared within this browser’s workspace. Each report starts with actual activity.
+Open `/login/hr` and choose **Continue without an account**. The HR workspace has **Dashboard**, **Employee reports** and **Company documents** views. Its dashboard shows employee records, new hires from saved joining dates, HR-confirmed onboarding progress, support signals and document readiness. Select an employee name to save joining details and confirm six onboarding milestones; chat activity does not complete those milestones.
 
-Uploads are limited to 5 MB each and twelve files. Text-based PDFs are supported; scanned pages need a readable copy. A separate ignored SQLite database stores extracted text and conversations; workspaces expire after 24 hours without activity and are cleaned on a later request. Another browser gets its own empty workspace. See [Account and workspace details](docs/account-access.md) for limits and the authentication boundary.
+Connect a native Google Docs link to one of six core onboarding topics, or use **Add another Google Doc** for related guidance. Separate employee access at `/login/employee` opens the employee dashboard before Alya; employee sign-up is at `/signup/employee`. Support reports update from actual questions, requests and feedback; **Add employee** creates a separate record.
 
-The employee assistant reads connected Google Drive guidance plus uploaded files. The server selects the configured answer engine. Gemini uses Vertex AI with Application Default Credentials and the configured project's quota; relevant passages are sent to Google. There is no model selector in the website. The existing private `/mira` chat history remains available separately.
+Only Google Docs links are accepted for new guidance; the server verifies the actual native file type and read access. Twelve documents are allowed per browser workspace. Existing uploaded text is retained, with earlier filenames hidden in HR. The ignored SQLite database stores source metadata, verified text and conversations; workspaces expire after 24 hours without activity. See [HR and document details](docs/guest-workspace.md) for limits and account boundaries.
+
+For local HR imports, `GOOGLE_DRIVE_DOCUMENT_MOVES=enabled` changes the form to **Save to company Drive**. It moves the original Google Doc into the configured company folder using the connected account's edit permission. The guidance then becomes available to other browsers through that folder. Failed moves do not create a misleading connection. Company-folder writes are blocked on public/production and forwarded requests until verified HR access is implemented; ordinary link-only connections remain available with the flag off.
+
+The employee assistant reads connected Google Drive guidance plus current linked Google Docs and retained earlier guidance. The server selects the configured answer engine. Gemini uses Vertex AI with Application Default Credentials and the configured project's quota; relevant passages are sent to Google. There is no model selector in the website. The existing private `/mira` chat history remains available separately.
 
 ## GitHub and hosting later
 
@@ -97,4 +101,4 @@ The company assistant currently has no employee sign-in. Its private Drive knowl
 
 ## Verification after cleanup
 
-All 72 tests and the production build pass, including document extraction, browser/guest isolation, file changes, live reports, persistence and expiry. Automated Gemini checks use injected model responses; they do not validate live provider availability. The question box appears only in Chat; the visual guide uses Next/Back pages rather than an internal scrollbar. The Docker container has not been verified here.
+Automated checks cover document extraction, native Google Docs validation, current linked guidance, browser/guest isolation, live reports, persistence and expiry. Automated Gemini checks use injected model responses; they do not validate live provider availability. The question box appears only in Chat; the visual guide uses Next/Back pages rather than an internal scrollbar. The Docker container has not been verified here.

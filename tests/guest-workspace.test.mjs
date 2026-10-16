@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,15 +11,24 @@ import {
   guestWorkspaceLifetime,
 } from '../server/guest-workspace-store.mjs';
 import { onboardingSnapshot, checkInStatus } from '../src/access/hr-report-insights.mjs';
+import { DriveKnowledgeError } from '../server/google-drive-documents.mjs';
 
 const guidance =
   'Working Hours\nOffice hours are 10 AM to 6 PM Monday to Friday.\nDress Code\nPlain T-shirts are permitted on Fridays only.';
+const linkedFixtures = new Map();
 async function server(models = null, options = {}) {
   const store = createGuestWorkspaceStore({ path: ':memory:', geminiAvailable: !!models });
   const app = createApp({
     env: options.env || {},
     guestStore: store,
     guestModels: models,
+    moveGoogleDocument: options.moveGoogleDocument,
+    loadGoogleDocument:
+      options.loadGoogleDocument ||
+      (async (id) => {
+        if (!linkedFixtures.has(id)) throw new Error('Unknown synthetic Google Doc');
+        return linkedFixtures.get(id);
+      }),
     loadDriveKnowledge:
       options.loadDrive ||
       (() => {
@@ -55,15 +64,22 @@ async function server(models = null, options = {}) {
     },
   };
 }
-const upload = (client, name = 'guide.txt', text = guidance) =>
-  client('/documents', {
+const upload = (client, name = 'guide.txt', text = guidance) => {
+  const id =
+    'fixture-' +
+    createHash('sha256')
+      .update(name + text)
+      .digest('hex');
+  linkedFixtures.set(id, { text });
+  return client('/documents', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/octet-stream',
-      'X-File-Name': encodeURIComponent(name),
+    body: {
+      category: 'additional',
+      name,
+      url: 'https://docs.google.com/document/d/' + id + '/edit',
     },
-    body: Buffer.from(text),
   });
+};
 const createChat = (client, id) => client('/guests/' + id + '/conversations', { method: 'POST' });
 const ask = (client, guestId, chatId, question, requestId = randomUUID()) =>
   client('/guests/' + guestId + '/chat', {
@@ -173,7 +189,7 @@ test('browser workspaces cannot read or mutate another browser’s files, guests
           body: Buffer.from(guidance),
         })
       ).status,
-      400,
+      415,
     );
     const expired = b;
     assert.equal(
@@ -189,6 +205,45 @@ test('browser workspaces cannot read or mutate another browser’s files, guests
         })
       ).status,
       404,
+    );
+  } finally {
+    await s.close();
+  }
+});
+
+test('HR onboarding updates are browser-scoped, persisted and reject stale saves', async () => {
+  const s = await server(),
+    a = s.client(),
+    b = s.client();
+  try {
+    const id = (await a()).body.lastGuestId;
+    await b();
+    const path = '/guests/' + id + '/onboarding';
+    const details = {
+      startDate: '2026-10-16',
+      department: 'People',
+      completed: ['arrival'],
+      version: 0,
+    };
+    assert.equal((await b(path, { method: 'PATCH', body: details })).status, 404);
+    assert.equal(
+      (
+        await a(path, {
+          method: 'PATCH',
+          body: details,
+          headers: { Origin: 'https://other.example' },
+        })
+      ).status,
+      403,
+    );
+    assert.equal((await a(path, { method: 'PATCH', body: details })).status, 200);
+    assert.deepEqual((await a()).body.guests[0].onboarding, { ...details, version: 1 });
+    assert.equal((await a(path, { method: 'PATCH', body: details })).status, 409);
+    assert.equal((await a()).body.guests[0].summary.turns, 0);
+    assert.equal(
+      (await a(path, { method: 'PATCH', body: { ...details, version: 1, completed: ['unknown'] } }))
+        .status,
+      400,
     );
   } finally {
     await s.close();
@@ -445,5 +500,216 @@ test('employee removal clears only owned records, rejects busy chats and permits
     assert.equal(store.snapshot('one').lastGuestId, null);
   } finally {
     store.close();
+  }
+});
+
+test('local HR moves a Doc before saving its connection, and the company folder serves other browsers', async () => {
+  let failMove = true,
+    reads = 0;
+  const shared = [];
+  const s = await server(null, {
+    env: { GOOGLE_DRIVE_FOLDER_ID: 'company-folder-123', GOOGLE_DRIVE_DOCUMENT_MOVES: 'enabled' },
+    loadDrive: async () => shared,
+    loadGoogleDocument: async () => {
+      reads++;
+      return { text: guidance };
+    },
+    moveGoogleDocument: async (id, folderId, document) => {
+      assert.equal(folderId, 'company-folder-123');
+      if (failMove)
+        throw Object.assign(
+          new DriveKnowledgeError('DRIVE_MOVE_PERMISSION_REQUIRED', 'Editor access is required.'),
+          { statusCode: 403 },
+        );
+      const alreadyInFolder = shared.some((file) => file.googleDocId === id);
+      if (!alreadyInFolder)
+        shared.push({
+          googleDocId: id,
+          title: document.name,
+          category: document.category,
+          text: document.text,
+        });
+      return { googleDocId: id, alreadyInFolder, moved: !alreadyInFolder };
+    },
+  });
+  const a = s.client(),
+    b = s.client();
+  const add = () =>
+    a('/documents', {
+      method: 'POST',
+      body: {
+        category: 'handbook',
+        url: 'https://docs.google.com/document/d/moving-guide-123/edit',
+      },
+    });
+  try {
+    assert.equal((await a()).body.driveMoves.enabled, true);
+    assert.equal((await add()).status, 403);
+    assert.equal(
+      (await a()).body.documents.length,
+      0,
+      'failed moves do not create a misleading local connection',
+    );
+    failMove = false;
+    const added = await add();
+    assert.equal(added.status, 201);
+    assert.equal(added.body.driveMove.moved, true);
+    const first = (await a()).body;
+    const other = (await b()).body;
+    assert.equal(first.documents.length, 1);
+    assert.equal(other.documents.length, 0, 'browser-owned records stay isolated');
+    assert.equal(
+      other.companyKnowledge.drive.documents[0].category,
+      'handbook',
+      'company folder guidance is shared',
+    );
+    for (const [client, snapshot] of [
+      [a, first],
+      [b, other],
+    ]) {
+      const chat = (await createChat(client, snapshot.lastGuestId)).body;
+      const answer = await ask(
+        client,
+        snapshot.lastGuestId,
+        chat.id,
+        'What are the working hours?',
+      );
+      assert.equal(answer.status, 200);
+      assert.match(answer.body.answer, /10 AM/);
+    }
+    assert.equal(
+      reads,
+      2,
+      'a document in the company folder is not read a second time as a local link',
+    );
+    assert.equal((await add()).body.driveMove.alreadyInFolder, true);
+    assert.equal(shared.length, 1, 'a retried request does not duplicate the company document');
+  } finally {
+    await s.close();
+  }
+});
+
+test('the preview HR role cannot perform company Drive writes in production or through a forwarded request', async () => {
+  for (const production of [true, false]) {
+    let calls = 0;
+    const s = await server(null, {
+      env: {
+        GOOGLE_DRIVE_FOLDER_ID: 'company-folder-123',
+        GOOGLE_DRIVE_DOCUMENT_MOVES: 'enabled',
+        ...(production ? { NODE_ENV: 'production' } : {}),
+      },
+      loadDrive: async () => [],
+      loadGoogleDocument: async () => {
+        calls++;
+        return { text: guidance };
+      },
+      moveGoogleDocument: async () => {
+        calls++;
+        throw new Error('Must never write');
+      },
+    });
+    try {
+      const client = s.client();
+      const response = await client('/documents', {
+        method: 'POST',
+        ...(production ? {} : { headers: { 'X-Forwarded-For': '203.0.113.1' } }),
+        body: {
+          category: 'company',
+          url: 'https://docs.google.com/document/d/private-guide-123/edit',
+        },
+      });
+      assert.equal(response.status, 403);
+      assert.equal(response.body.code, 'DRIVE_MOVE_HR_ACCESS_REQUIRED');
+      assert.equal(calls, 0);
+    } finally {
+      await s.close();
+    }
+  }
+});
+
+test('HR connects category-labelled Google Docs, reads current guidance and fails closed on revoked access', async () => {
+  let text = 'Working Hours\nOffice hours are 10 AM to 6 PM Monday to Friday.';
+  let revoked = false;
+  let reads = 0;
+  const s = await server(null, {
+    loadGoogleDocument: async (id) => {
+      reads++;
+      if (id === 'disguised-pdf-123')
+        throw new DriveKnowledgeError(
+          'GOOGLE_DOC_TYPE_REQUIRED',
+          'Only native Google Docs are accepted.',
+        );
+      if (revoked)
+        throw Object.assign(new Error('private Google details'), { response: { status: 403 } });
+      return { text };
+    },
+  });
+  const a = s.client(),
+    b = s.client();
+  const connect = (client, id, category = 'handbook') =>
+    client('/documents', {
+      method: 'POST',
+      body: {
+        category,
+        name: 'Old private filename.docx',
+        url: 'https://docs.google.com/document/d/' + id + '/edit',
+      },
+    });
+  try {
+    const guest = (await a()).body.lastGuestId;
+    await b();
+    const created = await connect(a, 'employee-handbook-123');
+    assert.equal(created.status, 201);
+    const snapshot = (await a()).body;
+    assert.equal(snapshot.documents[0].title, 'Employee Handbook');
+    assert.equal(snapshot.documents[0].category, 'handbook');
+    assert.equal(snapshot.documents[0].googleDocId, 'employee-handbook-123');
+    assert.equal(JSON.stringify(snapshot).includes('Old private filename'), false);
+    assert.equal('text' in snapshot.documents[0], false);
+    assert.equal('fingerprint' in snapshot.documents[0], false);
+    assert.equal((await b()).body.documents.length, 0);
+    assert.equal((await b('/documents/' + created.body.id, { method: 'DELETE' })).status, 404);
+    const chat = (await createChat(a, guest)).body;
+    const initial = await ask(a, guest, chat.id, 'What are the working hours?');
+    assert.match(initial.body.answer, /10 AM/);
+    assert.equal(initial.body.passages[0].title, 'Employee Handbook');
+    text = 'Working Hours\nOffice hours are 11 AM to 6 PM Monday to Friday.';
+    assert.match(
+      (await ask(a, guest, chat.id, 'What are the working hours?')).body.answer,
+      /11 AM/,
+    );
+    revoked = true;
+    const rejected = await ask(a, guest, chat.id, 'What are the working hours?');
+    assert.equal(rejected.status, 503);
+    assert.equal(rejected.body.code, 'DRIVE_ACCESS_DENIED');
+    assert.equal(JSON.stringify(rejected.body).includes('private Google'), false);
+    assert.equal((await a()).body.guests[0].summary.turns, 2);
+    revoked = false;
+    const replaced = await connect(a, 'new-employee-handbook-456');
+    assert.equal(replaced.status, 200);
+    assert.equal(replaced.body.replaced, true);
+    assert.equal(replaced.body.id, created.body.id);
+    assert.equal((await a()).body.documents.length, 1);
+    assert.equal((await connect(a, 'disguised-pdf-123', 'company')).status, 422);
+    const before = reads;
+    assert.equal(
+      (
+        await a('/documents', {
+          method: 'POST',
+          body: { category: 'company', url: 'https://evil.example/document/d/company-123/edit' },
+        })
+      ).status,
+      400,
+    );
+    assert.equal(reads, before, 'invalid links never reach Google');
+    const file = await a('/documents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: Buffer.from('local file'),
+    });
+    assert.equal(file.status, 415);
+    assert.equal(file.body.code, 'GOOGLE_DOC_ONLY');
+  } finally {
+    await s.close();
   }
 });

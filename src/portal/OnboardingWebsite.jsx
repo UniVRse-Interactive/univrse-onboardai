@@ -10,6 +10,16 @@ import './website.css';
 
 const AlyaChatPage = React.lazy(() => import('../avatar/AlyaChatPage'));
 
+// Older entry links keep working; each new sign-in link identifies its workspace.
+const accessPages = {
+  '/': { role: 'employee' },
+  '/login': { role: 'employee' },
+  '/signup': { role: 'employee', signup: true },
+  '/login/employee': { role: 'employee' },
+  '/login/hr': { role: 'hr' },
+  '/signup/employee': { role: 'employee', signup: true },
+};
+
 const storageKey = 'univrse-onboardai-portal-v1';
 const emptyState = {
   profile: { name: '', pathway: 'Employee', startDate: '' },
@@ -837,6 +847,7 @@ export default function OnboardingWebsite() {
   const assistantPath = path === '/mira' || !!guestId;
   const chatPath = guestId || path === '/mira' ? path : '/employee';
   const active = navigation.find((item) => item.path === (assistantPath ? '/mira' : path));
+  const accessPage = accessPages[path];
   useEffect(() => {
     const pop = () => {
       let next = window.location.pathname;
@@ -860,14 +871,15 @@ export default function OnboardingWebsite() {
     };
   }, []);
   useEffect(() => {
-    const accessTitle =
-      path === '/' || path === '/login'
-        ? 'Welcome'
-        : path === '/signup'
-          ? 'Create an employee account'
-          : ['/hr', '/hr-preview'].includes(path)
-            ? 'HR workspace'
-            : null;
+    const accessTitle = accessPage
+      ? accessPage.signup
+        ? 'Create an employee account'
+        : accessPage.role === 'hr'
+          ? 'HR sign-in'
+          : 'Employee sign-in'
+      : ['/hr', '/hr-preview'].includes(path)
+        ? 'HR workspace'
+        : null;
     document.title = (accessTitle || active?.label || 'Page not found') + ' · OnboardAi';
   }, [path]);
   useEffect(() => {
@@ -900,7 +912,7 @@ export default function OnboardingWebsite() {
     setMobile(false);
     setDialog(null);
     setSupportTeam(null);
-    if (['/', '/login', '/signup'].includes(next)) setGuestPreview('');
+    if (accessPages[next]) setGuestPreview('');
     window.scrollTo({ top: 0, behavior: 'instant' });
     mainRef.current?.focus({ preventScroll: true });
   }
@@ -921,10 +933,12 @@ export default function OnboardingWebsite() {
   }
   const onTask = (task) => setDialog({ type: 'task', task }),
     name = state.profile.name || 'Your profile';
-  if (['/', '/login', '/signup'].includes(path))
+  if (accessPage)
     return (
       <LoginPage
-        signup={path === '/signup'}
+        key={accessPage.role + (accessPage.signup ? '-signup' : '-login')}
+        role={accessPage.role}
+        signup={!!accessPage.signup}
         navigate={navigate}
         onGuest={(role) => {
           setGuestPreview(role);
@@ -956,7 +970,7 @@ export default function OnboardingWebsite() {
               <span className="uv-small-dot mint" />
               {guestId || guestPreview === 'employee' ? 'EMPLOYEE' : 'WORKSPACE'}
             </span>
-            <Link to="/login" navigate={navigate} className="uv-access-link">
+            <Link to="/login/employee" navigate={navigate} className="uv-access-link">
               Back to sign in <Icon name="arrow" size={14} />
             </Link>
             <button
