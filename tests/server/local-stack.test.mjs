@@ -1,20 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { commands, ensureDocker, renderSummary, runLocal } from '../../scripts/local-stack.mjs';
+import {
+  commands,
+  ensureDocker,
+  placeholderFile,
+  renderSummary,
+  resolveAdcFile,
+  runLocal,
+} from '../../scripts/local-stack.mjs';
 
 // A fake runner: docker info answers according to `daemon`, which a test can
 // flip (as if Docker Desktop finished starting). Every call is recorded.
 function fakeRun({ daemon = { up: true }, fail = [] } = {}) {
   const calls = [];
-  const run = (command, args) => {
+  const envs = [];
+  const run = (command, args, options = {}) => {
+    envs.push(options.env);
     calls.push([command, ...args].join(' '));
     if (command === 'docker' && args[0] === 'info')
       return { status: daemon.up ? 0 : 1, stdout: '' };
     if (command === 'open') return { status: daemon.openFails ? 1 : 0, stdout: '' };
     return { status: fail.includes(args[1]) ? 1 : 0, stdout: '' };
   };
-  return { run, calls, daemon };
+  return { run, calls, daemon, envs };
 }
+
+// Keeps tests off the real home directory and file system.
+const adcStub = {
+  adcOptions: { env: {}, home: '/h', exists: () => true, writeText: async () => {} },
+};
 
 const login = {
   hrId: 'HR-0001',
@@ -83,6 +97,7 @@ test('start builds, brings up web and prints the login summary', async () => {
   const out = [];
   const made = [];
   const { exitCode } = await runLocal('start', {
+    ...adcStub,
     run: f.run,
     platform: 'linux',
     mkdirp: async (path) => made.push(path),
@@ -114,6 +129,7 @@ test('without a stored password the summary shows the reset hint instead', async
   const f = fakeRun();
   const out = [];
   await runLocal('start', {
+    ...adcStub,
     run: f.run,
     platform: 'linux',
     mkdirp: async () => {},
@@ -132,6 +148,7 @@ test('reset runs the setup service with LOCAL_HR_RESET=1 and prints the summary'
   const f = fakeRun();
   const out = [];
   const { exitCode } = await runLocal('reset', {
+    ...adcStub,
     run: f.run,
     platform: 'linux',
     mkdirp: async () => {},
@@ -147,10 +164,11 @@ test('down stops only web, api and tts; logs follows them; neither removes anyth
   const f = fakeRun();
   const out = [];
   assert.equal(
-    (await runLocal('down', { run: f.run, platform: 'linux', out: (l) => out.push(l) })).exitCode,
+    (await runLocal('down', { ...adcStub, run: f.run, platform: 'linux', out: (l) => out.push(l) }))
+      .exitCode,
     0,
   );
-  assert.equal((await runLocal('logs', { run: f.run, platform: 'linux' })).exitCode, 0);
+  assert.equal((await runLocal('logs', { ...adcStub, run: f.run, platform: 'linux' })).exitCode, 0);
   assert.deepEqual(f.calls, [
     'docker info',
     'docker compose stop web api tts',
@@ -165,19 +183,104 @@ test('down stops only web, api and tts; logs follows them; neither removes anyth
 
 test('failures exit non-zero with a short message and a logs hint', async () => {
   const errors = [];
-  const base = { platform: 'linux', mkdirp: async () => {}, read: async () => '{}', out: () => {} };
+  const base = {
+    ...adcStub,
+    platform: 'linux',
+    mkdirp: async () => {},
+    read: async () => '{}',
+    out: () => {},
+  };
   let f = fakeRun({ fail: ['up'] });
-  let result = await runLocal('start', { ...base, run: f.run, err: (l) => errors.push(l) });
+  let result = await runLocal('start', {
+    ...adcStub,
+    ...base,
+    run: f.run,
+    err: (l) => errors.push(l),
+  });
   assert.equal(result.exitCode, 1);
   assert.match(errors.at(-1), /npm run local:logs/);
 
   f = fakeRun({ fail: ['build'] });
-  result = await runLocal('start', { ...base, run: f.run, err: (l) => errors.push(l) });
+  result = await runLocal('start', { ...adcStub, ...base, run: f.run, err: (l) => errors.push(l) });
   assert.equal(result.exitCode, 1);
   assert.deepEqual(f.calls, ['docker info', 'docker compose build']);
 
   f = fakeRun({ daemon: { up: false } });
-  result = await runLocal('start', { ...base, run: f.run, err: (l) => errors.push(l) });
+  result = await runLocal('start', { ...adcStub, ...base, run: f.run, err: (l) => errors.push(l) });
   assert.equal(result.exitCode, 1);
-  assert.equal((await runLocal('bogus', { ...base, run: f.run, err: () => {} })).exitCode, 1);
+  assert.equal(
+    (await runLocal('bogus', { ...base, ...adcStub, run: f.run, err: () => {} })).exitCode,
+    1,
+  );
+});
+
+test('the credentials file is found, preferred from GOOGLE_APPLICATION_CREDENTIALS, or a placeholder', async () => {
+  const wrote = [];
+  const writeText = async (path, text) => wrote.push([path, text]);
+  const home = '/home/u';
+  const fallback = '/home/u/.config/gcloud/application_default_credentials.json';
+  assert.deepEqual(
+    await resolveAdcFile({ env: {}, home, exists: (p) => p === fallback, writeText }),
+    { file: fallback, found: true },
+  );
+  assert.deepEqual(
+    await resolveAdcFile({
+      env: { GOOGLE_APPLICATION_CREDENTIALS: '/keys/mine.json' },
+      home,
+      exists: () => true,
+      writeText,
+    }),
+    { file: '/keys/mine.json', found: true },
+  );
+  // A configured path that does not exist falls back to the gcloud login.
+  assert.equal(
+    (
+      await resolveAdcFile({
+        env: { GOOGLE_APPLICATION_CREDENTIALS: '/keys/gone.json' },
+        home,
+        exists: (p) => p === fallback,
+        writeText,
+      })
+    ).file,
+    fallback,
+  );
+  assert.deepEqual(wrote, []);
+  const missing = await resolveAdcFile({ env: {}, home, exists: () => false, writeText });
+  assert.deepEqual(missing, { file: placeholderFile, found: false });
+  assert.ok(placeholderFile.startsWith('/') && placeholderFile.endsWith('no-adc.json'));
+  assert.deepEqual(wrote, [[placeholderFile, '{}\n']]);
+});
+
+test('every compose call gets LOCAL_ADC_FILE, and the summary reports Gemini autofill', async () => {
+  for (const [found, expected] of [
+    [true, /Gemini autofill\s+on/],
+    [
+      false,
+      /Gemini autofill\s+off \(no Google login\)[\s\S]*gcloud auth application-default login/,
+    ],
+  ]) {
+    for (const command of ['start', 'reset', 'down', 'logs']) {
+      const f = fakeRun();
+      const out = [];
+      await runLocal(command, {
+        run: f.run,
+        platform: 'linux',
+        mkdirp: async () => {},
+        read: async () => JSON.stringify(login),
+        out: (l) => out.push(l),
+        adcOptions: { env: {}, home: '/h', exists: () => found, writeText: async () => {} },
+      });
+      const composeEnvs = f.calls
+        .map((call, i) => [call, f.envs[i]])
+        .filter(([call]) => call.startsWith('docker compose'))
+        .map(([, env]) => env);
+      assert.ok(composeEnvs.length >= 1);
+      for (const env of composeEnvs)
+        assert.equal(
+          env.LOCAL_ADC_FILE,
+          found ? '/h/.config/gcloud/application_default_credentials.json' : placeholderFile,
+        );
+      if (command === 'start' || command === 'reset') assert.match(out.join('\n'), expected);
+    }
+  }
 });

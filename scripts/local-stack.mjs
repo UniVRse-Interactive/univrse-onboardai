@@ -3,8 +3,9 @@
 // wrote to .cache/local-stack/hr-login.json. Local only.
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const setupDirectory = join('.cache', 'local-stack');
@@ -12,11 +13,11 @@ export const loginFile = join(setupDirectory, 'hr-login.json');
 const resetHint = 'npm run local:reset-hr';
 
 // Default runner: returns { status, stdout }. `inherit` streams the output.
-export function runCommand(command, args, { inherit = false } = {}) {
+export function runCommand(command, args, { inherit = false, env = {} } = {}) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     stdio: inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: { ...process.env, ...env },
   });
   return { status: result.error ? 127 : (result.status ?? 1), stdout: result.stdout || '' };
 }
@@ -54,14 +55,18 @@ export async function ensureDocker({
   };
 }
 
-export function renderSummary(login, { webPort = process.env.LOCAL_WEB_PORT || '3100' } = {}) {
+export function renderSummary(
+  login,
+  { webPort = process.env.LOCAL_WEB_PORT || '3100', adc = true } = {},
+) {
   const rows = [['App', login?.appUrl || `http://localhost:${webPort}`]];
   if (login) rows.push(['HR ID', login.hrId], ['HR password', login.password]);
   rows.push(
     ['Emulator UI', login?.emulatorUiUrl || 'http://localhost:4000'],
     ['Postgres', '127.0.0.1:5442'],
+    ['Gemini autofill', adc ? 'on' : 'off (no Google login)'],
   );
-  const lines = rows.map(([label, value]) => `  ${label.padEnd(12)} ${value}`);
+  const lines = rows.map(([label, value]) => `  ${label.padEnd(16)} ${value}`);
   if (!login) {
     lines.push(
       '',
@@ -69,6 +74,11 @@ export function renderSummary(login, { webPort = process.env.LOCAL_WEB_PORT || '
       `  Run ${resetHint} to set a new one and show it.`,
     );
   }
+  if (!adc)
+    lines.push(
+      '',
+      '  Gemini autofill is off: run `gcloud auth application-default login`, then `npm run local` again.',
+    );
   lines.push(
     '',
     '  Stop the app:  npm run local:down  (the databases keep running)',
@@ -88,6 +98,27 @@ async function readLogin(read, path) {
   }
 }
 
+export const placeholderFile = resolve(setupDirectory, 'no-adc.json');
+
+// Picks the Google credentials file to mount into the api container. Only
+// checks that a file exists; never reads it. Without one, a `{}` placeholder
+// keeps the bind mount valid. Returns { file, found }.
+export async function resolveAdcFile({
+  env = process.env,
+  home = homedir(),
+  exists = existsSync,
+  writeText = (path, text) => writeFile(path, text, { mode: 0o600 }),
+} = {}) {
+  const configured = env.GOOGLE_APPLICATION_CREDENTIALS
+    ? resolve(env.GOOGLE_APPLICATION_CREDENTIALS)
+    : null;
+  if (configured && exists(configured)) return { file: configured, found: true };
+  const fallback = join(home, '.config', 'gcloud', 'application_default_credentials.json');
+  if (exists(fallback)) return { file: fallback, found: true };
+  await writeText(placeholderFile, '{}\n');
+  return { file: placeholderFile, found: false };
+}
+
 const compose = (...args) => ['compose', ...args];
 export const commands = {
   build: compose('build'),
@@ -104,6 +135,7 @@ export async function runLocal(
     run = runCommand,
     mkdirp = (path) => mkdir(path, { recursive: true }),
     read = readFile,
+    adcOptions = {},
     platform = process.platform,
     sleep,
     now,
@@ -111,7 +143,8 @@ export async function runLocal(
     err = console.error,
   } = {},
 ) {
-  const docker = (args) => run('docker', args, { inherit: true }).status === 0;
+  let env = {};
+  const docker = (args) => run('docker', args, { inherit: true, env }).status === 0;
   const fail = (message) => {
     err(message);
     return { exitCode: 1 };
@@ -121,6 +154,10 @@ export async function runLocal(
   const ready = await ensureDocker({ run, platform, sleep, now, log: out });
   if (!ready.ok) return fail(ready.message);
 
+  await mkdirp(setupDirectory);
+  const adc = await resolveAdcFile(adcOptions);
+  env = { LOCAL_ADC_FILE: adc.file };
+
   if (command === 'down') {
     if (!docker(commands.down)) return fail('Could not stop the app containers.');
     out('Stopped web, api and tts. PostgreSQL and the Firestore emulator are still running.');
@@ -128,7 +165,6 @@ export async function runLocal(
   }
   if (command === 'logs') return { exitCode: docker(commands.logs) ? 0 : 1 };
 
-  await mkdirp(setupDirectory);
   if (command === 'start') {
     if (!docker(commands.build)) return fail('Docker build failed. See the output above.');
     if (!docker(commands.up))
@@ -136,7 +172,7 @@ export async function runLocal(
   } else if (!docker(commands.reset)) {
     return fail('The HR password reset failed. Run npm run local:logs to see why.');
   }
-  out(renderSummary(await readLogin(read, loginFile)));
+  out(renderSummary(await readLogin(read, loginFile), { adc: adc.found }));
   return { exitCode: 0 };
 }
 

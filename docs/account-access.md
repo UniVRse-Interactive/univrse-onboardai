@@ -134,6 +134,19 @@ the migrations and makes sure the local HR account (`LOCAL_HR_ID`, default `HR-0
 | `npm run local:down`     | `docker compose stop web api tts`. The databases keep running; nothing is removed                                            |
 | `npm run local:logs`     | `docker compose logs -f web api tts setup`                                                                                   |
 
+Run `npm run local` from one checkout. Starting it from different folders makes Docker Compose
+recreate the Firestore container (a fix is under way).
+
+Firestore data is auto-saved: a sidecar exports the emulator's data every minute, so a Docker
+crash loses at most about a minute of Firestore data.
+
+Gemini autofill needs your Google login. The api container mounts your Application Default
+Credentials read-only (`GOOGLE_APPLICATION_CREDENTIALS`, else
+`~/.config/gcloud/application_default_credentials.json`; the file is only checked for, never
+read or copied). Without it the stack still starts with an empty placeholder
+(`.cache/local-stack/no-adc.json`), autofill is off and the summary says to run
+`gcloud auth application-default login`, then `npm run local` again.
+
 The login file holds local test data only and is ignored by Git (`.cache/`).
 
 ## Local setup
