@@ -11,7 +11,7 @@ import {
 
 // A fake runner: docker info answers according to `daemon`, which a test can
 // flip (as if Docker Desktop finished starting). Every call is recorded.
-function fakeRun({ daemon = { up: true }, fail = [] } = {}) {
+function fakeRun({ daemon = { up: true }, fail = [], missing = false } = {}) {
   const calls = [];
   const envs = [];
   const run = (command, args, options = {}) => {
@@ -19,6 +19,7 @@ function fakeRun({ daemon = { up: true }, fail = [] } = {}) {
     calls.push([command, ...args].join(' '));
     if (command === 'docker' && args[0] === 'info')
       return { status: daemon.up ? 0 : 1, stdout: '' };
+    if (args[0] === 'image') return { status: missing ? 1 : 0, stdout: '' };
     if (command === 'open') return { status: daemon.openFails ? 1 : 0, stdout: '' };
     return { status: fail.includes(args[1]) ? 1 : 0, stdout: '' };
   };
@@ -108,6 +109,7 @@ test('start builds, brings up web and prints the login summary', async () => {
   assert.equal(exitCode, 0);
   assert.deepEqual(f.calls, [
     'docker info',
+    'docker image inspect onboardai-local-firebase-emulator:15.34.0',
     'docker compose build',
     'docker compose up -d --wait web',
   ]);
@@ -200,10 +202,10 @@ test('failures exit non-zero with a short message and a logs hint', async () => 
   assert.equal(result.exitCode, 1);
   assert.match(errors.at(-1), /npm run local:logs/);
 
-  f = fakeRun({ fail: ['build'] });
+  f = fakeRun({ fail: ['build'], missing: false });
   result = await runLocal('start', { ...adcStub, ...base, run: f.run, err: (l) => errors.push(l) });
   assert.equal(result.exitCode, 1);
-  assert.deepEqual(f.calls, ['docker info', 'docker compose build']);
+  assert.deepEqual(f.calls.slice(-1), ['docker compose build']);
 
   f = fakeRun({ daemon: { up: false } });
   result = await runLocal('start', { ...adcStub, ...base, run: f.run, err: (l) => errors.push(l) });
@@ -283,4 +285,34 @@ test('every compose call gets LOCAL_ADC_FILE, and the summary reports Gemini aut
       if (command === 'start' || command === 'reset') assert.match(out.join('\n'), expected);
     }
   }
+});
+
+test('the emulator image is built once, before up, only when it is missing', async () => {
+  const base = {
+    ...adcStub,
+    platform: 'linux',
+    mkdirp: async () => {},
+    read: async () => '{}',
+    out: () => {},
+  };
+  const present = fakeRun();
+  await runLocal('start', { ...base, run: present.run });
+  assert.ok(!present.calls.some((c) => c.includes('firebase-emulator-image')));
+
+  const missing = fakeRun({ missing: true });
+  await runLocal('start', { ...base, run: missing.run });
+  assert.deepEqual(missing.calls, [
+    'docker info',
+    'docker image inspect onboardai-local-firebase-emulator:15.34.0',
+    'docker compose --profile emulator-image build firebase-emulator-image',
+    'docker compose build',
+    'docker compose up -d --wait web',
+  ]);
+  assert.ok(missing.envs.slice(1).every((env) => env.LOCAL_ADC_FILE));
+
+  const broken = fakeRun({ missing: true, fail: ['--profile'] });
+  const errors = [];
+  const result = await runLocal('start', { ...base, run: broken.run, err: (l) => errors.push(l) });
+  assert.equal(result.exitCode, 1);
+  assert.ok(!broken.calls.includes('docker compose build'));
 });

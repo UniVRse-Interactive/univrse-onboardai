@@ -119,8 +119,14 @@ export async function resolveAdcFile({
   return { file: placeholderFile, found: false };
 }
 
+// The Firestore emulator image tag. Must match compose.yaml (the firestore
+// service image and the firebase-emulator-image builder).
+export const emulatorImage = 'onboardai-local-firebase-emulator:15.34.0';
+
 const compose = (...args) => ['compose', ...args];
 export const commands = {
+  inspectEmulator: ['image', 'inspect', emulatorImage],
+  buildEmulator: compose('--profile', 'emulator-image', 'build', 'firebase-emulator-image'),
   build: compose('build'),
   up: compose('up', '-d', '--wait', 'web'),
   reset: compose('run', '--rm', '-e', 'LOCAL_HR_RESET=1', 'setup'),
@@ -145,6 +151,7 @@ export async function runLocal(
 ) {
   let env = {};
   const docker = (args) => run('docker', args, { inherit: true, env }).status === 0;
+  const quiet = (args) => run('docker', args, { env }).status === 0;
   const fail = (message) => {
     err(message);
     return { exitCode: 1 };
@@ -166,6 +173,10 @@ export async function runLocal(
   if (command === 'logs') return { exitCode: docker(commands.logs) ? 0 : 1 };
 
   if (command === 'start') {
+    // Built only the first time: rebuilding it would make Docker Compose
+    // recreate the running Firestore container.
+    if (!quiet(commands.inspectEmulator) && !docker(commands.buildEmulator))
+      return fail('Building the Firestore emulator image failed. See the output above.');
     if (!docker(commands.build)) return fail('Docker build failed. See the output above.');
     if (!docker(commands.up))
       return fail('The stack did not become healthy. Run npm run local:logs to see why.');

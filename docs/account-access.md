@@ -134,7 +134,7 @@ the migrations and makes sure the local HR account (`LOCAL_HR_ID`, default `HR-0
 | `npm run local:down`     | `docker compose stop web api tts`. The databases keep running; nothing is removed                                            |
 | `npm run local:logs`     | `docker compose logs -f web api tts setup`                                                                                   |
 
-Run `npm run local` from one checkout. Starting it from different folders makes Docker Compose
+`npm run local` builds the Firestore emulator image only the first time. Run it from one checkout. Starting it from different folders makes Docker Compose
 recreate the Firestore container (a fix is under way).
 
 Firestore data is auto-saved: a sidecar exports the emulator's data every minute, so a Docker
