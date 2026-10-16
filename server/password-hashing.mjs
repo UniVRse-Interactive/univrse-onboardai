@@ -1,4 +1,4 @@
-import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomInt, scrypt, timingSafeEqual } from 'node:crypto';
 
 // Password hashes use Node's built-in scrypt with a random 16-byte salt per
 // password. The parameters travel with the hash, so they can be raised later
@@ -63,6 +63,18 @@ export function dummyPasswordHash(params = scryptDefaults) {
 }
 
 const characters = (value) => [...value].length;
+
+// Server-generated passwords: the local HR login (local-setup.mjs) and every
+// new employee's temporary password (account-service.mjs). Four groups of
+// five from 31 characters without look-alikes (0/o, 1/l/i), e.g.
+// "k3fmx-9qa2p-...": about 99 bits, easy to read out and type.
+const generatedAlphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+export const generatedPasswordPattern = /^[a-hjkmnp-z2-9]{5}(?:-[a-hjkmnp-z2-9]{5}){3}$/;
+export function generatePassword(pick = randomInt) {
+  return Array.from({ length: 4 }, () =>
+    Array.from({ length: 5 }, () => generatedAlphabet[pick(generatedAlphabet.length)]).join(''),
+  ).join('-');
+}
 
 // Returns a message for the first rule the password breaks, or null.
 export function passwordProblem(password, username = '') {

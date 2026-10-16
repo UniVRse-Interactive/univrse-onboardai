@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { ChatError } from './chat-errors.mjs';
 import { accountErrors } from './account-errors.mjs';
+import { formatEmployeeId, prefixPattern } from './employee-ids.mjs';
 
 // Sign-in data in PostgreSQL (tables in server/migrations/*.sql): accounts,
 // sessions (SHA-256 of each token only) and account_events. Every
@@ -204,6 +205,77 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
         if (during) await during(account);
         return account;
       });
+    },
+
+    // Creates an employee account under the next Employee ID for `prefix`
+    // (PE-0001, PE-0002, ...; see employee-ids.mjs), records employee_created
+    // and runs during(account) before the commit. The number is taken from
+    // employee_id_counters inside this transaction: the counter row stays
+    // locked until the commit, so concurrent creates for one prefix get
+    // distinct, consecutive numbers, and a counter never falls below the
+    // highest existing username with its prefix. If the insert or during fails
+    // (for example the Firestore profile write), the transaction rolls back to
+    // the savepoint taken after the allocation and commits: the account, its
+    // event and the profile are gone, but the number stays used (a gap), as it
+    // does after a deletion. Only a database failure undoes the allocation too.
+    // A username that is taken anyway (an account made outside this counter) is
+    // 409 USERNAME_TAKEN; its number is used up as well.
+    async createEmployee({ prefix, passwordHash, createdBy, at }, during = null) {
+      if (!prefixPattern.test(prefix)) throw new TypeError('Unknown Employee ID prefix.');
+      let client;
+      try {
+        client = await pool.connect();
+      } catch (error) {
+        throw failure('create employee', error);
+      }
+      let open = false;
+      try {
+        await client.query('BEGIN');
+        open = true;
+        const allocated = await client.query(
+          `INSERT INTO employee_id_counters AS c (prefix, last_number)
+           SELECT $1, COALESCE(MAX(CAST(substring(upper(username) FROM 4) AS integer)), 0) + 1
+           FROM accounts WHERE upper(username) ~ $2
+           ON CONFLICT (prefix) DO UPDATE
+             SET last_number = GREATEST(c.last_number + 1, EXCLUDED.last_number)
+           RETURNING last_number`,
+          [prefix, `^${prefix}-[0-9]{1,9}$`],
+        );
+        const username = formatEmployeeId(prefix, allocated.rows[0].last_number);
+        await client.query('SAVEPOINT employee_account');
+        let account;
+        try {
+          const inserted = await client.query(
+            `INSERT INTO accounts (username, password_hash, role, must_change_password,
+               created_at, updated_at, created_by)
+             VALUES ($1, $2, 'employee', true, $3, $3, $4) RETURNING ${columns}`,
+            [username, passwordHash, at, createdBy],
+          );
+          account = inserted.rows[0];
+          await event(
+            (text, values) => client.query(text, values),
+            createdBy,
+            account.id,
+            'employee_created',
+            at,
+          );
+          if (during) await during(account);
+        } catch (error) {
+          // Keep the number: undo everything after the allocation, then commit.
+          await client.query('ROLLBACK TO SAVEPOINT employee_account');
+          await client.query('COMMIT');
+          open = false;
+          throw error?.code === uniqueViolation ? accountErrors.usernameTaken() : error;
+        }
+        await client.query('COMMIT');
+        open = false;
+        return account;
+      } catch (error) {
+        if (open) await client.query('ROLLBACK').catch(() => {});
+        throw failure('create employee', error);
+      } finally {
+        client.release();
+      }
     },
 
     // HR actions on employee accounts. Each returns the updated row, or null

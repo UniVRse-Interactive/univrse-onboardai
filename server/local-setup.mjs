@@ -3,14 +3,18 @@
 // and makes sure the local HR login exists, then prints it. Local test data
 // only: the guard refuses to run against anything that looks like a cloud
 // database. Idempotent; it never touches an account other than LOCAL_HR_ID.
-import { randomInt } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 import { createAccountStore } from './account-store.mjs';
 import { migrate } from './database-migrations.mjs';
-import { hashPassword, passwordProblem, verifyPassword } from './password-hashing.mjs';
+import {
+  generatePassword,
+  hashPassword,
+  passwordProblem,
+  verifyPassword,
+} from './password-hashing.mjs';
 
 const localHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]', 'postgres']);
 export const loginFileName = 'hr-login.json';
@@ -28,14 +32,6 @@ export function guardProblem(env) {
   }
   if (!localHosts.has(host)) return 'DATABASE_URL does not point at a local database.';
   return null;
-}
-
-const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789'; // no look-alike characters
-// Four groups of five, e.g. "k3fmx-9qa2p-..." (about 99 bits).
-export function generatePassword(pick = randomInt) {
-  return Array.from({ length: 4 }, () =>
-    Array.from({ length: 5 }, () => alphabet[pick(alphabet.length)]).join(''),
-  ).join('-');
 }
 
 export function renderBanner({ appUrl, emulatorUiUrl, hrId, password, note }) {

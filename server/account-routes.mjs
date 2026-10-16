@@ -133,8 +133,11 @@ export function mountAccountRoutes(
   employees.get('/employees', hr, async (req, res) => {
     res.json({ employees: await accounts.listEmployees() });
   });
+  // { profile } in; { employee, temporaryPassword } out. The server assigns the
+  // Employee ID and the temporary password; this response is the only place
+  // the password ever appears (never cached: the guard sets no-store).
   employees.post('/employees', hr, async (req, res) => {
-    res.status(201).json({ employee: await accounts.createEmployee(req.accountSession, req.body) });
+    res.status(201).json(await accounts.createEmployee(req.accountSession, req.body));
   });
   employees.get('/employees/:id', hr, async (req, res) => {
     res.json({ employee: await accounts.getEmployee(req.params.id) });

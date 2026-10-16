@@ -61,7 +61,7 @@ test('document-search: a signed-in employee’s chats are saved per turn and fol
 
     // Another browser, same account: same chats and messages.
     const phone = app.browser();
-    assert.equal((await phone.signIn('EMP-0001', 'employee-own-pass-1')).status, 200);
+    assert.equal((await phone.signIn('PC-0001', 'employee-own-pass-1')).status, 200);
     const listed = await phone.get('/api/conversations');
     assert.deepEqual(
       listed.body.conversations.map((c) => c.id),
@@ -83,7 +83,7 @@ test('document-search: a signed-in employee’s chats are saved per turn and fol
     assert.equal(rated.status, 200);
 
     // Another employee sees none of it.
-    const other = await app.readyEmployee(hr, 'EMP-0002', 'second-own-pass-1');
+    const other = await app.readyEmployee(hr, { password: 'second-own-pass-1' });
     assert.deepEqual((await other.browser.get('/api/conversations')).body.conversations, []);
     assert.equal((await other.browser.get(`/api/conversations/${chat.id}`)).status, 404);
 
@@ -156,7 +156,7 @@ test('gemini-chat: the account owns the chats instead of the anonymous browser c
       `account:${employee.account.id}`,
     );
     const phone = app.browser();
-    await phone.signIn('EMP-0001', 'employee-own-pass-1');
+    await phone.signIn('PC-0001', 'employee-own-pass-1');
     assert.deepEqual(
       (await phone.get('/api/conversations')).body.conversations.map((c) => c.id),
       [chat.id],

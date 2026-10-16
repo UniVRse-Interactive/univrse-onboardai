@@ -1,6 +1,7 @@
 import { AccountError } from './account-errors.mjs';
 import { commitInBatches, deleteOperation } from './firestore-checkpointer.mjs';
 import { createStorageCall } from './firestore-client.mjs';
+import { isDepartment } from './employee-ids.mjs';
 
 // Each employee's personal profile is one Firestore document,
 // employeeProfiles/{accountId}. Only HR writes it; an employee reads their own.
@@ -16,7 +17,9 @@ export const importMentions = (data, accountId) =>
   (Array.isArray(data?.possibleDuplicates) &&
     data.possibleDuplicates.some((match) => match?.accountId === accountId));
 
-// group -> field -> rule. Every field is optional text except job.fullName.
+// group -> field -> rule. Every field is optional text except job.fullName and
+// job.department, which validateProfile requires to be one of the six
+// departments (departmentProblem below; `max` still bounds stored values).
 export const profileSchema = Object.freeze({
   job: {
     fullName: { max: 120, required: true },
@@ -74,6 +77,7 @@ const problemText = {
   invalid_email: 'is not a valid email address',
   invalid_date: 'must be a date in YYYY-MM-DD form',
   invalid_phone: 'must be a phone number using digits, spaces, +, -, ( ) or .',
+  invalid_department: 'must be one of the departments in the list',
 };
 
 function fieldProblem(value, rule) {
@@ -100,9 +104,22 @@ export function checkProfileValue(group, name, value) {
   return problem ? { problem } : { value: text };
 }
 
+// job.department is one of the six departments (departments.mjs), which also
+// decides the Employee ID prefix. `keep`, when given, is the value already
+// stored for the employee: it is accepted unchanged, so a profile saved before
+// the list existed (free text, or empty) stays editable without a new choice.
+function departmentProblem(value, keep) {
+  if (value !== undefined && value !== null && typeof value !== 'string') return ['not_text'];
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (isDepartment(text) || (typeof keep === 'string' && text === keep)) return [null, text];
+  return [text ? 'invalid_department' : 'required'];
+}
+
 // Returns the stored form (every field present, trimmed, '' when empty), or
 // throws 400 PROFILE_INVALID with details.fields = [{ field, problem }].
-export function validateProfile(input) {
+// job.department must be one of the six departments; keepDepartment (an
+// update) also allows exactly the employee's stored department.
+export function validateProfile(input, { keepDepartment } = {}) {
   const problems = [];
   const profile = {};
   if (!isObject(input)) problems.push({ field: 'profile', problem: 'not_object' });
@@ -120,7 +137,10 @@ export function validateProfile(input) {
       for (const key of Object.keys(given))
         if (!(key in fields)) problems.push({ field: `${group}.${key}`, problem: 'unknown' });
       for (const [name, rule] of Object.entries(fields)) {
-        const [problem, value] = fieldProblem(given[name], rule);
+        const [problem, value] =
+          group === 'job' && name === 'department'
+            ? departmentProblem(given[name], keepDepartment)
+            : fieldProblem(given[name], rule);
         if (problem) problems.push({ field: `${group}.${name}`, problem });
         else profile[group][name] = value;
       }

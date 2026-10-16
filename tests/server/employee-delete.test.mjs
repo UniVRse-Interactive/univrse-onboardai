@@ -21,8 +21,8 @@ async function withApp(options, check) {
 // An employee with every kind of Firestore data: a profile, two chats with
 // messages, checkpoints and support observations, feedback, support
 // preferences and import drafts that mention the account.
-async function employeeWithData(app, hr, username, password) {
-  const { employee, browser } = await app.readyEmployee(hr, username, password);
+async function employeeWithData(app, hr, password) {
+  const { employee, browser } = await app.readyEmployee(hr, { password });
   const id = employee.account.id;
   const chats = [];
   for (const question of ['What should I wear?', 'Where is the dress code?']) {
@@ -95,8 +95,8 @@ test('deleting an employee removes every kind of personal data, then the account
   await withApp({ mode: 'gemini-chat' }, async (app) => {
     const hr = await app.hrBrowser();
     const hrId = (await hr.get('/api/auth/session')).body.account.id;
-    const gone = await employeeWithData(app, hr, 'EMP-0001', 'employee-own-pass-1');
-    const kept = await employeeWithData(app, hr, 'EMP-0002', 'second-own-pass-1');
+    const gone = await employeeWithData(app, hr, 'employee-own-pass-1');
+    const kept = await employeeWithData(app, hr, 'second-own-pass-1');
     writeImportDrafts(app, hrId, {
       target: gone.id,
       duplicate: gone.id,
@@ -138,10 +138,10 @@ test('deleting an employee removes every kind of personal data, then the account
     const audit = await app.rows(
       "SELECT actor_id, target_id, target_label FROM account_events WHERE action = 'employee_deleted'",
     );
-    assert.deepEqual(audit, [{ actor_id: hrId, target_id: null, target_label: 'EMP-0001' }]);
+    assert.deepEqual(audit, [{ actor_id: hrId, target_id: null, target_label: 'PC-0001' }]);
     // Earlier events about the account keep its ID too.
     const earlier = await app.rows(
-      "SELECT action FROM account_events WHERE target_label = 'EMP-0001' ORDER BY id",
+      "SELECT action FROM account_events WHERE target_label = 'PC-0001' ORDER BY id",
     );
     assert.deepEqual(
       earlier.map((row) => row.action),
@@ -149,7 +149,7 @@ test('deleting an employee removes every kind of personal data, then the account
     );
     assert.deepEqual(
       await app.rows(
-        "SELECT count(*)::int AS n FROM account_events WHERE target_label = 'EMP-0002'",
+        "SELECT count(*)::int AS n FROM account_events WHERE target_label = 'PC-0002'",
       ),
       [{ n: 0 }],
     );
@@ -160,30 +160,25 @@ test('deleting an employee removes every kind of personal data, then the account
     const listed = (await hr.get('/api/hr/employees')).body.employees;
     assert.deepEqual(
       listed.map((entry) => entry.account.username),
-      ['EMP-0002'],
+      ['PC-0002'],
     );
     const again = await hr.delete(`/api/hr/employees/${gone.id}`);
     assert.deepEqual([again.status, again.body.code], [404, 'EMPLOYEE_NOT_FOUND']);
     // The other employee still works.
     assert.equal((await kept.browser.get('/api/conversations')).body.conversations.length, 2);
-    // The ID can be used again for a new account.
-    assert.equal(
-      (
-        await hr.post('/api/hr/employees', {
-          username: 'EMP-0001',
-          temporaryPassword: 'temporary-pass-1',
-          profile: { job: { fullName: 'Casey Example' } },
-        })
-      ).status,
-      201,
-    );
+    // The deleted ID is never handed out again: the next one is PC-0003.
+    const next = await hr.post('/api/hr/employees', {
+      profile: { job: { fullName: 'Casey Example', department: 'People & Culture' } },
+    });
+    assert.equal(next.status, 201);
+    assert.equal(next.body.employee.account.username, 'PC-0003');
   });
 });
 
 test('a Firestore failure leaves the account in place and a retry finishes the deletion', async () => {
   await withApp({ mode: 'gemini-chat' }, async (app) => {
     const hr = await app.hrBrowser();
-    const gone = await employeeWithData(app, hr, 'EMP-0001', 'employee-own-pass-1');
+    const gone = await employeeWithData(app, hr, 'employee-own-pass-1');
 
     // A batch commit fails part-way through the chat cleanup.
     app.firestore.fail(14, { only: ['commit'] });
@@ -212,7 +207,7 @@ test('a Firestore failure leaves the account in place and a retry finishes the d
     assert.deepEqual(await app.rows(`SELECT id FROM accounts WHERE id = '${gone.id}'`), []);
     assert.deepEqual(
       await app.rows("SELECT target_label FROM account_events WHERE action = 'employee_deleted'"),
-      [{ target_label: 'EMP-0001' }],
+      [{ target_label: 'PC-0001' }],
     );
   });
 });
@@ -220,7 +215,7 @@ test('a Firestore failure leaves the account in place and a retry finishes the d
 test('nothing is deleted while one of the employee’s answers is running', async () => {
   await withApp({ mode: 'gemini-chat' }, async (app) => {
     const hr = await app.hrBrowser();
-    const busy = await employeeWithData(app, hr, 'EMP-0001', 'employee-own-pass-1');
+    const busy = await employeeWithData(app, hr, 'employee-own-pass-1');
     const path = `conversations/${busy.chats[0]}`;
     app.firestore.write(path, {
       ...app.firestore.read(path),
@@ -277,7 +272,7 @@ test('HR accounts and unknown IDs are 404, and only HR may delete', async () => 
 test('a Firestore timeout is 504 PROFILE_STORAGE_TIMEOUT and also keeps the account', async () => {
   await withApp({}, async (app) => {
     const hr = await app.hrBrowser();
-    const employee = await app.createEmployee(hr);
+    const { employee } = await app.createEmployee(hr);
     const id = employee.account.id;
     // The profile and draft cleanup commit never answers.
     app.firestore.fail(0, { only: ['commit'], hang: true });
@@ -294,7 +289,7 @@ test('a Firestore timeout is 504 PROFILE_STORAGE_TIMEOUT and also keeps the acco
 test('an employee with no chats, profile or drafts is deleted cleanly (each step is a no-op)', async () => {
   await withApp({}, async (app) => {
     const hr = await app.hrBrowser();
-    const employee = await app.createEmployee(hr);
+    const { employee } = await app.createEmployee(hr);
     const id = employee.account.id;
     await app.firestore.connect().collection('employeeProfiles').doc(id).delete();
     assert.deepEqual(app.firestore.paths('employeeImports/'), []);

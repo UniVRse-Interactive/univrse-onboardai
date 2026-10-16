@@ -113,16 +113,16 @@ test('hr:reset-password sets a new password, clears the lock, ends every session
 test('hr:reset-password only touches HR accounts and reports failures without the password', async () => {
   await withApp(async (app) => {
     const hr = await app.hrBrowser();
-    await app.createEmployee(hr, 'EMP-0001');
-    const before = await app.rows("SELECT password_hash FROM accounts WHERE username = 'EMP-0001'");
+    await app.createEmployee(hr);
+    const before = await app.rows("SELECT password_hash FROM accounts WHERE username = 'PC-0001'");
     const options = { hash: app.hashing.hash, at: app.clock.now() };
-    for (const id of ['EMP-0001', 'HR-9999'])
+    for (const id of ['PC-0001', 'HR-9999'])
       assert.deepEqual(
         await resetHrAccountPassword(app.store, entered(id, 'synthetic-new-pass-1'), options),
         { ok: false, message: 'No HR account with that ID.' },
       );
     assert.deepEqual(
-      await app.rows("SELECT password_hash FROM accounts WHERE username = 'EMP-0001'"),
+      await app.rows("SELECT password_hash FROM accounts WHERE username = 'PC-0001'"),
       before,
     );
     assert.equal(

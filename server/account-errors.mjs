@@ -67,7 +67,7 @@ export const accountErrors = {
     new AccountError(
       400,
       'EMPLOYEE_INVALID',
-      'Send username, temporaryPassword and profile to create an employee.',
+      'Send only the employee’s profile. The server assigns the Employee ID and the temporary password.',
     ),
   statusInvalid: () =>
     new AccountError(400, 'STATUS_INVALID', 'Choose a status of active or disabled.'),

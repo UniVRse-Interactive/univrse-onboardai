@@ -5,13 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAccountStore } from '../../server/account-store.mjs';
 import {
-  generatePassword,
   guardProblem,
   loginFileName,
   renderBanner,
   runLocalSetup,
 } from '../../server/local-setup.mjs';
-import { hashPassword, verifyPassword } from '../../server/password-hashing.mjs';
+import { generatePassword, hashPassword, verifyPassword } from '../../server/password-hashing.mjs';
 import { fastScrypt } from './account-harness.mjs';
 import { createTestDatabase } from './test-database.mjs';
 

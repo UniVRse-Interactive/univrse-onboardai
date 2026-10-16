@@ -10,7 +10,7 @@ const at = new Date('2026-10-15T01:00:00.000Z');
 const hash = 'scrypt$n=1024,r=8,p=1$synthetic$synthetic';
 
 test('migrations are plain SQL files, applied once and recorded in schema_migrations', async () => {
-  const all = ['001_accounts.sql', '002_account_event_labels.sql'];
+  const all = ['001_accounts.sql', '002_account_event_labels.sql', '003_employee_id_counters.sql'];
   assert.deepEqual(migrationFiles(), all);
   const sql = readFileSync(join(migrationsDirectory, '001_accounts.sql'), 'utf8');
   for (const table of ['accounts', 'sessions', 'account_events'])

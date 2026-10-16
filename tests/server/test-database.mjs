@@ -5,7 +5,8 @@
 // `~` regular-expression operator used by CHECK constraints, and
 // pg_advisory_xact_lock(). Its pg adapter also commits every query on its own,
 // so this pool provides transactions: BEGIN takes a snapshot, ROLLBACK
-// restores it, COMMIT keeps the changes. Transactions run one at a time. The
+// restores it, COMMIT keeps the changes; SAVEPOINT and ROLLBACK TO SAVEPOINT
+// do the same within one. Transactions run one at a time. The
 // live run against the Docker PostgreSQL proves the same SQL on the real engine.
 import { randomUUID } from 'node:crypto';
 import { newDb, DataType } from 'pg-mem';
@@ -56,6 +57,7 @@ export async function createTestDatabase() {
     async connect() {
       let snapshot = null,
         finish = null;
+      const savepoints = new Map();
       return {
         async query(text, values) {
           const command = typeof text === 'string' ? text.trim().toUpperCase() : '';
@@ -66,9 +68,21 @@ export async function createTestDatabase() {
             snapshot = db.backup();
             return { rows: [], rowCount: 0 };
           }
+          const savepoint = /^(SAVEPOINT|ROLLBACK TO SAVEPOINT|RELEASE SAVEPOINT) (\w+)$/.exec(
+            command,
+          );
+          if (savepoint) {
+            const [, action, name] = savepoint;
+            if (action === 'SAVEPOINT') savepoints.set(name, db.backup());
+            else if (!savepoints.has(name)) throw new Error(`No savepoint ${name}`);
+            else if (action === 'ROLLBACK TO SAVEPOINT') savepoints.get(name).restore();
+            else savepoints.delete(name);
+            return { rows: [], rowCount: 0 };
+          }
           if (command === 'COMMIT' || command === 'ROLLBACK') {
             if (command === 'ROLLBACK') snapshot?.restore();
             snapshot = null;
+            savepoints.clear();
             finish?.();
             finish = null;
             return { rows: [], rowCount: 0 };
