@@ -1,5 +1,6 @@
 import React from 'react';
 const paths = {
+  dashboard: 'M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z',
   home: 'M3 10 9-7 9 7v10h-6v-6H9v6H3Z',
   checklist: 'M9 5h12M9 12h12M9 19h12M3 5l1 1 2-2M3 12l1 1 2-2M3 19l1 1 2-2',
   planet:

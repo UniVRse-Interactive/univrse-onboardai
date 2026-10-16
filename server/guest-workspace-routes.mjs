@@ -1,12 +1,7 @@
 import express from 'express';
 import { randomBytes } from 'node:crypto';
-import {
-  createGuestWorkspaceStore,
-  guestWorkspaceLifetime,
-  workspaceLimits,
-} from './guest-workspace-store.mjs';
+import { createGuestWorkspaceStore, guestWorkspaceLifetime } from './guest-workspace-store.mjs';
 import { sessionHash, ChatError } from './saved-conversations.mjs';
-import { readUploadedDocument } from './read-uploaded-document.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
 import { createKnowledgeRetriever } from './company-document-retriever.mjs';
 import { searchDocuments } from './document-search.mjs';
@@ -15,14 +10,23 @@ import { createAnswerGuide } from './answer-guide-metadata.mjs';
 import { tasks } from './sample-onboarding-content.mjs';
 import { sharedVoiceName } from './kokoro-voice.mjs';
 import { createWorkspaceKnowledge } from './workspace-company-knowledge.mjs';
-import { driveFailure } from './google-drive-documents.mjs';
+import { driveFailure, readGoogleDocument, parseGoogleDocLink } from './google-drive-documents.mjs';
 import { vertexConfig } from './vertex-ai.mjs';
+import { onboardingDocumentTopics } from './onboarding-document-topics.mjs';
+import { localDocumentMovesAllowed } from './google-drive-document-moves.mjs';
 
 // Guest HR and employee views share an isolated browser workspace. This cookie
 // is not an HR credential and cannot open the separate employee/Drive database.
 export function mountGuestWorkspaceRoutes(
   app,
-  { env, models, store: providedStore, loadDrive } = {},
+  {
+    env,
+    models,
+    store: providedStore,
+    loadDrive,
+    loadGoogleDoc = readGoogleDocument,
+    moveGoogleDoc,
+  } = {},
 ) {
   const router = express.Router(),
     available = !!(vertexConfig(env) || models);
@@ -33,6 +37,7 @@ export function mountGuestWorkspaceRoutes(
   const knowledge = createWorkspaceKnowledge({
     folderId: env.GOOGLE_DRIVE_FOLDER_ID,
     loadDrive,
+    readLinked: loadGoogleDoc,
     uploaded: (owner) => store().documents(owner),
   });
   const retrievers = new Map();
@@ -88,32 +93,108 @@ export function mountGuestWorkspaceRoutes(
   router.get('/', async (req, res) => {
     const snapshot = store().snapshot(req.workspaceOwner);
     const drive = await knowledge.status();
-    if (!res.destroyed) res.json({ ...snapshot, companyKnowledge: { drive } });
+    if (!res.destroyed)
+      res.json({
+        ...snapshot,
+        companyKnowledge: { drive },
+        driveMoves: {
+          enabled: localDocumentMovesAllowed(env, req),
+          configured: env.GOOGLE_DRIVE_DOCUMENT_MOVES === 'enabled',
+        },
+      });
   });
   router.post('/guests', (req, res) => {
     const guest = store().newGuest(req.workspaceOwner);
     res.status(201).json({ id: guest.id, name: guest.name });
   });
+  router.patch('/guests/:guestId/onboarding', (req, res) => {
+    res.json(store().updateOnboarding(req.workspaceOwner, req.params.guestId, req.body));
+  });
   router.delete('/guests/:guestId', (req, res) => {
     store().removeGuest(req.workspaceOwner, req.params.guestId);
     res.status(204).end();
   });
-  router.post(
-    '/documents',
-    express.raw({ type: 'application/octet-stream', limit: workspaceLimits.bytes }),
-    async (req, res) => {
-      let name;
+  router.post('/documents', async (req, res) => {
+    const movesRequested = env.GOOGLE_DRIVE_DOCUMENT_MOVES === 'enabled';
+    if (movesRequested && !localDocumentMovesAllowed(env, req))
+      throw new ChatError(
+        403,
+        'DRIVE_MOVE_HR_ACCESS_REQUIRED',
+        'Adding documents to the company folder requires verified HR access. Use the local HR workspace for now.',
+      );
+    if (!req.is('application/json'))
+      throw new ChatError(
+        415,
+        'GOOGLE_DOC_ONLY',
+        'Only Google Docs links are accepted. Paste a Google Docs document link instead of uploading a file.',
+      );
+    const { category, url, name } = req.body || {};
+    const topic = onboardingDocumentTopics.find((item) => item.id === category);
+    if (!topic && category !== 'additional')
+      throw new ChatError(
+        400,
+        'DOCUMENT_TOPIC_REQUIRED',
+        'Choose one of the six onboarding topics or add another related guide.',
+      );
+    const title = topic?.title || (typeof name === 'string' ? name.trim() : '');
+    if (!title || title.length > 80 || /[\u0000-\u001f\u007f]/.test(title))
+      throw new ChatError(
+        400,
+        'DOCUMENT_NAME_INVALID',
+        'Give the additional guide a short topic name of up to 80 characters.',
+      );
+    let link, document;
+    try {
+      link = parseGoogleDocLink(url);
+      document = await loadGoogleDoc(link.id);
+    } catch (error) {
+      const failure = driveFailure(error);
+      const status =
+        failure.code === 'GOOGLE_DOC_LINK_INVALID'
+          ? 400
+          : ['GOOGLE_DOC_TYPE_REQUIRED', 'GOOGLE_DOC_TOO_LARGE', 'DRIVE_EMPTY_DOCUMENTS'].includes(
+                failure.code,
+              )
+            ? 422
+            : 503;
+      throw new ChatError(status, failure.code, failure.error);
+    }
+    if (req.aborted || res.destroyed) return;
+    const connection = {
+      name: title,
+      text: document.text,
+      googleDocId: link.id,
+      category,
+    };
+    // Validate local limits before changing Google Drive. Failed moves never
+    // create a local record that would falsely appear connected.
+    store().checkGoogleDocConnection(req.workspaceOwner, connection);
+    let driveMove;
+    if (movesRequested) {
       try {
-        name = decodeURIComponent(req.get('X-File-Name') || '');
-      } catch {
-        throw new ChatError(400, 'FILE_NAME_INVALID', 'Choose a file with a valid name.');
+        driveMove = await moveGoogleDoc(link.id, env.GOOGLE_DRIVE_FOLDER_ID, connection);
+      } catch (error) {
+        const failure = driveFailure(error);
+        throw new ChatError(error.statusCode || 503, failure.code, failure.error);
       }
-      const document = await readUploadedDocument(name, req.body);
-      if (req.aborted || res.destroyed) return;
-      const added = store().addDocument(req.workspaceOwner, document);
-      res.status(added.duplicate ? 200 : 201).json(added);
-    },
-  );
+      knowledge.invalidate();
+    }
+    let added;
+    try {
+      added = store().connectGoogleDoc(req.workspaceOwner, connection);
+    } catch (error) {
+      if (driveMove)
+        throw new ChatError(
+          503,
+          'DRIVE_MOVE_LOCAL_SAVE_FAILED',
+          'The Google Doc reached the company folder, but its local record could not be saved. Refresh the library; the document does not need to be moved again.',
+        );
+      throw error;
+    }
+    retrievers.delete(req.workspaceOwner);
+    if (!res.destroyed)
+      res.status(added.duplicate || added.replaced ? 200 : 201).json({ ...added, driveMove });
+  });
   router.delete('/documents/:id', (req, res) => {
     store().removeDocument(req.workspaceOwner, req.params.id);
     retrievers.delete(req.workspaceOwner);

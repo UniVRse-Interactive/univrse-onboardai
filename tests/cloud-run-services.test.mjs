@@ -249,12 +249,15 @@ test('web to API: session cookie round-trips through the proxy and cross-site re
   }
 });
 
-test('employee workspaces and document uploads work through the web proxy with bounded bodies', async () => {
+test('employee workspaces and Google Docs links work through the web proxy with bounded bodies', async () => {
   const store = createGuestWorkspaceStore({ path: ':memory:' });
   const app = createApp({
     env: { AI_MODE: 'document-search', NODE_ENV: 'production' },
     trustProxy: 2,
     guestStore: store,
+    loadGoogleDocument: async () => ({
+      text: 'Working Hours\nOffice hours are 10 AM to 6 PM Monday to Friday.',
+    }),
   });
   const api = await listen(app);
   const web = await listen(createWebApp({ apiUrl: api.url, distDir: tmpdir() }));
@@ -267,21 +270,25 @@ test('employee workspaces and document uploads work through the web proxy with b
     const cookie = first.headers.getSetCookie()[0].split(';')[0];
     assert.match(first.headers.getSetCookie()[0], /HttpOnly; Secure; SameSite=Strict/);
     const headers = { Origin: web.url, Cookie: cookie };
-    const text =
-      'Working Hours\n' + 'Office hours are 10 AM to 6 PM Monday to Friday.\n'.repeat(1600);
-    assert.ok(Buffer.byteLength(text) > 64 * 1024);
-    const uploaded = await fetch(web.url + '/api/guest-workspace/documents', {
+    const uploaded = await json(
+      web.url,
+      '/api/guest-workspace/documents',
+      { category: 'company', url: 'https://docs.google.com/document/d/company-guidance-123/edit' },
+      headers,
+    );
+    assert.equal(uploaded.status, 201);
+    const again = await fetch(web.url + '/api/guest-workspace', { headers });
+    assert.equal((await again.json()).documents[0].title, 'Welcome & Company Overview');
+    const fileUpload = await fetch(web.url + '/api/guest-workspace/documents', {
       method: 'POST',
       headers: {
         ...headers,
         'Content-Type': 'application/octet-stream',
-        'X-File-Name': 'company-guide.txt',
+        'X-File-Name': 'guide.txt',
       },
-      body: text,
+      body: 'A local file is not a native Google Doc.',
     });
-    assert.equal(uploaded.status, 201);
-    const again = await fetch(web.url + '/api/guest-workspace', { headers });
-    assert.equal((await again.json()).documents[0].title, 'company-guide.txt');
+    assert.equal(fileUpload.status, 415);
     assert.equal(
       (
         await fetch(web.url + '/api/guest-workspace/guests/' + snapshot.lastGuestId + '/config', {
@@ -314,7 +321,7 @@ test('employee workspaces and document uploads work through the web proxy with b
       headers: { ...headers, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'big.txt' },
       body: Buffer.alloc(workspaceLimits.bytes + 1, 'x'),
     });
-    assert.equal(oversized.status, 413, 'uploads remain bounded by the shared file limit');
+    assert.equal(oversized.status, 413, 'the proxy rejects oversized file bodies');
   } finally {
     await web.close();
     await api.close();

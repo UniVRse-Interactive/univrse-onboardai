@@ -97,7 +97,7 @@ The browser plays WAV audio from `/api/voice`, starting with a short opening whi
 | `src/avatar/visual-answer-content.mjs`   | Build a visual explanation from the delivered answer            |
 | `src/avatar/visual-answer.css`           | Visual-panel styling and keyboard focus                         |
 | `src/access/HrWorkspace.jsx`             | Live individual reports, team counts and automatic summaries    |
-| `src/access/CompanyDocumentLibrary.jsx`  | Company uploads, file removal and connected Drive guidance      |
+| `src/access/GoogleDocsLibrary.jsx`       | Company uploads, file removal and connected Drive guidance      |
 | `src/access/hr-report-insights.mjs`      | Aggregate activity counts and explicit support labels           |
 | `src/avatar/hr-support-report.mjs`       | The concise report text exported for HR                         |
 | `src/avatar/answer-support-controls.css` | Feedback, explanation and source controls                       |
@@ -124,4 +124,4 @@ The existing removed pages and old standalone avatar demos stay removed. The unu
 
 ## Uploaded company guidance
 
-See [Account and workspace details](account-access.md). `server/guest-workspace-routes.mjs` scopes guest uploads, conversations and reports to an opaque browser cookie. `server/guest-workspace-store.mjs` stores documents and individual employee identities in separate private SQLite storage. `server/read-uploaded-document.mjs` validates files and bounds worker execution; `server/uploaded-document-worker.mjs` extracts PDF/DOCX/text content. Employee retrieval combines the configured Drive guidance with owner-scoped uploads.
+See [Account and workspace details](account-access.md). `server/guest-workspace-routes.mjs` checks ownership of browser connections, conversations and reports. `server/guest-workspace-store.mjs` stores them in private SQLite storage. `server/google-drive-document-moves.mjs` performs the optional local move into the shared company folder after validation. Employee retrieval combines current shared Drive guidance with browser-owned links, deduplicating shared IDs. The legacy file-reader and worker modules remain for earlier extraction tests; the website now accepts only native Google Docs links.

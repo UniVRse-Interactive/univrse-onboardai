@@ -5,6 +5,8 @@ import {
   readDriveKnowledge,
   DriveKnowledgeError,
   driveFailure,
+  parseGoogleDocLink,
+  readGoogleDocument,
 } from '../server/google-drive-documents.mjs';
 import { createApp } from '../server/api-routes.mjs';
 
@@ -14,6 +16,92 @@ function driveClient(text, listing = { files: [{ id: 'doc-1', name: 'Test handbo
       options.url.endsWith('/export') ? { data: text } : { data: listing },
   };
 }
+
+test('only native Google Docs links are accepted and submitted URLs are never fetched', async () => {
+  assert.deepEqual(
+    parseGoogleDocLink(
+      'https://docs.google.com/document/u/0/d/handbook-12345/edit?usp=sharing#heading=test',
+    ),
+    { id: 'handbook-12345', url: 'https://docs.google.com/document/d/handbook-12345/edit' },
+  );
+  for (const value of [
+    null,
+    'https://docs.google.com.evil.example/document/d/handbook-12345/edit',
+    'https://drive.google.com/file/d/handbook-12345/view',
+    'https://docs.google.com/spreadsheets/d/handbook-12345/edit',
+    'http://docs.google.com/document/d/handbook-12345/edit',
+    'https://user:password@docs.google.com/document/d/handbook-12345/edit',
+    'https://docs.google.com:444/document/d/handbook-12345/edit',
+    'https://docs.google.com/document/d/e/published-id/pub',
+  ])
+    assert.throws(() => parseGoogleDocLink(value), { code: 'GOOGLE_DOC_LINK_INVALID' });
+  const calls = [];
+  const client = {
+    request: async (request) => {
+      calls.push(request);
+      return request.url.endsWith('/export')
+        ? { data: ' Current company policy. ' }
+        : {
+            data: {
+              mimeType: 'application/vnd.google-apps.document',
+              capabilities: { canDownload: true },
+            },
+          };
+    },
+  };
+  assert.equal(
+    (await readGoogleDocument('handbook-12345', { client })).text,
+    'Current company policy.',
+  );
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://www.googleapis.com/drive/v3/files/handbook-12345');
+  assert.equal(calls[1].params.mimeType, 'text/plain');
+  for (const mimeType of [
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.google-apps.spreadsheet',
+  ]) {
+    let exports = 0;
+    await assert.rejects(
+      readGoogleDocument('handbook-12345', {
+        client: {
+          request: async (request) => {
+            if (request.url.endsWith('/export')) exports++;
+            return { data: { mimeType } };
+          },
+        },
+      }),
+      { code: 'GOOGLE_DOC_TYPE_REQUIRED' },
+    );
+    assert.equal(exports, 0);
+  }
+  for (const [text, code] of [
+    ['   ', 'DRIVE_EMPTY_DOCUMENTS'],
+    ['x'.repeat(250001), 'GOOGLE_DOC_TOO_LARGE'],
+  ])
+    await assert.rejects(
+      readGoogleDocument('handbook-12345', {
+        client: {
+          request: async (request) =>
+            request.url.endsWith('/export')
+              ? { data: text }
+              : { data: { mimeType: 'application/vnd.google-apps.document' } },
+        },
+      }),
+      { code },
+    );
+});
+
+test('the connected folder can hold all six core onboarding Google Docs', async () => {
+  const files = Array.from({ length: 6 }, (_, i) => ({
+    id: 'core-document-' + i,
+    name: 'Core guide ' + i,
+  }));
+  const result = await readDriveKnowledge('company-folder', {
+    client: driveClient('Short approved guidance.', { files }),
+  });
+  assert.equal(result.length, 6);
+});
 
 test('the connected handbook size is accepted and export uses read-only text access', async () => {
   const requests = [];
@@ -35,7 +123,7 @@ test('the connected handbook size is accepted and export uses read-only text acc
 test('empty, oversized and too-many-document errors are specific', async () => {
   for (const [client, code] of [
     [driveClient(''), 'DRIVE_EMPTY_DOCUMENTS'],
-    [driveClient('a'.repeat(120001)), 'DRIVE_KNOWLEDGE_TOO_LARGE'],
+    [driveClient('a'.repeat(750001)), 'DRIVE_KNOWLEDGE_TOO_LARGE'],
     [driveClient('', { files: [] }), 'DRIVE_NO_DOCUMENTS'],
     [driveClient('', { files: [], nextPageToken: 'another-page' }), 'DRIVE_TOO_MANY_DOCUMENTS'],
   ]) {
@@ -116,7 +204,7 @@ test('unchanged documents skip repeat exports while edits and removals are check
   const { state, client } = changingDrive();
   await readDriveKnowledge('test-folder', { client });
   assert.deepEqual(await readDriveKnowledge('test-folder', { client }), [
-    { title: 'Policy', text: 'Current policy' },
+    { googleDocId: 'doc-1', category: '', title: 'Policy', text: 'Current policy' },
   ]);
   assert.equal(state.listings, 2);
   assert.equal(state.exports, 1);
