@@ -158,7 +158,7 @@ test('npm run db:migrate explains an unreachable database without printing DATAB
   assert.equal(result.code, 1);
   assert.match(
     result.stderr,
-    /Migration stopped: the database could not be reached \(ECONNREFUSED\)/,
+    /Migration stopped: \[sql\] the database could not be reached \(ECONNREFUSED\)/,
   );
   assert.ok(!(result.stdout + result.stderr).includes(secret));
   assert.match((await run('scripts/migrate-database.mjs')).stderr, /Set DATABASE_URL/);

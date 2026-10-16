@@ -91,6 +91,44 @@ variable "gemini_model" {
 }
 
 # ---------------------------------------------------------------------------
+# Employee accounts (every environment, #45) and the form intake agent
+# (staging only, #30)
+# ---------------------------------------------------------------------------
+
+variable "intake_agent_location" {
+  description = "Vertex AI Agent Engine region the deploy workflow deploys the employee form intake agent to. deploy.yml carries the same value as INTAKE_AGENT_LOCATION (terraform test checks they match); change both together. Gemini itself is called on the global endpoint."
+  type        = string
+  default     = "asia-southeast1"
+
+  validation {
+    condition     = can(regex("^[a-z]+-[a-z]+[0-9]+$", var.intake_agent_location))
+    error_message = "intake_agent_location must be a region such as asia-southeast1."
+  }
+}
+
+variable "db_password_version" {
+  description = "Version of the generated accounts database password. Terraform generates the password during apply without storing it in state, and sends it only when this number changes. Raise it by one to rotate: the database user, the password secret and the DATABASE_URL secret get the new value in the same apply. Redeploy the API afterwards (README, Employee accounts)."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.db_password_version >= 1 && floor(var.db_password_version) == var.db_password_version
+    error_message = "db_password_version must be a whole number of at least 1."
+  }
+}
+
+variable "intake_mcp_token_version" {
+  description = "Version of the generated INTAKE_MCP_TOKEN. Generated during apply, never stored in state, sent only when this number changes. Raise it by one to rotate, then redeploy (the API and the agent both read the latest version)."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.intake_mcp_token_version >= 1 && floor(var.intake_mcp_token_version) == var.intake_mcp_token_version
+    error_message = "intake_mcp_token_version must be a whole number of at least 1."
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Alerts
 # ---------------------------------------------------------------------------
 
@@ -109,7 +147,7 @@ variable "alert_emails" {
 # ---------------------------------------------------------------------------
 
 variable "deletion_protection" {
-  description = "Keeps Terraform (and, for Firestore, anyone) from deleting the Cloud Run services, the Vertex AI Search data store and engine, and the Firestore database. Leave it true. To tear a stack down, apply once with false, then destroy (README, Tear down)."
+  description = "Keeps Terraform (and, for Firestore and Cloud SQL, anyone) from deleting the Cloud Run services and job, the Vertex AI Search data store and engine, the Firestore database and the accounts Cloud SQL instance and database. Leave it true. To tear a stack down, apply once with false, then destroy (README, Tear down)."
   type        = bool
   default     = true
 }

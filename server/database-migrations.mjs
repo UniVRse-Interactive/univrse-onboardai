@@ -6,7 +6,7 @@ import { join } from 'node:path';
 // `npm run db:migrate`. Each file runs once, inside its own transaction, and is
 // recorded in schema_migrations. Running the runner again changes nothing.
 export const migrationsDirectory = fileURLToPath(new URL('./migrations/', import.meta.url));
-const migrationName = /^\d{3}_[a-z0-9_]+\.sql$/;
+export const migrationName = /^\d{3}_[a-z0-9_]+\.sql$/;
 
 export function migrationFiles(directory = migrationsDirectory) {
   return readdirSync(directory)

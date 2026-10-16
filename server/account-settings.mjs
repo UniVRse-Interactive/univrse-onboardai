@@ -14,13 +14,10 @@ export function accountSettings(env = process.env) {
   const databaseUrl = (env.DATABASE_URL || '').trim();
   if (!databaseUrl) return null;
   const problems = [];
-  let protocol = '';
-  try {
-    protocol = new URL(databaseUrl).protocol;
-  } catch {
-    // Reported below without echoing the value, which contains a password.
-  }
-  if (!['postgres:', 'postgresql:'].includes(protocol))
+  // Only the scheme is checked: the Cloud SQL socket form
+  // postgresql://USER:PASS@/DB?host=/cloudsql/... has an empty host, which
+  // new URL() rejects. pg parses it. The value is never echoed (it has a password).
+  if (!/^postgres(ql)?:\/\/\S+$/i.test(databaseUrl))
     problems.push('DATABASE_URL must be a postgresql:// connection URL');
   const firestore = firestoreConfig(env);
   if (!firestore)

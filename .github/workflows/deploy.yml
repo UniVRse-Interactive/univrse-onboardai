@@ -1,8 +1,11 @@
 # Deploys to Cloud Run: main to production, staging to the staging stack
-# (onboardai-*-staging in the same project). tts, then api, then web.
-# CI runs first on the same commit; nothing is pushed or deployed unless every
-# CI job passes. One-time setup, staging and rollback:
-# terraform/onboardai/README.md.
+# (onboardai-*-staging in the same project). CI runs first on the same commit;
+# nothing is pushed or deployed unless every CI job passes. After the images
+# are pushed, the migration job applies the commit's pending Cloud SQL and
+# Firestore migrations (#45); only if it succeeds are tts, then api, then web
+# deployed. On staging only, and only once its code is in the commit, the
+# intake agent is deployed to Vertex AI Agent Engine (#27, #30). One-time
+# setup, staging and rollback: terraform/onboardai/README.md.
 name: Deploy
 
 on:
@@ -35,6 +38,10 @@ env:
   # staging resource ID, as local.name_suffix in terraform/onboardai.
   DEPLOY_ENV: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
   NAME_SUFFIX: ${{ github.ref == 'refs/heads/staging' && '-staging' || '' }}
+  # Agent Engine region of the employee form intake agent (staging only, #30).
+  # Must equal var.intake_agent_location of terraform/onboardai (terraform test
+  # checks it). The agent calls Gemini on VERTEX_LOCATION.
+  INTAKE_AGENT_LOCATION: asia-southeast1
 
 jobs:
   ci:
@@ -150,12 +157,128 @@ jobs:
           gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
           docker push "$REGISTRY/onboardai$NAME_SUFFIX/$SERVICE:$GITHUB_SHA"
 
-  deploy:
-    name: Deploy tts, api, web
+  # Creates or updates the employee form intake agent on Vertex AI Agent Engine
+  # with the backend's deploy command (idempotent by display name) and hands
+  # its resource name to the deploy job (INTAKE_AGENT_ENGINE). Only on staging
+  # (#30), and only when the commit has the deploy command (package.json
+  # script intake-agent:deploy, #27). Otherwise every step after the decision
+  # is skipped with a notice, the job succeeds with deployed=false and no
+  # engine, and the api deploys without the agent. Runs after every image is
+  # pushed, so nothing changes unless CI passed and all three images built.
+  agent:
+    name: Deploy the intake agent
     needs: images
     environment: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+    outputs:
+      deployed: ${{ steps.decide.outputs.deploy }}
+      engine: ${{ steps.agent.outputs.engine }}
+    steps:
+      # Into a subdirectory: the auth step writes its credentials file into the
+      # workspace root, outside the tree the deploy command packages.
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: repo
+
+      - name: Decide whether the intake agent deploys
+        id: decide
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/staging ]]; then
+            echo "::notice title=Intake agent skipped::The intake agent runs on staging only (#30); $DEPLOY_ENV deploys without it."
+            deploy=false
+          elif [[ -z "$(jq -r '.scripts["intake-agent:deploy"] // "" | strings' package.json)" ]]; then
+            echo "::notice title=Intake agent skipped::package.json has no intake-agent:deploy script (#27 is not in this commit), so the api deploys without INTAKE_AGENT_ENGINE and INTAKE_MCP_TOKEN."
+            deploy=false
+          else
+            deploy=true
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js 22
+        if: steps.decide.outputs.deploy == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Set up uv
+        if: steps.decide.outputs.deploy == 'true'
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: 0.11.8
+          enable-cache: false
+
+      # The deploy script imports server modules (google-auth-library). No
+      # install scripts run, and Google credentials do not exist yet.
+      - name: Install dependencies
+        if: steps.decide.outputs.deploy == 'true'
+        working-directory: repo
+        run: npm ci --omit=dev --ignore-scripts
+
+      - name: Authenticate to Google Cloud
+        if: steps.decide.outputs.deploy == 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Set up gcloud
+        if: steps.decide.outputs.deploy == 'true'
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # The agent runs as onboardai-intake$NAME_SUFFIX and reads INTAKE_MCP_TOKEN
+      # from Secret Manager itself: only the secret's ID passes through here.
+      # The command's last stdout line is the reasoning engine resource name.
+      - name: Deploy the intake agent
+        id: agent
+        if: steps.decide.outputs.deploy == 'true'
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          api_url=$(gcloud run services describe "onboardai-api$NAME_SUFFIX" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(status.url)')
+          if [[ ! "$api_url" =~ ^https://[a-z0-9.-]+$ ]]; then
+            echo "::error::onboardai-api$NAME_SUFFIX returned no usable URL for the agent's MCP endpoint."
+            exit 1
+          fi
+          log="$RUNNER_TEMP/intake-agent-deploy.log"
+          npm run --silent intake-agent:deploy -- \
+            --project "$GCP_PROJECT_ID" \
+            --location "$INTAKE_AGENT_LOCATION" \
+            --display-name "OnboardAi employee form intake ($DEPLOY_ENV)" \
+            --service-account "onboardai-intake$NAME_SUFFIX@$GCP_PROJECT_ID.iam.gserviceaccount.com" \
+            --mcp-url "$api_url/mcp" \
+            --mcp-token-secret "onboardai-intake-mcp-token$NAME_SUFFIX" \
+            --model "$GEMINI_MODEL" \
+            --gemini-location "$VERTEX_LOCATION" | tee "$log"
+          engine=$(tail -n 1 "$log")
+          if [[ ! "$engine" =~ ^projects/[a-z0-9-]+/locations/${INTAKE_AGENT_LOCATION}/reasoningEngines/[0-9]+$ ]]; then
+            echo "::error::The deploy command's last line is not a reasoning engine in $INTAKE_AGENT_LOCATION."
+            exit 1
+          fi
+          echo "Intake agent: $engine"
+          echo "engine=$engine" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy tts, api, web
+    needs: [images, agent]
+    environment: ${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
+    runs-on: ubuntu-24.04
+    # The migration job may take two attempts of 600 s each (Terraform:
+    # timeout, max_retries = 1), plus up to about 15 minutes for the job's
+    # start, the log read and the three service deploys (tts alone may spend
+    # 240 s in its startup probe).
+    timeout-minutes: 45
     permissions:
       id-token: write
     env:
@@ -168,6 +291,11 @@ jobs:
       VERTEX_SEARCH_LOCATION: ${{ vars.VERTEX_SEARCH_LOCATION }}
       VERTEX_SEARCH_ENGINE_ID: ${{ vars.VERTEX_SEARCH_ENGINE_ID }}
       FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID }}
+      # The agent job's result (#30): deployed is true only when it created or
+      # updated the intake agent (staging, with #27's deploy command), and the
+      # engine is then its reasoning engine. false and empty otherwise.
+      INTAKE_AGENT_DEPLOYED: ${{ needs.agent.outputs.deployed }}
+      INTAKE_AGENT_ENGINE: ${{ needs.agent.outputs.engine }}
       # Must equal output cloud_run_deploy_flags of terraform/onboardai; its
       # terraform test fails otherwise, so a deploy never undoes an apply or the
       # other way round. Image, env vars and traffic belong to this
@@ -185,6 +313,8 @@ jobs:
       previous_web: ${{ steps.previous.outputs.web }}
       previous_api: ${{ steps.previous.outputs.api }}
       previous_tts: ${{ steps.previous.outputs.tts }}
+      # true when the api was deployed with the intake agent (smoke test).
+      intake_agent: ${{ steps.deploy.outputs.intake_agent }}
     steps:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
@@ -208,6 +338,86 @@ jobs:
             echo "$name serves ${rev:-nothing yet}"
             echo "$key=$rev" >> "$GITHUB_OUTPUT"
           done
+
+      # Every deploy, production and staging (#45). The Cloud Run job runs
+      # `npm run db:migrate` from the api image this run deploys, as
+      # onboardai-api-run$NAME_SUFFIX: the pending files of server/migrations
+      # against Cloud SQL (Cloud SQL connection, DATABASE_URL from Secret
+      # Manager), then those of server/migrations/firestore against the stack's
+      # Firestore database (MIGRATION_TARGETS=sql,firestore, set by Terraform).
+      # Each file runs once per database, so a re-run applies nothing. No
+      # database value reaches this runner. It finishes before any service is
+      # deployed, so a new revision never serves an unmigrated database; if it
+      # fails, nothing is deployed.
+      #
+      # The job's output goes to Cloud Logging. Afterwards this step reads the
+      # execution's lines through the log view onboardai-db-migrate$NAME_SUFFIX
+      # (Terraform; it shows the deployer that job's log entries only) and
+      # prints the runner's lines and nothing else: [sql] ..., [firestore] ...,
+      # "Migrations finished: ..." or "Migration stopped: ...". Lines reach
+      # Cloud Logging a few seconds late, so it retries for about 40 s; an
+      # incomplete log never fails a successful migration.
+      - name: Migrate the databases
+        id: migrate
+        run: |
+          set -euo pipefail
+          job="onboardai-db-migrate$NAME_SUFFIX"
+          view="onboardai-db-migrate$NAME_SUFFIX"
+          gcloud run jobs update "$job" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --image="$REGISTRY/onboardai$NAME_SUFFIX/api:$GITHUB_SHA" --quiet
+          since=$(date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)
+          progress="$RUNNER_TEMP/migrate-execute.log"
+          status=0
+          execution=$(gcloud run jobs execute "$job" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --wait --quiet --format='value(metadata.name)' 2> "$progress") || status=$?
+          cat "$progress" >&2
+          # A failed execution prints no result, but gcloud names it on stderr.
+          if [[ -z "$execution" ]]; then
+            execution=$(grep -oE "executions describe $job-[a-z0-9]+\$" "$progress" | tail -n 1 | cut -d ' ' -f 3) || execution=""
+          fi
+          [[ "$execution" =~ ^$job-[a-z0-9]+$ ]] || execution=""
+          echo "execution=$execution" >> "$GITHUB_OUTPUT"
+
+          # The runner's lines only, in order; a retried task's lines are marked.
+          # (A jq program: $try is jq's variable, not the shell's.)
+          # shellcheck disable=SC2016
+          select='.[] | select(.textPayload != null) | (.labels["run.googleapis.com/task_attempt"] // "0") as $try | .textPayload | split("\n")[] | select(test("^(\\[sql\\] |\\[firestore\\] |Migrations finished|Migration stopped)")) | if $try == "0" then . else "(retry \($try)) \(.)" end'
+          if ((status == 0)); then last='Migrations finished'; else last='Migration stopped'; fi
+          lines=""
+          complete=false
+          missing="(none found in Cloud Logging)"
+          if [[ -n "$execution" ]]; then
+            filter="labels.\"run.googleapis.com/execution_name\"=\"$execution\" AND timestamp>=\"$since\""
+            for attempt in 1 2 3 4 5 6 7 8; do
+              if ! entries=$(gcloud logging read "$filter" --project="$GCP_PROJECT_ID" --bucket=_Default --location=global --view="$view" --order=asc --limit=1000 --format=json 2> "$RUNNER_TEMP/logging-read.log"); then
+                echo "::warning::Could not read the migration log through log view $view: $(head -n 1 "$RUNNER_TEMP/logging-read.log")"
+                missing="(Cloud Logging could not be read)"
+                complete=unreadable
+                break
+              fi
+              lines=$(jq -r "$select" <<< "$entries")
+              if grep -qE "^(\\(retry [0-9]+\\) )?$last" <<< "$lines"; then
+                complete=true
+                break
+              fi
+              if ((attempt < 8)); then sleep 5; fi
+            done
+          fi
+
+          echo "Migration lines of execution ${execution:-(unknown)} (Cloud Run job $job, api image $GITHUB_SHA):"
+          printf '%s\n' "${lines:-$missing}"
+          {
+            echo "### Database migrations ($DEPLOY_ENV)"
+            echo "Cloud Run job $job, execution ${execution:-(unknown)}, api image $GITHUB_SHA:"
+            echo '```text'
+            printf '%s\n' "${lines:-$missing}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if ((status != 0)); then
+            echo "::error::The database migration failed, so nothing was deployed: every service still serves its previous revision. The full log is in Cloud Logging (Cloud Run job $job, execution ${execution:-(unknown)})."
+            exit 1
+          fi
+          if [[ "$complete" == false ]]; then
+            echo "::warning::The migration succeeded, but its last line had not reached Cloud Logging yet; read the full log in Cloud Logging (log view $view, execution ${execution:-(unknown)})."
+          fi
 
       - name: Deploy
         id: deploy
@@ -249,9 +459,29 @@ jobs:
           # --set-env-vars replaces the whole set, so variables an earlier
           # revision carried and this list lacks are dropped.
           api_env="NODE_ENV=production,AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,VERTEX_SEARCH_LOCATION=$VERTEX_SEARCH_LOCATION,VERTEX_SEARCH_ENGINE_ID=$VERTEX_SEARCH_ENGINE_ID,FIRESTORE_DATABASE_ID=$FIRESTORE_DATABASE_ID,TTS_SERVICE_URL=$tts_url"
-          # No secrets at all. --clear-secrets drops any reference an earlier
-          # revision carried (the retired GEMINI_API_KEY mount).
-          deploy api "$api_env" --clear-secrets
+          # Employee accounts, every stack (#45): the Cloud SQL connection (Unix
+          # socket /cloudsql/<connection name>) and DATABASE_URL as a Secret
+          # Manager reference, which Cloud Run reads as
+          # onboardai-api-run$NAME_SUFFIX: the value never passes through this
+          # runner. --set-secrets replaces every reference an earlier revision
+          # carried (production's retired GEMINI_API_KEY mount included).
+          api_secrets="DATABASE_URL=onboardai-database-url$NAME_SUFFIX:latest"
+          # The intake agent (staging only, #30), when the agent job deployed it:
+          # its engine and INTAKE_MCP_TOKEN, also a Secret Manager reference.
+          if [[ "$DEPLOY_ENV" == staging && "$INTAKE_AGENT_DEPLOYED" == true ]]; then
+            if [[ ! "$INTAKE_AGENT_ENGINE" =~ ^projects/[a-z0-9-]+/locations/[a-z0-9-]+/reasoningEngines/[0-9]+$ ]]; then
+              echo "::error::The agent job deployed the intake agent but returned no reasoning engine resource name."
+              exit 1
+            fi
+            api_env+=",INTAKE_AGENT_ENGINE=$INTAKE_AGENT_ENGINE"
+            api_secrets+=",INTAKE_MCP_TOKEN=onboardai-intake-mcp-token$NAME_SUFFIX:latest"
+            echo "intake_agent=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "intake_agent=false" >> "$GITHUB_OUTPUT"
+          fi
+          deploy api "$api_env" \
+            --set-cloudsql-instances="$GCP_PROJECT_ID:$GCP_REGION:onboardai-db$NAME_SUFFIX" \
+            --set-secrets="$api_secrets"
           api_url=$DEPLOYED_URL
 
           deploy web "NODE_ENV=production,API_SERVICE_URL=$api_url"
@@ -262,17 +492,25 @@ jobs:
           PREVIOUS_WEB: ${{ steps.previous.outputs.web }}
           PREVIOUS_API: ${{ steps.previous.outputs.api }}
           PREVIOUS_TTS: ${{ steps.previous.outputs.tts }}
+          MIGRATE_OUTCOME: ${{ steps.migrate.outcome }}
         run: |
           {
             echo "### Deploy of $GITHUB_SHA to $DEPLOY_ENV failed"
-            echo "A revision that failed to start receives no traffic. To put all three services back on the revisions that served before this run:"
-            echo '```sh'
-            for pair in "web=$PREVIOUS_WEB" "api=$PREVIOUS_API" "tts=$PREVIOUS_TTS"; do
-              if [[ -n "${pair#*=}" ]]; then
-                echo "gcloud run services update-traffic onboardai-${pair%%=*}$NAME_SUFFIX --project=$GCP_PROJECT_ID --region=$GCP_REGION --to-revisions=${pair#*=}=100"
-              fi
-            done
-            echo '```'
+            if [[ "$MIGRATE_OUTCOME" == failure ]]; then
+              echo "The database migration failed, so no service was deployed: all three still serve the revisions they served before this run, and there is nothing to roll back. A failed SQL file rolled back its own transaction; files applied before it stay applied (migrations are forward-only). Fix forward: push a commit that corrects or adds a migration."
+            elif [[ "$MIGRATE_OUTCOME" != success ]]; then
+              echo "The run stopped before the migration: nothing was migrated or deployed."
+            else
+              echo "A revision that failed to start receives no traffic. To put all three services back on the revisions that served before this run:"
+              echo '```sh'
+              for pair in "web=$PREVIOUS_WEB" "api=$PREVIOUS_API" "tts=$PREVIOUS_TTS"; do
+                if [[ -n "${pair#*=}" ]]; then
+                  echo "gcloud run services update-traffic onboardai-${pair%%=*}$NAME_SUFFIX --project=$GCP_PROJECT_ID --region=$GCP_REGION --to-revisions=${pair#*=}=100"
+                fi
+              done
+              echo '```'
+              echo "This run's migrations stay applied after a service rollback, so the previous revisions run against the migrated databases. To undo a migration, ship a new one, or restore the database (terraform/onboardai/README.md, Roll back a migration)."
+            fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
   smoke:
@@ -287,6 +525,7 @@ jobs:
       WEB_URL: ${{ needs.deploy.outputs.web_url }}
       API_URL: ${{ needs.deploy.outputs.api_url }}
       TTS_URL: ${{ needs.deploy.outputs.tts_url }}
+      INTAKE_AGENT: ${{ needs.deploy.outputs.intake_agent }}
     steps:
       - name: Check the deployed services
         run: |
@@ -323,6 +562,43 @@ jobs:
           probe "web GET / (frontend)" "$WEB_URL/" 6 '5[0-9][0-9]|000' || failed=1
           exit "$failed"
 
+      # Every stack (#45): the api found its accounts database (DATABASE_URL
+      # and the Cloud SQL connection reached it). Only when this run deployed
+      # the intake agent (staging, #30): the api found the agent, and the MCP
+      # endpoint refuses a caller without the token.
+      - name: Check employee accounts and form import
+        run: |
+          set -euo pipefail
+          failed=0
+          if ! config=$(curl -sS --fail --max-time 30 "$API_URL/api/config"); then
+            echo "::error::GET /api/config failed."
+            exit 1
+          fi
+          if jq -e '.accounts == true' > /dev/null <<< "$config"; then
+            echo "ok   api GET /api/config -> accounts is on"
+          else
+            echo "::error::GET /api/config must report accounts: true (DATABASE_URL and the Cloud SQL connection reached the api)."
+            failed=1
+          fi
+          if [[ "$INTAKE_AGENT" != true ]]; then
+            echo "skip employeeImport and POST /mcp: this run did not deploy the intake agent"
+            exit "$failed"
+          fi
+          if jq -e '.employeeImport == true' > /dev/null <<< "$config"; then
+            echo "ok   api GET /api/config -> employeeImport is on"
+          else
+            echo "::error::GET /api/config must report employeeImport: true (INTAKE_AGENT_ENGINE and INTAKE_MCP_TOKEN reached the api)."
+            failed=1
+          fi
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' --data '{}' "$API_URL/mcp") || code=000
+          if [[ "$code" == 401 ]]; then
+            echo "ok   api POST /mcp without the token -> 401"
+          else
+            echo "::error::POST /mcp without the token answered HTTP $code, expected 401."
+            failed=1
+          fi
+          exit "$failed"
+
       - name: Print rollback commands
         if: failure()
         env:
@@ -340,4 +616,5 @@ jobs:
               fi
             done
             echo '```'
+            echo "This run's migrations stay applied after a service rollback, so the previous revisions run against the migrated databases. To undo a migration, ship a new one, or restore the database (terraform/onboardai/README.md, Roll back a migration)."
           } | tee -a "$GITHUB_STEP_SUMMARY"

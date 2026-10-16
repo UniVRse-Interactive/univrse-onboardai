@@ -1,6 +1,7 @@
 # Checks every pull request to main or staging and every commit on either.
 # deploy.yml calls this workflow (workflow_call, run-all: true) and deploys only
-# when all of its jobs pass. Verify always runs. The Docker builds run only when a file that goes
+# when all of its jobs pass. Verify (including the migration file check) and
+# Database migrations always run. The Docker builds run only when a file that goes
 # into the images changed (job `changes`); otherwise each of the three Docker
 # checks still reports, with its build steps skipped.
 name: CI
@@ -54,6 +55,11 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      # Lists every file in server/migrations and server/migrations/firestore
+      # and fails on one the runner would skip (bad name) or a repeated number.
+      - name: Check migration files
+        run: npm run db:migrations:check
+
       - name: Test
         run: npm test
 
@@ -62,6 +68,128 @@ jobs:
 
       - name: Check shareable files
         run: npm run check:share
+
+  # Applies every migration twice to throwaway databases: PostgreSQL 17 (the
+  # Cloud SQL version) and the Firestore emulator, with MIGRATION_TARGETS as the
+  # deploy's migration job sets it. The first run must apply every file the
+  # file check lists, the second none (each file runs once per database), and
+  # neither may print the database URL or its password. Always runs (about two
+  # minutes); deploy.yml deploys only when it passes.
+  migrations:
+    name: Database migrations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+        env:
+          POSTGRES_USER: onboardai
+          POSTGRES_PASSWORD: onboardai_ci_throwaway
+          POSTGRES_DB: onboardai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U onboardai -d onboardai"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      # gcloud's Firestore emulator (589.0.0), pinned by digest.
+      FIRESTORE_EMULATOR_IMAGE: gcr.io/google.com/cloudsdktool/google-cloud-cli:589.0.0-emulators@sha256:dff831e11d4013af597446d43e1222a9196d9b2b0c8180606bb2e35bf1ea6e03
+      DATABASE_URL: postgresql://onboardai:onboardai_ci_throwaway@127.0.0.1:5432/onboardai
+      FIRESTORE_EMULATOR_HOST: 127.0.0.1:8681
+      FIRESTORE_PROJECT_ID: demo-onboardai
+      FIRESTORE_DATABASE_ID: '(default)'
+      MIGRATION_TARGETS: sql,firestore
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start the Firestore emulator
+        run: |
+          set -euo pipefail
+          docker run -d --name firestore-emulator -p 127.0.0.1:8681:8681 "$FIRESTORE_EMULATOR_IMAGE" \
+            gcloud emulators firestore start --host-port=0.0.0.0:8681
+          for ((i = 1; i <= 60; i++)); do
+            if curl -fsS --max-time 2 "http://$FIRESTORE_EMULATOR_HOST/" > /dev/null 2>&1; then
+              echo "Firestore emulator ready after $i attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs firestore-emulator 2>&1 | tail -n 20
+          echo "::error::The Firestore emulator did not start within 120 s."
+          exit 1
+
+      - name: Apply the migrations twice
+        run: |
+          set -euo pipefail
+          # Expected counts: the file check's last line is
+          # "Migration files OK: sql <n>, firestore <n>."
+          summary=$(npm run --silent db:migrations:check | tail -n 1)
+          if [[ ! "$summary" =~ ^Migration\ files\ OK:\ sql\ ([0-9]+),\ firestore\ ([0-9]+)\.$ ]]; then
+            echo "::error::npm run db:migrations:check did not end with its summary line."
+            exit 1
+          fi
+          sql=${BASH_REMATCH[1]}
+          firestore=${BASH_REMATCH[2]}
+          echo "Migration files: sql $sql, firestore $firestore"
+
+          failed=0
+          # count PATTERN FILE: lines of FILE that match PATTERN.
+          count() { grep -cE "$1" "$2" || true; }
+          # check RUN WHAT GOT WANT: one expectation of one run.
+          check() {
+            if [[ "$3" == "$4" ]]; then
+              echo "ok   $1 run: $2"
+            else
+              echo "::error::$1 run of npm run db:migrate: $2 is '$3', expected '$4'."
+              failed=1
+            fi
+          }
+          # migrate RUN: runs npm run db:migrate once; output in $RUNNER_TEMP/RUN.out.
+          migrate() {
+            local out="$RUNNER_TEMP/$1.out" err="$RUNNER_TEMP/$1.err" status=0
+            npm run --silent db:migrate > "$out" 2> "$err" || status=$?
+            if grep -qiE 'postgres(ql)?://|onboardai_ci_throwaway' "$out" "$err"; then
+              echo "::error::The $1 run of npm run db:migrate printed the database URL or its password."
+              exit 1
+            fi
+            echo "::group::npm run db:migrate ($1 run)"
+            cat "$out"
+            cat "$err" >&2
+            echo "::endgroup::"
+            if ((status != 0)); then
+              echo "::error::The $1 run of npm run db:migrate failed (exit $status)."
+              exit 1
+            fi
+          }
+
+          migrate first
+          out="$RUNNER_TEMP/first.out"
+          check first "last line" "$(tail -n 1 "$out")" "Migrations finished: sql $sql applied, 0 already applied; firestore $firestore applied, 0 already applied."
+          check first "[sql] Applied lines" "$(count '^\[sql\] Applied: ' "$out")" "$sql"
+          check first "[firestore] Applied lines" "$(count '^\[firestore\] Applied: ' "$out")" "$firestore"
+          check first "Already applied lines" "$(count '^\[(sql|firestore)\] Already applied: ' "$out")" 0
+
+          migrate second
+          out="$RUNNER_TEMP/second.out"
+          check second "last line" "$(tail -n 1 "$out")" "Migrations finished: sql 0 applied, $sql already applied; firestore 0 applied, $firestore already applied."
+          check second "[sql] Already applied lines" "$(count '^\[sql\] Already applied: ' "$out")" "$sql"
+          check second "[firestore] Already applied lines" "$(count '^\[firestore\] Already applied: ' "$out")" "$firestore"
+          check second "Applied lines" "$(count '^\[(sql|firestore)\] Applied: ' "$out")" 0
+          exit "$failed"
 
   changes:
     name: Detect image changes
@@ -177,3 +305,9 @@ jobs:
         env:
           SERVICE: ${{ matrix.service }}
         run: docker build --platform linux/amd64 --target "$SERVICE" -t "onboardai-$SERVICE:ci" .
+
+      # The deploy's migration job runs npm run db:migrate from the api image:
+      # the image must carry the runner and every migration file. No database.
+      - name: Check the api image carries the migrations
+        if: needs.changes.outputs.images != 'false' && matrix.service == 'api'
+        run: docker run --rm --platform linux/amd64 onboardai-api:ci npm run --silent db:migrations:check

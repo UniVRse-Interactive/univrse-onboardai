@@ -9,6 +9,8 @@ import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 import { createAccountStore } from './account-store.mjs';
 import { migrate } from './database-migrations.mjs';
+import { migrateFirestore } from './firestore-migrations.mjs';
+import { createFirestoreClient, firestoreConfig } from './firestore-client.mjs';
 import {
   generatePassword,
   hashPassword,
@@ -91,6 +93,7 @@ export async function runLocalSetup({
   env = process.env,
   createPool = (url) =>
     new pg.Pool({ connectionString: url, max: 2, connectionTimeoutMillis: 5000 }),
+  createFirestore = (config) => createFirestoreClient(config)(),
   fs = defaultFs,
   hash = hashPassword,
   verify = verifyPassword,
@@ -132,6 +135,22 @@ export async function runLocalSetup({
     out(
       applied.length ? `Database migrated (${applied.length} applied).` : 'Database is up to date.',
     );
+    const firestoreSettings = firestoreConfig(env);
+    // guardProblem already requires FIRESTORE_EMULATOR_HOST; checked again here
+    // so cloud Firestore can never be migrated from this script.
+    if (firestoreSettings?.projectId && (env.FIRESTORE_EMULATOR_HOST || '').trim()) {
+      const firestore = await createFirestore(firestoreSettings);
+      try {
+        const result = await migrateFirestore(firestore);
+        out(
+          result.applied.length
+            ? `Firestore migrated (${result.applied.length} applied).`
+            : 'Firestore is up to date.',
+        );
+      } finally {
+        await firestore.terminate?.().catch(() => {});
+      }
+    }
 
     const account = await store.findForSignIn(hrId);
     if (account && account.role !== 'hr') {

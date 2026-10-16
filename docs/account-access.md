@@ -72,6 +72,21 @@ workspaces keep their own SQLite file, as before.
 
 Migrations are plain SQL files run by `npm run db:migrate`, in name order, each once, each in
 its own transaction, and recorded in `schema_migrations`. Running it again changes nothing.
+A file whose name does not match `NNN_snake_name.sql` is never run, so `npm run db:migrations:check`
+(no database needed) fails on it and on two files sharing a number.
+
+`npm run db:migrate` also runs the Firestore migrations in `server/migrations/firestore/`
+(`NNN_snake_name.mjs`, each exporting `up({ firestore, log })`; format, idempotency rules and the
+locking design are in that folder's `README.md`). Applied files are recorded in the Firestore
+collection `schema_migrations` (document id = file name). `MIGRATION_TARGETS` (comma-separated
+`sql`, `firestore`) selects what runs, always sql first: a listed target whose variable
+(`DATABASE_URL` / `FIRESTORE_DATABASE_ID`) is missing, or an unknown name, exits 1 before any
+database is touched. Unset runs every configured target (local development). Output is
+`[sql] Applied: 005_x.sql`, `[firestore] Already applied: 001_x.mjs` and a last line
+`Migrations finished: sql 1 applied, 4 already applied; firestore 0 applied, 1 already applied.`
+A failure prints `Migration stopped: [<target>] <reason>` on stderr, exits 1, and later targets do
+not run. No line contains a URL, password or document data. `DATABASE_URL` may be the Cloud SQL
+socket form `postgresql://USER:PASS@/DB?host=/cloudsql/PROJECT:REGION:INSTANCE`.
 
 ### Employee profile (`employeeProfiles/{accountId}`)
 
@@ -646,7 +661,9 @@ storage, expiry and deployment boundary.
 - `server/profile-autofill.mjs`: profile autofill (file checks, the Gemini request, answer checks).
 - `server/database-migrations.mjs`, `server/migrations/*.sql`: the migration runner and SQL
   (`001` accounts, `002` deleted-account labels, `003` Employee ID counters, `004` departments; #27 uses `005` on).
-- `scripts/migrate-database.mjs`: `db:migrate`.
+- `scripts/migrate-database.mjs`: `db:migrate`; `server/migration-runner.mjs`,
+  `server/firestore-migrations.mjs`, `server/migrations/firestore/`: target selection and the
+  Firestore migrations; `scripts/check-migration-files.mjs`: `db:migrations:check`.
 - `scripts/create-hr-account.mjs`, `scripts/reset-hr-password.mjs`, `scripts/hr-account-tool.mjs`:
   `hr:create`, `hr:reset-password` and their shared input and rules.
 - `src/access/LoginPage.jsx`: workspace selection, sign-in and employee sign-up forms.

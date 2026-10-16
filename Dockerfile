@@ -36,6 +36,9 @@ COPY --from=frontend /app/dist ./dist
 CMD ["node", "server/web-service.mjs"]
 
 FROM runtime-base AS api
+# The database migration job runs this image with `npm run db:migrate`
+# (scripts/migrate-database.mjs, #23, #30), so the api image carries scripts/.
+COPY scripts ./scripts
 CMD ["node", "server/api-service.mjs"]
 
 FROM runtime-base AS tts

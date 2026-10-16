@@ -64,6 +64,14 @@ override_resource {
 }
 
 override_resource {
+  target = google_service_account.intake_agent[0]
+  values = {
+    email = "onboardai-intake-staging@onboardai-test-123.iam.gserviceaccount.com"
+    name  = "projects/onboardai-test-123/serviceAccounts/onboardai-intake-staging@onboardai-test-123.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
   target = google_iam_workload_identity_pool.github
   values = {
     name = "projects/123456789012/locations/global/workloadIdentityPools/onboardai-github-staging"
@@ -244,7 +252,29 @@ run "staging_deployer_has_no_production_binding" {
 
   assert {
     condition     = alltrue([for m in google_project_iam_member.api_runtime : m.member == "serviceAccount:onboardai-api-run-staging@onboardai-test-123.iam.gserviceaccount.com"])
-    error_message = "The staging deployer, web and tts accounts hold no project-level role."
+    error_message = "The web and tts accounts hold no project-level role, and api_runtime is the staging api's only."
+  }
+
+  # #30: the staging deployer's one project role, for creating and updating the
+  # intake agent on Agent Engine (no resource-level grant exists for that).
+  assert {
+    condition = (
+      length(google_project_iam_member.deployer_deploys_agents) == 1 &&
+      google_project_iam_member.deployer_deploys_agents[0].role == "roles/aiplatform.user" &&
+      google_project_iam_member.deployer_deploys_agents[0].member == "serviceAccount:onboardai-deployer-staging@onboardai-test-123.iam.gserviceaccount.com" &&
+      length(google_project_iam_member.deployer_deploys_agents[0].condition) == 0
+    )
+    error_message = "The staging deployer holds exactly one project role, roles/aiplatform.user, to deploy the intake agent."
+  }
+
+  assert {
+    condition = (
+      length(google_service_account_iam_member.deployer_acts_as_intake_agent) == 1 &&
+      google_service_account_iam_member.deployer_acts_as_intake_agent[0].role == "roles/iam.serviceAccountUser" &&
+      google_service_account_iam_member.deployer_acts_as_intake_agent[0].service_account_id == "projects/onboardai-test-123/serviceAccounts/onboardai-intake-staging@onboardai-test-123.iam.gserviceaccount.com" &&
+      google_service_account_iam_member.deployer_acts_as_intake_agent[0].member == "serviceAccount:onboardai-deployer-staging@onboardai-test-123.iam.gserviceaccount.com"
+    )
+    error_message = "The staging deployer may act as the staging intake agent account, and as no production account."
   }
 }
 
@@ -256,16 +286,24 @@ run "staging_api_cannot_reach_production_data" {
   command = apply
 
   assert {
-    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user"])
-    error_message = "On the project, the staging api holds Gemini (unconditioned) and Firestore (conditioned) only: no Discovery Engine role."
+    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user", "roles/cloudsql.client"])
+    error_message = "On the project, the staging api holds Gemini (unconditioned), Firestore and Cloud SQL Client (both conditioned) only: no Discovery Engine role."
   }
 
   assert {
     condition = alltrue([
       for role, m in google_project_iam_member.api_runtime :
-      length(m.condition) == 1 if can(regex("^roles/(datastore|firestore|discoveryengine)\\.", role))
+      length(m.condition) == 1 if can(regex("^roles/(datastore|firestore|discoveryengine|cloudsql)\\.", role))
     ])
-    error_message = "Every Firestore or Discovery Engine role the staging api holds on the project carries an IAM condition."
+    error_message = "Every Firestore, Discovery Engine or Cloud SQL role the staging api holds on the project carries an IAM condition."
+  }
+
+  assert {
+    condition = (
+      google_project_iam_member.api_runtime["roles/cloudsql.client"].condition[0].expression == "resource.name == \"projects/onboardai-test-123/instances/onboardai-db-staging\" && resource.type == \"sqladmin.googleapis.com/Instance\"" &&
+      google_sql_database_instance.accounts[0].name == "onboardai-db-staging"
+    )
+    error_message = "roles/cloudsql.client is limited to exactly the staging accounts instance, onboardai-db-staging."
   }
 
   assert {
@@ -301,6 +339,17 @@ run "singletons_stay_in_production_state" {
   assert {
     condition     = length(google_project_service.required) == 0
     error_message = "API enablement is project-wide: production's state manages it, staging's must not."
+  }
+
+  # The Cloud SQL Admin API, enabled by staging's state for #30, is
+  # production's since #45 (local.apis); main.tf's removed block drops it from
+  # staging's state without disabling it.
+  assert {
+    condition = (
+      can(regex("(?m)^removed \\{\\n  from = google_project_service\\.accounts\\n\\n  lifecycle \\{\\n    destroy = false\\n  \\}\\n\\}", file("${path.module}/main.tf"))) &&
+      !can(regex("resource\\s+\"google_project_service\"\\s+\"accounts\"", file("${path.module}/main.tf")))
+    )
+    error_message = "Staging's state no longer manages the Cloud SQL Admin API: google_project_service.accounts is a removed block with destroy = false."
   }
 
   assert {
