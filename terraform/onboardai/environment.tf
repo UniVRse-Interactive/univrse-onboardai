@@ -22,11 +22,18 @@ locals {
   # Start of display names, descriptions and alert titles.
   display_name = local.is_production ? "OnboardAi" : "OnboardAi [${var.environment}]"
 
-  # Employee accounts (Cloud SQL for PostgreSQL, accounts.tf) and the employee
-  # form intake agent on Vertex AI Agent Engine (intake_agent.tf), issue #30.
-  # Staging only for now: every resource they add has count or for_each on this
-  # flag, so production's plan stays unchanged until its own plan is approved.
-  employee_accounts = !local.is_production
+  # Employee accounts (#23, #30, #45): the Cloud SQL for PostgreSQL accounts
+  # database, its secrets, the migration job and the api's Cloud SQL Client
+  # role (accounts.tf). Every environment since #45. A flag rather than
+  # unconditional resources, so staging's resources keep the addresses (with
+  # [0]) they were applied with and its state needs no move.
+  employee_accounts = true
+
+  # The employee form intake agent on Vertex AI Agent Engine (intake_agent.tf,
+  # #27, #30): its runtime account, INTAKE_MCP_TOKEN, the deployer's Agent
+  # Engine roles, and the TTL on its draft imports (firestore.tf). Staging
+  # only: production's plan never contains them. Needs the accounts database.
+  intake_agent = local.employee_accounts && !local.is_production
 }
 
 # Refuses any plan whose inputs and state disagree: the selected workspace picks

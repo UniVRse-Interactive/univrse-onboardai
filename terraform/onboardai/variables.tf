@@ -91,7 +91,8 @@ variable "gemini_model" {
 }
 
 # ---------------------------------------------------------------------------
-# Employee accounts and the form intake agent (staging only for now, #30)
+# Employee accounts (every environment, #45) and the form intake agent
+# (staging only, #30)
 # ---------------------------------------------------------------------------
 
 variable "intake_agent_location" {

@@ -118,7 +118,8 @@ The persisted/API field named `card` remains compatible with existing chats and 
 - `check-vertex-ai-search.mjs`: check Vertex AI Search with one live search (`npm run check:search`).
 - `import-company-documents.mjs`: upload a folder to the documents bucket and import it into Vertex AI Search (`npm run docs:import`, dry run by default).
 - `check-shareable-files.mjs`: inspect the Git file list without printing secrets or publishing files.
-- `migrate-database.mjs`: apply the account database migrations (`npm run db:migrate`).
+- `migrate-database.mjs`: apply the SQL and Firestore migrations (`npm run db:migrate`).
+- `check-migration-files.mjs`: list the migration files and fail on a misnamed or duplicate one (`npm run db:migrations:check`).
 - `create-hr-account.mjs`: create an HR account (`npm run hr:create`).
 - `reset-hr-password.mjs`: recover an HR account (`npm run hr:reset-password`).
 - `local-stack.mjs`: start, reset, stop and log the local Docker stack (`npm run local`, `local:reset-hr`, `local:down`, `local:logs`).
@@ -152,6 +153,9 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | `server/profile-autofill.mjs`           | Profile autofill: reads profile fields from an uploaded document with Gemini; saves nothing                                   |
 | `server/database-migrations.mjs`        | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                                                     |
 | `server/migrations/`                    | Plain SQL migrations                                                                                                          |
+| `server/migrations/firestore/`          | Firestore migrations (`NNN_name.mjs`, `up({ firestore, log })`) and their README                                              |
+| `server/firestore-migrations.mjs`       | Runs the Firestore migrations once each, markers in the `schema_migrations` collection, lease lock per file                   |
+| `server/migration-runner.mjs`           | `db:migrate` target selection (`MIGRATION_TARGETS`), output and exit codes; the migration file check                          |
 | `scripts/migrate-database.mjs`          | `npm run db:migrate`                                                                                                          |
 | `scripts/create-hr-account.mjs`         | `npm run hr:create`: the first HR account, password never shown or passed as an argument                                      |
 | `scripts/reset-hr-password.mjs`         | `npm run hr:reset-password`: recover an HR account (new password, lock cleared, sessions ended)                               |

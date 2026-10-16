@@ -20,19 +20,19 @@ resource "google_project_service" "required" {
   disable_on_destroy = false
 }
 
-# The one exception (#30): the Cloud SQL Admin API is enabled by the state of
-# the environment that runs employee accounts, which today is staging only,
-# because adding it to local.apis would change production's plan. Cloud SQL,
-# the Cloud Run Cloud SQL connection and the Cloud SQL Auth Proxy all need it.
-# disable_on_destroy = false, so neither state can ever turn it off. When
-# production gets accounts, add it to local.apis (production's state) and
-# replace this resource with a removed block (lifecycle { destroy = false }),
-# which drops it from staging's state without touching the API.
-resource "google_project_service" "accounts" {
-  for_each = local.employee_accounts ? toset(["sqladmin.googleapis.com"]) : toset([])
+# The Cloud SQL Admin API was enabled by staging's state while only staging ran
+# employee accounts (#30). Production runs them too since #45, so the API is in
+# local.apis (production's state) like every other API, and this block drops
+# it from staging's state without calling Google: the API stays on. A plan in
+# the staging workspace shows it as "will no longer be managed by Terraform"
+# (forget, not destroy) until that state has been applied once; in production
+# it does nothing.
+removed {
+  from = google_project_service.accounts
 
-  service            = each.value
-  disable_on_destroy = false
+  lifecycle {
+    destroy = false
+  }
 }
 
 # The project number names the Discovery Engine service agent and the serving

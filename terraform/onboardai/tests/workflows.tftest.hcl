@@ -60,23 +60,25 @@ run "deploy_flags_match_terraform" {
     error_message = "deploy.yml must define exactly the three *_RUN_FLAGS lines."
   }
 
-  # Gemini runs on Vertex AI as onboardai-api-run: production mounts no secret,
-  # and its api deploy clears any reference an earlier revision carried.
-  # Staging (#30) sets exactly two Secret Manager references, DATABASE_URL and
-  # INTAKE_MCP_TOKEN, in the branch only a staging deploy takes; --set-secrets
-  # replaces every earlier reference too.
+  # Gemini runs on Vertex AI as onboardai-api-run: no API key. Since #45 the
+  # api is deployed once, in every stack, with its Cloud SQL connection and
+  # DATABASE_URL as a Secret Manager reference; INTAKE_MCP_TOKEN and the
+  # engine are added only when the agent job deployed the intake agent on
+  # staging. --set-secrets replaces every reference an earlier revision
+  # carried, so production no longer needs --clear-secrets.
   assert {
     condition = (
       !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GEMINI_SECRET") &&
       !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "GEMINI_API_KEY=") &&
       !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "secret_flags") &&
       !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--update-secrets") &&
-      length(regexall("--set-secrets", file("${path.module}/../../.github/workflows/deploy.yml"))) == 1 &&
-      length(regexall("deploy api ", file("${path.module}/../../.github/workflows/deploy.yml"))) == 2 &&
-      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "          else\n            # Production: no secrets at all. --clear-secrets drops any reference\n            # an earlier revision carried (the retired GEMINI_API_KEY mount).\n            deploy api \"$api_env\" --clear-secrets\n          fi\n") &&
-      can(regex("          if \\[\\[ \"\\$DEPLOY_ENV\" == staging \\]\\]; then\\n(?:            #[^\\n]*\\n)+            if \\[\\[ ! \"\\$INTAKE_AGENT_ENGINE\" =~ [^\\n]+\\n[^\\n]+\\n[^\\n]+\\n            fi\\n            deploy api \"\\$api_env,INTAKE_AGENT_ENGINE=\\$INTAKE_AGENT_ENGINE\" \\\\\\n              --set-cloudsql-instances=\"\\$GCP_PROJECT_ID:\\$GCP_REGION:onboardai-db\\$NAME_SUFFIX\" \\\\\\n              --set-secrets=\"DATABASE_URL=onboardai-database-url\\$NAME_SUFFIX:latest,INTAKE_MCP_TOKEN=onboardai-intake-mcp-token\\$NAME_SUFFIX:latest\"\\n          else\\n", file("${path.module}/../../.github/workflows/deploy.yml")))
+      !strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--clear-secrets") &&
+      length(regexall("--set-secrets=", file("${path.module}/../../.github/workflows/deploy.yml"))) == 1 &&
+      length(regexall("--set-cloudsql-instances=", file("${path.module}/../../.github/workflows/deploy.yml"))) == 1 &&
+      length(regexall("deploy api ", file("${path.module}/../../.github/workflows/deploy.yml"))) == 1 &&
+      can(regex("          api_secrets=\"DATABASE_URL=onboardai-database-url\\$NAME_SUFFIX:latest\"\\n(?:          #[^\\n]*\\n)*          if \\[\\[ \"\\$DEPLOY_ENV\" == staging && \"\\$INTAKE_AGENT_DEPLOYED\" == true \\]\\]; then\\n            if \\[\\[ ! \"\\$INTAKE_AGENT_ENGINE\" =~ [^\\n]+\\n[^\\n]+\\n[^\\n]+\\n            fi\\n            api_env\\+=\",INTAKE_AGENT_ENGINE=\\$INTAKE_AGENT_ENGINE\"\\n            api_secrets\\+=\",INTAKE_MCP_TOKEN=onboardai-intake-mcp-token\\$NAME_SUFFIX:latest\"\\n            echo \"intake_agent=true\" >> \"\\$GITHUB_OUTPUT\"\\n          else\\n            echo \"intake_agent=false\" >> \"\\$GITHUB_OUTPUT\"\\n          fi\\n          deploy api \"\\$api_env\" \\\\\\n            --set-cloudsql-instances=\"\\$GCP_PROJECT_ID:\\$GCP_REGION:onboardai-db\\$NAME_SUFFIX\" \\\\\\n            --set-secrets=\"\\$api_secrets\"\\n", file("${path.module}/../../.github/workflows/deploy.yml")))
     )
-    error_message = "Production deploys the api with --clear-secrets and no secret; only the staging branch (DEPLOY_ENV == staging) sets --set-secrets, with exactly DATABASE_URL and INTAKE_MCP_TOKEN, and the Cloud SQL connection."
+    error_message = "The api is deployed once in every stack with --set-cloudsql-instances onboardai-db$NAME_SUFFIX and --set-secrets DATABASE_URL; INTAKE_MCP_TOKEN and INTAKE_AGENT_ENGINE are added only on staging when the agent job deployed the agent. No --clear-secrets."
   }
 
   assert {
@@ -464,54 +466,112 @@ run "production_values_pass_the_production_checks" {
 }
 
 # ---------------------------------------------------------------------------
-# Employee accounts and the intake agent: staging only (#30)
+# Database migrations in every deploy (#45); the intake agent on staging only
+# (#30)
 # ---------------------------------------------------------------------------
 
-# Every #30 step runs on the staging branch only, so a production deploy takes
-# exactly the steps it took before. tests/accounts.tftest.hcl checks that the
-# names these steps use are the ones Terraform creates.
-run "accounts_steps_run_on_staging_only" {
+# Every deploy, production and staging, migrates before it deploys anything.
+# The intake agent deploys only on staging and only when the commit has its
+# deploy command; otherwise the api deploys without it. tests/accounts.tftest.hcl
+# and tests/accounts_production.tftest.hcl check that the names these steps use
+# are the ones Terraform creates.
+run "migrations_run_everywhere_and_the_agent_only_on_staging" {
   command = plan
 
-  # The agent job: after every image is pushed, each step but the skip notice
-  # gated on the staging branch, and its one output is the engine name.
+  # The agent job: after every image is pushed; checks out, then decides. Each
+  # later step runs only when it decided to deploy, and the job outputs that
+  # decision and the engine name.
   assert {
     condition = (
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.needs == "images" &&
-      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.outputs == { engine = "$${{ steps.agent.outputs.engine }}" } &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.outputs == {
+        deployed = "$${{ steps.decide.outputs.deploy }}"
+        engine   = "$${{ steps.agent.outputs.engine }}"
+      } &&
       length(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps) == 8 &&
-      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[0].if == "github.ref != 'refs/heads/staging'" &&
-      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[0].run, "::notice") &&
-      alltrue([for s in slice(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps, 1, 8) : try(s.if, "") == "github.ref == 'refs/heads/staging'"])
+      startswith(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[0].uses, "actions/checkout@") &&
+      try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[0].if, null) == null &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[1].id == "decide" &&
+      try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[1].if, null) == null &&
+      alltrue([for s in slice(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps, 2, 8) : try(s.if, "") == "steps.decide.outputs.deploy == 'true'"])
     )
-    error_message = "The agent job runs after images, skips with a notice on main, gates every other step on refs/heads/staging, and outputs only the engine name."
+    error_message = "The agent job runs after images, checks out and decides (step decide) unconditionally, gates every later step on steps.decide.outputs.deploy == 'true', and outputs deployed and engine."
   }
 
-  # The deploy job waits for the agent, takes its engine, and migrates before
-  # it deploys anything, on staging only.
+  # The decision: never off staging, and on staging only when package.json
+  # has the intake-agent:deploy script; each skip prints a notice.
+  assert {
+    condition = (
+      can(regex("(?s)^set -euo pipefail\\nif \\[\\[ \"\\$GITHUB_REF\" != refs/heads/staging \\]\\]; then\\n  echo \"::notice [^\\n]+\\n  deploy=false\\nelif \\[\\[ -z \"\\$\\(jq -r '\\.scripts\\[\"intake-agent:deploy\"\\] // \"\" \\| strings' package\\.json\\)\" \\]\\]; then\\n  echo \"::notice [^\\n]+\\n  deploy=false\\nelse\\n  deploy=true\\nfi\\necho \"deploy=\\$deploy\" >> \"\\$GITHUB_OUTPUT\"\\n$", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[1].run)) &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[1]["working-directory"] == "repo"
+    )
+    error_message = "The agent deploys only on refs/heads/staging and only when package.json has an intake-agent:deploy script; otherwise deploy=false with a ::notice."
+  }
+
+  # The deploy job waits for the agent and takes its result, then migrates
+  # before it deploys anything, in every stack.
   assert {
     condition = (
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.needs == ["images", "agent"] &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env.INTAKE_AGENT_DEPLOYED == "$${{ needs.agent.outputs.deployed }}" &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env.INTAKE_AGENT_ENGINE == "$${{ needs.agent.outputs.engine }}" &&
-      [for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.name] == ["Authenticate to Google Cloud", "Set up gcloud", "Record the revisions serving now (rollback targets)", "Migrate the accounts database", "Deploy", "Print rollback commands"] &&
-      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].if == "github.ref == 'refs/heads/staging'" &&
-      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "gcloud run jobs update \"$job\" --project=\"$GCP_PROJECT_ID\" --region=\"$GCP_REGION\" --image=\"$REGISTRY/onboardai$NAME_SUFFIX/api:$GITHUB_SHA\" --quiet\n") &&
-      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "gcloud run jobs execute \"$job\" --project=\"$GCP_PROJECT_ID\" --region=\"$GCP_REGION\" --wait --quiet")
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.outputs.intake_agent == "$${{ steps.deploy.outputs.intake_agent }}" &&
+      [for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.name] == ["Authenticate to Google Cloud", "Set up gcloud", "Record the revisions serving now (rollback targets)", "Migrate the databases", "Deploy", "Print rollback commands"] &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].id == "migrate" &&
+      try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].if, null) == null &&
+      try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].if, null) == null &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[5].env.MIGRATE_OUTCOME == "$${{ steps.migrate.outcome }}"
     )
-    error_message = "deploy needs [images, agent], reads INTAKE_AGENT_ENGINE from the agent job, and runs the staging-only migration (the api image of this commit, --wait) before the Deploy step."
+    error_message = "deploy needs [images, agent], takes the agent job's deployed and engine, and runs 'Migrate the databases' (id migrate) in every stack, with no condition, right before the Deploy step."
   }
 
-  # The smoke job's #30 checks run on staging only.
+  # The deploy job outlasts two full migration attempts (timeout x
+  # (max_retries + 1)) plus 15 minutes for the job start, the log read and the
+  # three service deploys.
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy["timeout-minutes"] * 60 >= tonumber(trimsuffix(google_cloud_run_v2_job.db_migrate[0].template[0].template[0].timeout, "s")) * (google_cloud_run_v2_job.db_migrate[0].template[0].template[0].max_retries + 1) + 15 * 60
+    )
+    error_message = "The deploy job's timeout-minutes must cover the migration job's timeout x (max_retries + 1) plus 15 minutes for the rest of the job."
+  }
+
+  # The migration: this commit's api image, executed with --wait; a failure
+  # stops the step (and with it the deploy) after printing the lines.
+  assert {
+    condition = (
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "gcloud run jobs update \"$job\" --project=\"$GCP_PROJECT_ID\" --region=\"$GCP_REGION\" --image=\"$REGISTRY/onboardai$NAME_SUFFIX/api:$GITHUB_SHA\" --quiet\n") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "execution=$(gcloud run jobs execute \"$job\" --project=\"$GCP_PROJECT_ID\" --region=\"$GCP_REGION\" --wait --quiet --format='value(metadata.name)' 2> \"$progress\") || status=$?\n") &&
+      can(regex("(?s)printf '%s\\\\n' \"\\$\\{lines:-[^\\n]*\\n.*\\nif \\(\\(status != 0\\)\\); then\\n  echo \"::error::[^\\n]*\"\\n  exit 1\\nfi\\nif \\[\\[ \"\\$complete\" == false \\]\\]; then\\n  echo \"::warning::[^\\n]*\"\\nfi\\n$", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run))
+    )
+    error_message = "The migration step updates the job to this commit's api image, executes it with --wait, prints its lines, then fails with ::error:: if the execution failed (an incomplete log only warns)."
+  }
+
+  # The log: this execution only, through the stack's log view, retried a
+  # bounded number of times, and only the runner's lines are printed.
+  assert {
+    condition = (
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "filter=\"labels.\\\"run.googleapis.com/execution_name\\\"=\\\"$execution\\\" AND timestamp>=\\\"$since\\\"\"\n") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "gcloud logging read \"$filter\" --project=\"$GCP_PROJECT_ID\" --bucket=_Default --location=global --view=\"$view\" ") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "select(test(\"^(\\\\[sql\\\\] |\\\\[firestore\\\\] |Migrations finished|Migration stopped)\"))") &&
+      length(regexall("textPayload", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run)) == 2 &&
+      !can(regex("(echo|printf|cat)[^\\n]*\\$\\{?entries", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run)) &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "for attempt in 1 2 3 4 5 6 7 8; do\n") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run, "if ((attempt < 8)); then sleep 5; fi\n")
+    )
+    error_message = "The migration step reads only its own execution through the log view, retries at most 8 times 5 s apart, and prints only lines starting with [sql], [firestore], Migrations finished or Migration stopped."
+  }
+
+  # The smoke test checks accounts in every stack, and the agent's checks only
+  # when this run deployed the agent.
   assert {
     condition = (
       length(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps) == 3 &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.env.INTAKE_AGENT == "$${{ needs.deploy.outputs.intake_agent }}" &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].name == "Check employee accounts and form import" &&
-      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].if == "github.ref == 'refs/heads/staging'" &&
-      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].run, "'.accounts == true and .employeeImport == true'") &&
-      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].run, "\"$API_URL/mcp\"") &&
-      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].run, "if [[ \"$code\" == 401 ]]; then")
+      try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].if, null) == null &&
+      can(regex("(?s)if jq -e '\\.accounts == true' > /dev/null <<< \"\\$config\"; then\\n.*\\nif \\[\\[ \"\\$INTAKE_AGENT\" != true \\]\\]; then\\n[^\\n]*\\n  exit \"\\$failed\"\\nfi\\n.*'\\.employeeImport == true'.*\"\\$API_URL/mcp\".*if \\[\\[ \"\\$code\" == 401 \\]\\]; then", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].run))
     )
-    error_message = "On staging the smoke test checks /api/config (accounts and employeeImport) and that /mcp refuses a caller without the token (401)."
+    error_message = "The smoke test requires accounts: true in every stack; employeeImport: true and POST /mcp -> 401 only when the run deployed the intake agent."
   }
 
   # The agent's toolchain never handles credentials: dependencies install
@@ -519,7 +579,7 @@ run "accounts_steps_run_on_staging_only" {
   # out below the workspace root the auth step writes its credentials file to.
   assert {
     condition = (
-      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[1].with.path == "repo" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[0].with.path == "repo" &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[4].run == "npm ci --omit=dev --ignore-scripts" &&
       startswith(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[5].uses, "google-github-actions/auth@") &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.agent.steps[3].with["enable-cache"] == false &&
@@ -540,5 +600,53 @@ run "accounts_steps_run_on_staging_only" {
       !can(regex("(?i)secrets versions access|INTAKE_MCP_TOKEN=[^o]|DATABASE_URL=[^o]", file("${path.module}/../../.github/workflows/deploy.yml")))
     )
     error_message = "The agent deploy passes the token's secret ID only, and the workflow never reads a secret value."
+  }
+}
+
+# CI proves that every migration file is detected and applies cleanly, twice,
+# to fresh databases, with the targets the migration job uses.
+run "ci_applies_migrations_to_throwaway_databases" {
+  command = apply
+
+  assert {
+    condition     = length([for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.verify.steps : s if try(s.run, "") == "npm run db:migrations:check"]) == 1
+    error_message = "Verify must run npm run db:migrations:check (misnamed or duplicate-numbered migration files fail CI)."
+  }
+
+  # Unconditional, so it also gates every deploy (deploy.yml calls ci.yml).
+  assert {
+    condition = (
+      try(yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.if, null) == null &&
+      try(yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.needs, null) == null &&
+      can(regex("^postgres:17\\.[0-9]+-alpine@sha256:[0-9a-f]{64}$", yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.services.postgres.image)) &&
+      can(regex("^gcr\\.io/google\\.com/cloudsdktool/google-cloud-cli:[0-9.]+-emulators@sha256:[0-9a-f]{64}$", yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.env.FIRESTORE_EMULATOR_IMAGE)) &&
+      can(regex("^postgresql://onboardai:[A-Za-z0-9_]+@127\\.0\\.0\\.1:5432/onboardai$", yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.env.DATABASE_URL)) &&
+      yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.env.FIRESTORE_EMULATOR_HOST == "127.0.0.1:8681" &&
+      yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.env.MIGRATION_TARGETS == one([for e in google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env : e.value if e.name == "MIGRATION_TARGETS"])
+    )
+    error_message = "The migrations job always runs, against PostgreSQL 17 and gcloud's Firestore emulator (both pinned by digest), with the migration job's MIGRATION_TARGETS."
+  }
+
+  # Run 1 applies every listed file; run 2 applies none; neither leaks the
+  # URL or the password.
+  assert {
+    condition = (
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.steps : s.run if try(s.name, "") == "Apply the migrations twice"]), "summary=$(npm run --silent db:migrations:check | tail -n 1)\n") &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.steps : s.run if try(s.name, "") == "Apply the migrations twice"]), "\nmigrate first\n") &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.steps : s.run if try(s.name, "") == "Apply the migrations twice"]), "\"Migrations finished: sql $sql applied, 0 already applied; firestore $firestore applied, 0 already applied.\"\n") &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.steps : s.run if try(s.name, "") == "Apply the migrations twice"]), "\nmigrate second\n") &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.steps : s.run if try(s.name, "") == "Apply the migrations twice"]), "\"Migrations finished: sql 0 applied, $sql already applied; firestore 0 applied, $firestore already applied.\"\n") &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.steps : s.run if try(s.name, "") == "Apply the migrations twice"]), "check second \"Applied lines\" \"$(count '^\\[(sql|firestore)\\] Applied: ' \"$out\")\" 0\n") &&
+      strcontains(one([for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.steps : s.run if try(s.name, "") == "Apply the migrations twice"]), "grep -qiE 'postgres(ql)?://|${regex("^postgresql://onboardai:([A-Za-z0-9_]+)@", yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.migrations.env.DATABASE_URL)[0]}' \"$out\" \"$err\"")
+    )
+    error_message = "The migrations job must apply every file the check lists on the first run, none on the second, and fail if either run prints the database URL or its password."
+  }
+
+  assert {
+    condition = length([
+      for s in yamldecode(file("${path.module}/../../.github/workflows/ci.yml")).jobs.docker.steps : s
+      if try(s.if, "") == "needs.changes.outputs.images != 'false' && matrix.service == 'api'" && try(s.run, "") == "docker run --rm --platform linux/amd64 onboardai-api:ci npm run --silent db:migrations:check"
+    ]) == 1
+    error_message = "The api Docker check must run npm run db:migrations:check inside the built api image (the migration job's image)."
   }
 }

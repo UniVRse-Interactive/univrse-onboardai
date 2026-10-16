@@ -341,14 +341,15 @@ run "singletons_stay_in_production_state" {
     error_message = "API enablement is project-wide: production's state manages it, staging's must not."
   }
 
-  # The one exception (#30, main.tf): staging enables the Cloud SQL Admin API,
-  # because production has no Cloud SQL yet and its plan must not change.
+  # The Cloud SQL Admin API, enabled by staging's state for #30, is
+  # production's since #45 (local.apis); main.tf's removed block drops it from
+  # staging's state without disabling it.
   assert {
     condition = (
-      toset(keys(google_project_service.accounts)) == toset(["sqladmin.googleapis.com"]) &&
-      google_project_service.accounts["sqladmin.googleapis.com"].disable_on_destroy == false
+      can(regex("(?m)^removed \\{\\n  from = google_project_service\\.accounts\\n\\n  lifecycle \\{\\n    destroy = false\\n  \\}\\n\\}", file("${path.module}/main.tf"))) &&
+      !can(regex("resource\\s+\"google_project_service\"\\s+\"accounts\"", file("${path.module}/main.tf")))
     )
-    error_message = "Staging's state enables exactly sqladmin.googleapis.com, and never disables it on destroy."
+    error_message = "Staging's state no longer manages the Cloud SQL Admin API: google_project_service.accounts is a removed block with destroy = false."
   }
 
   assert {

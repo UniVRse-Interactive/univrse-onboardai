@@ -17,6 +17,7 @@
     "format:check": "prettier --check .",
     "db:up": "docker compose up -d --wait",
     "db:migrate": "node scripts/migrate-database.mjs",
+    "db:migrations:check": "node scripts/check-migration-files.mjs",
     "hr:create": "node scripts/create-hr-account.mjs",
     "hr:reset-password": "node scripts/reset-hr-password.mjs",
     "local": "node scripts/local-stack.mjs start",

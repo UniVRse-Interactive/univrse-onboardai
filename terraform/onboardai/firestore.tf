@@ -31,9 +31,9 @@ resource "google_firestore_database" "default" {
 # within a day of it; the API also hides and deletes expired drafts itself).
 # Its single-field indexes are off, as Firestore recommends for TTL timestamps:
 # the API reads the whole collection and never queries by purgeAt. Only where
-# accounts run (staging today).
+# the intake agent runs (staging only): it is what writes the drafts.
 resource "google_firestore_field" "employee_imports_ttl" {
-  count = local.employee_accounts ? 1 : 0
+  count = local.intake_agent ? 1 : 0
 
   database   = google_firestore_database.default.name
   collection = "employeeImports"

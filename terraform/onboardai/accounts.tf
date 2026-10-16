@@ -1,10 +1,10 @@
-# Employee accounts (#23, #30): a Cloud SQL for PostgreSQL instance holds the
-# accounts, sessions and account events; profiles and drafts stay in the
-# environment's Firestore database. Everything here exists only where
-# local.employee_accounts is true (staging today), so production's plan is
-# unchanged.
+# Employee accounts (#23, #30, #45): a Cloud SQL for PostgreSQL instance holds
+# the accounts, sessions and account events; profiles and drafts stay in the
+# environment's Firestore database. Every environment has its own
+# (local.employee_accounts, environment.tf): onboardai-db in production,
+# onboardai-db-staging in staging.
 #
-#   api (Cloud Run) --Cloud SQL connection, Unix socket /cloudsql/<connection name>--> onboardai-db-<env>
+#   api (Cloud Run) --Cloud SQL connection, Unix socket /cloudsql/<connection name>--> onboardai-db[-staging]
 #   DATABASE_URL = postgresql://onboardai:<password>@/onboardai?host=/cloudsql/<connection name>
 #
 # The password is generated during apply (ephemeral, never in state) and sent
@@ -16,14 +16,16 @@
 
 # --- Instance ---------------------------------------------------------------
 
-# Smallest suitable instance for a staging accounts database:
+# Smallest suitable instance for an accounts database, in both environments:
 # - Enterprise edition, db-f1-micro (shared vCPU, 0.6 GiB): the cheapest tier.
 #   PostgreSQL 16+ defaults to Enterprise Plus, which has no shared-core tiers,
 #   so the edition is explicit. Shared-core tiers have no SLA and allow 25
 #   connections: enough for one api instance (max 1) and the migration job.
 # - Zonal, 10 GiB SSD (the minimum), growing on its own up to 20 GiB at most.
 # - PostgreSQL 17, the version the local stack (#23) runs.
-# - Backups: daily, 3 kept, no point-in-time recovery (no WAL archive).
+# - Backups: daily (local.sql_backups). Staging keeps 3 and has no point-in-
+#   time recovery; production keeps 7 and can be restored to any moment of
+#   the last 7 days (write-ahead logs kept for point-in-time recovery).
 # - Connections: public IP for the Cloud Run connection and the Cloud SQL Auth
 #   Proxy only. No authorized network, connector enforcement (only the Auth
 #   Proxy and the Cloud SQL connectors may connect; both authenticate with IAM),
@@ -62,11 +64,12 @@ resource "google_sql_database_instance" "accounts" {
 
     backup_configuration {
       enabled                        = true
-      point_in_time_recovery_enabled = false
+      point_in_time_recovery_enabled = local.sql_backups.point_in_time_recovery_enabled
+      transaction_log_retention_days = local.sql_backups.transaction_log_retention_days
       start_time                     = "18:00" # UTC: 02:00 in Singapore
 
       backup_retention_settings {
-        retained_backups = 3
+        retained_backups = local.sql_backups.retained_backups
         retention_unit   = "COUNT"
       }
     }
@@ -79,7 +82,7 @@ resource "google_sql_database_instance" "accounts" {
     }
   }
 
-  depends_on = [google_project_service.accounts]
+  depends_on = [google_project_service.required]
 }
 
 # deletion_policy ABANDON while protected, as Firestore: removing it from the
@@ -195,12 +198,18 @@ resource "google_secret_manager_secret_iam_member" "api_reads_database_url" {
 # --- Migration job ---------------------------------------------------------------
 
 # Runs `npm run db:migrate` (safe to re-run) from the api image, as the api's
-# own service account, through the same Cloud SQL connection and DATABASE_URL.
-# Terraform creates it with a placeholder image; before each api deploy the
-# deploy workflow points it at the new api image and executes it with --wait,
-# so the schema is migrated before the new revision takes traffic. The
-# password stays in Secret Manager and Cloud Run: it never reaches the runner
-# or the workflow log. The job's own output goes to Cloud Logging.
+# own service account, through the same Cloud SQL connection and DATABASE_URL,
+# then against the environment's Firestore database (#45): MIGRATION_TARGETS
+# is sql,firestore, so the runner stops before touching either database when
+# one of them is not configured. Terraform creates it with a placeholder
+# image; before any service is deployed, the deploy workflow (main and
+# staging) points it at the new api image and executes it with --wait, so the
+# new revision never serves an unmigrated database, and a failed migration
+# deploys nothing. The password stays in Secret Manager and Cloud Run: it
+# never reaches the runner or the workflow log. The job's output goes to Cloud
+# Logging; the workflow prints its migration lines through the log view below.
+# Firestore access is the api account's roles/datastore.user (locals.tf):
+# staging's is limited to onboardai-staging by its IAM condition.
 resource "google_cloud_run_v2_job" "db_migrate" {
   count = local.employee_accounts ? 1 : 0
 
@@ -217,7 +226,11 @@ resource "google_cloud_run_v2_job" "db_migrate" {
     template {
       service_account       = google_service_account.runtime["api"].email
       execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
-      timeout               = "300s"
+      # A whole run (every pending SQL and Firestore file) gets 10 minutes, and
+      # each Firestore file must finish within 5 (the runner's Firestore lease;
+      # README, Database migrations). A retry after a killed attempt therefore
+      # outlasts the lease the killed attempt left behind.
+      timeout = "600s"
       # One retry absorbs a cold Cloud SQL connection; the migration takes an
       # advisory lock and skips applied files, so a retry is harmless.
       max_retries = 1
@@ -236,6 +249,23 @@ resource "google_cloud_run_v2_job" "db_migrate" {
               version = "latest"
             }
           }
+        }
+
+        # The runner's Firestore target (same rules as the api's Firestore
+        # client): the environment's database, (default) in production.
+        env {
+          name  = "FIRESTORE_DATABASE_ID"
+          value = local.firestore_database_name
+        }
+
+        env {
+          name  = "GOOGLE_CLOUD_PROJECT"
+          value = var.project_id
+        }
+
+        env {
+          name  = "MIGRATION_TARGETS"
+          value = local.db_migrate_targets
         }
 
         resources {
@@ -289,5 +319,50 @@ resource "google_cloud_run_v2_job_iam_member" "deployer_runs_migrations" {
   location = google_cloud_run_v2_job.db_migrate[0].location
   name     = google_cloud_run_v2_job.db_migrate[0].name
   role     = "roles/run.developer"
+  member   = "serviceAccount:${google_service_account.deployer.email}"
+}
+
+# --- Migration log ----------------------------------------------------------------
+
+# The deploy workflow prints which migration files an execution applied or
+# found already applied (#45). The job writes them to stdout and stderr, which
+# Cloud Logging keeps in the project's _Default bucket (30 days). This view
+# shows the deployer the log entries of this environment's migration job and
+# nothing else: no other job or service. That includes Cloud Run's system
+# lines for the job ("Container called exit(0).") next to its stdout and
+# stderr: a view filter must be a plain conjunction (the API rejects a
+# parenthesised OR, "nesting depth limit of 1"), so it cannot list the two log
+# IDs. Admin Activity audit logs stay in _Required. The workflow reads one
+# execution through it (gcloud logging read --view) and prints only the
+# runner's [sql], [firestore], "Migrations finished" and "Migration stopped"
+# lines.
+#
+# parent, location and the bucket's short ID are given separately: the
+# provider stores them in that form after create, so state equals the
+# configuration and the grant below can use them.
+resource "google_logging_log_view" "db_migrate" {
+  count = local.employee_accounts ? 1 : 0
+
+  parent      = "projects/${var.project_id}"
+  location    = "global"
+  bucket      = "_Default"
+  name        = local.db_migrate_log_view_name
+  description = "${local.display_name}: output of the Cloud Run job ${local.db_migrate_job_name} (database migrations), read by the deploy workflow."
+  filter = join(" AND ", [
+    "SOURCE(\"projects/${var.project_id}\")",
+    "resource.type = \"cloud_run_job\"",
+    "resource.labels.job_name = \"${local.db_migrate_job_name}\"",
+  ])
+}
+
+# Logs View Accessor on that view only: no project-level logging role.
+resource "google_logging_log_view_iam_member" "deployer_reads_migration_log" {
+  count = local.employee_accounts ? 1 : 0
+
+  parent   = google_logging_log_view.db_migrate[0].parent
+  location = google_logging_log_view.db_migrate[0].location
+  bucket   = google_logging_log_view.db_migrate[0].bucket
+  name     = google_logging_log_view.db_migrate[0].name
+  role     = "roles/logging.viewAccessor"
   member   = "serviceAccount:${google_service_account.deployer.email}"
 }

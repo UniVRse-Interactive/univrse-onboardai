@@ -9,24 +9,26 @@ same code: **production** (deployed from `main`, described below) and
 [Staging](#staging)). Each has its own state in Cloud Storage (see
 [State](#state)).
 
-| Creates                                | Name                                                                                                                        |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, discoveryengine, firestore, storage, monitoring |
-| Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image                                                 |
-| Cloud Run services (placeholder image) | `onboardai-web`, `onboardai-api`, `onboardai-tts`, all public (`allUsers` invoker)                                          |
-| Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                                                               |
-| Deployer service account (no key)      | `onboardai-deployer`                                                                                                        |
-| Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                                                          |
-| Project roles of `onboardai-api-run`   | `roles/aiplatform.user`, `roles/discoveryengine.viewer`, `roles/datastore.user`: the only project-level bindings            |
-| Documents bucket                       | `<project>-onboardai-docs`: uniform access, public access prevention, versioning                                            |
-| Vertex AI Search (`global`)            | data store `onboardai-docs` (layout parser, 500-token chunks), Enterprise engine `onboardai-search`                         |
-| Firestore                              | `(default)`, Native mode, `asia-southeast1`, delete protection on                                                           |
-| Cloud Monitoring                       | one email channel per `alert_emails` entry; alerts on 5xx (api, tts) and api p95 latency                                    |
+| Creates                                | Name                                                                                                                                          |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, discoveryengine, firestore, storage, monitoring, sqladmin         |
+| Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image                                                                   |
+| Cloud Run services (placeholder image) | `onboardai-web`, `onboardai-api`, `onboardai-tts`, all public (`allUsers` invoker)                                                            |
+| Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                                                                                 |
+| Deployer service account (no key)      | `onboardai-deployer`                                                                                                                          |
+| Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                                                                            |
+| Project roles of `onboardai-api-run`   | `roles/aiplatform.user`, `roles/discoveryengine.viewer`, `roles/datastore.user`, `roles/cloudsql.client` (on `onboardai-db` only)             |
+| Documents bucket                       | `<project>-onboardai-docs`: uniform access, public access prevention, versioning                                                              |
+| Vertex AI Search (`global`)            | data store `onboardai-docs` (layout parser, 500-token chunks), Enterprise engine `onboardai-search`                                           |
+| Firestore                              | `(default)`, Native mode, `asia-southeast1`, delete protection on                                                                             |
+| Employee accounts (#45)                | Cloud SQL `onboardai-db`, secrets `onboardai-db-password` and `onboardai-database-url`, migration job `onboardai-db-migrate` and its log view |
+| Cloud Monitoring                       | one email channel per `alert_emails` entry; alerts on 5xx (api, tts) and api p95 latency                                                      |
 
 **Who owns what.** Terraform owns each service's shape: identity, CPU, memory,
-scaling, concurrency, timeout, startup probe, ingress and public access. The
-deploy workflow owns the image, the environment variables
-and traffic. Both pass the same settings: the workflow's `WEB_RUN_FLAGS`,
+scaling, concurrency, timeout, startup probe, ingress and public access, and
+the migration job's shape and environment. The deploy workflow owns the
+images (the services' and the migration job's), the environment variables,
+the secret references, the api's Cloud SQL connection and traffic. Both pass the same settings: the workflow's `WEB_RUN_FLAGS`,
 `API_RUN_FLAGS` and `TTS_RUN_FLAGS` lines must equal
 `terraform output cloud_run_deploy_flags`, and `terraform test` fails if they
 differ. To change a setting, edit `locals.tf`, copy the new output into
@@ -34,7 +36,7 @@ differ. To change a setting, edit `locals.tf`, copy the new output into
 
 ## Prerequisites
 
-- Terraform 1.11 or newer (write-only arguments keep staging's generated
+- Terraform 1.11 or newer (write-only arguments keep the generated
   secrets out of state), the gcloud CLI, and the GitHub CLI (`gh`) logged in
   with admin rights on `UniVRse-Team/univrse-onboardai`.
 - Owner on the project (the module sets project IAM and creates the WIF pool,
@@ -145,12 +147,15 @@ gh run watch --repo UniVRse-Team/univrse-onboardai
 ```
 
 The workflow runs CI on the commit, builds and pushes the three images tagged
-with the commit SHA, deploys tts, then api, then web, and smoke-tests
-`/health`, `/api/health`, `/web-health`, `/api/health` through the web proxy,
-and `/`.
+with the commit SHA, migrates the databases with the new api image (see
+[Database migrations](#database-migrations)), deploys tts, then api, then web,
+and smoke-tests `/health`, `/api/health`, `/web-health`, `/api/health` through
+the web proxy, `/`, and that `GET /api/config` reports `accounts: true`.
 
-**CI on pull requests and pushes.** `Verify` (format check, tests, build and
-the secret scan) always runs. The three `Docker build (web|api|tts)` checks
+**CI on pull requests and pushes.** `Verify` (format check, migration file
+check, tests, build and the secret scan) always runs. `Database migrations`
+always runs too: it applies every migration twice to a throwaway PostgreSQL 17
+and the Firestore emulator (see [Database migrations](#database-migrations)). The three `Docker build (web|api|tts)` checks
 always report, but they build only when the change touches an image input:
 `Dockerfile`, `.dockerignore`, `package.json`, `package-lock.json`,
 `index.html`, `vite.config.*`, `server/`, `src/`, `public/` or `scripts/`.
@@ -182,8 +187,9 @@ The API has no API key. It calls Gemini on Vertex AI, searches
 Application Default Credentials. The deploy sets `GOOGLE_CLOUD_PROJECT`,
 `GOOGLE_CLOUD_LOCATION=global` (`gemini-3.5-flash-lite` answers on `global` and
 returns 404 on `asia-southeast1`), `VERTEX_SEARCH_LOCATION`,
-`VERTEX_SEARCH_ENGINE_ID` and `FIRESTORE_DATABASE_ID`. It always passes
-`--clear-secrets` to the API, which drops the old `GEMINI_API_KEY` secret mount.
+`VERTEX_SEARCH_ENGINE_ID` and `FIRESTORE_DATABASE_ID`. Its only secret
+reference is `DATABASE_URL` (#45); `--set-secrets` replaces every reference an
+earlier revision carried, which also drops the old `GEMINI_API_KEY` mount.
 
 The data store's document processing (layout parser; layout-based chunks of at
 most 500 tokens that carry their ancestor headings) cannot change after
@@ -205,6 +211,199 @@ A service scaled to zero sends no data, and missing data never fires an alert;
 an open incident closes after 30 minutes without data. Two conditions keep the
 alerting cost low. To change the addresses, edit `alert_emails` and apply.
 
+## Employee accounts and database migrations
+
+Both stacks run employee accounts (#23, #30; production since #45): a Cloud
+SQL for PostgreSQL instance holds the accounts, sessions and account events,
+and profiles and drafts stay in the stack's Firestore database. Every resource
+below is gated on `local.employee_accounts` (`environment.tf`, true in both
+stacks).
+
+| Resource           | Production                                         | Staging                                                           |
+| ------------------ | -------------------------------------------------- | ----------------------------------------------------------------- |
+| Cloud SQL instance | `onboardai-db`                                     | `onboardai-db-staging`                                            |
+| Database and user  | `onboardai` and `onboardai`                        | the same                                                          |
+| Secrets            | `onboardai-db-password`, `onboardai-database-url`  | `onboardai-db-password-staging`, `onboardai-database-url-staging` |
+| Migration job      | `onboardai-db-migrate`                             | `onboardai-db-migrate-staging`                                    |
+| Migration log view | `onboardai-db-migrate` (bucket `_Default`, global) | `onboardai-db-migrate-staging`                                    |
+| Firestore target   | `(default)`                                        | `onboardai-staging`                                               |
+| Backups            | daily, 7 kept, point-in-time recovery over 7 days  | daily, 3 kept, no point-in-time recovery                          |
+
+Both instances: PostgreSQL 17, Enterprise edition, `db-f1-micro`, zonal, 10
+GiB SSD (grows to 20 GiB at most), public IP with no authorized network,
+connector enforcement (only the Cloud Run connection and the Cloud SQL Auth
+Proxy), TLS required, delete protection. The database password is generated
+during apply and never stored in state; `DATABASE_URL` is
+`postgresql://onboardai:<password>@/onboardai?host=/cloudsql/<connection name>`.
+The Cloud SQL Admin API is in production's `local.apis`; staging's state
+enabled it for #30 and now only forgets it (`removed` block in `main.tf`, the
+API stays on).
+
+| Account                        | Gets                                             | On                                                         |
+| ------------------------------ | ------------------------------------------------ | ---------------------------------------------------------- |
+| `onboardai-api-run[-staging]`  | `roles/cloudsql.client`                          | The project, with an IAM condition: its own instance only  |
+|                                | Secret Manager Secret Accessor                   | Its own `onboardai-database-url[-staging]`                 |
+|                                | `roles/datastore.user` (already held: Firestore) | Production: the project. Staging: `onboardai-staging` only |
+| `onboardai-deployer[-staging]` | Cloud Run Developer (update the image, execute)  | Its own migration job                                      |
+|                                | Logs View Accessor                               | Its own migration log view                                 |
+
+Nobody but project owners reads the bare password secret.
+
+### Database migrations
+
+`npm run db:migrate` (backend, `scripts/migrate-database.mjs`) applies the
+pending files of `server/migrations/NNN_name.sql` to Cloud SQL, then those of
+`server/migrations/firestore/NNN_name.mjs` to Firestore. Each file runs once
+per database: SQL files are recorded in the `schema_migrations` table, Firestore
+files in the `schema_migrations` collection. Migrations are forward-only.
+
+**Every deploy, both stacks.** After the three images are pushed and before
+any service changes, the deploy job:
+
+1. points the migration job at this commit's api image
+   (`gcloud run jobs update onboardai-db-migrate$NAME_SUFFIX --image=...`) and
+   executes it with `--wait`. The job runs as the api's account, through the
+   api's Cloud SQL connection, with `DATABASE_URL` from Secret Manager,
+   `FIRESTORE_DATABASE_ID` (the stack's database), `GOOGLE_CLOUD_PROJECT` and
+   `MIGRATION_TARGETS=sql,firestore`, all set by Terraform. No database value
+   reaches the GitHub runner.
+2. prints the runner's lines of that execution into the run log and the run
+   summary: `[sql] Applied: ...`, `[sql] Already applied: ...`,
+   `[firestore] ...`, then `Migrations finished: ...` or
+   `Migration stopped: ...`. Nothing else the job printed is shown.
+3. stops the deploy if the migration failed: nothing is deployed, and every
+   service keeps serving its previous revision.
+
+**Limits.** Each Firestore migration file must finish within 5 minutes (the
+runner's Firestore lease), and a whole run, every pending SQL and Firestore
+file together, within 10 minutes: the job's task timeout is 600 s. Split a
+longer backfill into several files. A killed or failed attempt is retried once
+(`max_retries = 1`); because the retry gets a full 10 minutes, it outlasts the
+lease a killed attempt left behind and can take the file over. The deploy job
+allows 45 minutes: two full attempts plus the job's start, the log read and
+the three service deploys.
+
+**In CI.** `Verify` runs `npm run db:migrations:check`, which lists every
+migration file and fails on one the runner would skip (bad name) or a repeated
+number. The `Database migrations` job applies every migration twice to a
+throwaway PostgreSQL 17 and the Firestore emulator: the first run must apply
+every file, the second none, and neither may print the database URL or its
+password. The `Docker build (api)` check runs the file check inside the built
+api image, the image the migration job runs.
+
+**Read a migration log.** The run log of the `Deploy tts, api, web` job, step
+`Migrate the databases`, and the run summary show the lines. The full output
+(npm's own lines and any stack trace) is in Cloud Logging. With Logs Viewer on
+the project (owners have it):
+
+```sh
+gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="onboardai-db-migrate" AND labels."run.googleapis.com/execution_name"="EXECUTION"' \
+  --project=project-65a9b676-abdb-4393-bc1 --order=asc --format='value(textPayload)'
+gcloud run jobs executions list --job=onboardai-db-migrate --region=asia-southeast1 --project=project-65a9b676-abdb-4393-bc1
+```
+
+Use `onboardai-db-migrate-staging` for staging. The deploy prints the execution
+name. Lines can reach Cloud Logging a few seconds late: the deploy retries for
+about 40 seconds and only warns (never fails) when a successful migration's
+last line has not arrived.
+
+### Roll back a migration
+
+Migrations are forward-only and a service rollback does not undo them.
+
+- **A migration failed.** Nothing was deployed. A failed SQL file rolled back
+  its own transaction; files before it stay applied, and so do Firestore files
+  that finished. Fix forward: push a commit that corrects the file (if it never
+  applied anywhere) or adds a new one.
+- **A migration applied but broke something.** Prefer a new migration that
+  undoes it, shipped through `staging` like any change.
+- **Data was lost or corrupted (production).** Point-in-time recovery covers
+  the last 7 days. Clone the instance as it was just before the migration ran
+  into a new instance, check it, and copy the affected data back from it.
+  Before restoring a backup over the live instance, take an on-demand backup
+  of it (`gcloud sql backups create --instance=onboardai-db`):
+
+  ```sh
+  gcloud sql instances clone onboardai-db onboardai-db-restore-1 \
+    --point-in-time='2026-10-16T09:00:00Z' --project=project-65a9b676-abdb-4393-bc1
+  gcloud sql backups list --instance=onboardai-db --project=project-65a9b676-abdb-4393-bc1
+  ```
+
+  Staging has daily backups only (`gcloud sql backups restore`). Firestore has
+  no point-in-time recovery enabled; a Firestore migration must be undone by a
+  new one.
+
+### Rotate the database password
+
+Terraform generates the password during apply (`ephemeral "random_password"`)
+and sends it only when `db_password_version` changes. To rotate, raise it by
+one in the stack's tfvars, plan, apply, then run that stack's deploy again
+(`gh workflow run deploy.yml --repo UniVRse-Team/univrse-onboardai --ref main`
+or `--ref staging`): running api instances keep the old value until they are
+replaced. The user, the password secret and `DATABASE_URL` change in the same
+apply. If an apply ever fails after creating the database user but before
+writing its secrets, raise `db_password_version` by one and apply again: the
+three get one consistent new password.
+
+### First HR account
+
+There is no public sign-up, so a stack's first HR account is created once, by
+hand, by a project owner, with `npm run hr:create` (#23) through the Cloud SQL
+Auth Proxy, after the stack's first deploy has run the migrations. The
+password is typed at a prompt that does not echo it; it never reaches a log,
+the repository or a workflow, and the database stores only its scrypt hash.
+You need the [Cloud SQL Auth Proxy v2](https://cloud.google.com/sql/docs/postgres/sql-proxy)
+(`brew install cloud-sql-proxy`), Application Default Credentials
+(`gcloud auth application-default login`) and a checkout of the deployed
+branch with `npm ci` done. For production use `onboardai-db` and
+`onboardai-db-password`; for staging the `-staging` names:
+
+```sh
+# Terminal 1: the proxy, on localhost only. Connector enforcement allows it;
+# no authorized network is needed.
+cloud-sql-proxy --address 127.0.0.1 --port 15432 \
+  project-65a9b676-abdb-4393-bc1:asia-southeast1:onboardai-db-staging
+
+# Terminal 2, at the repository root. A shell variable keeps the password out
+# of the command line and the shell history.
+DB_PASSWORD=$(gcloud secrets versions access latest \
+  --secret=onboardai-db-password-staging --project=project-65a9b676-abdb-4393-bc1)
+DATABASE_URL="postgresql://onboardai:${DB_PASSWORD}@127.0.0.1:15432/onboardai" npm run hr:create
+unset DB_PASSWORD
+# hr:create asks for the HR ID and the password twice, without echo.
+```
+
+Stop the proxy afterwards. `npm run hr:reset-password` works the same way.
+
+### Cost of the accounts database
+
+Per stack, the instance runs all month: about USD 13 a month in
+`asia-southeast1` (`db-f1-micro` USD 0.0147 an hour, USD 10.73 for 730 hours;
+10 GiB SSD at USD 0.238 per GiB-month, USD 2.38). Backups and point-in-time
+recovery logs are billed as backup storage at USD 0.112 per GiB-month of
+backup data: cents a month at this size (production keeps 7 daily backups and
+7 days of logs, staging 3 backups). The public IPv4 address is billed only
+while an instance is stopped. The migration job runs for well under a minute
+per deploy (Cloud Run jobs: CPU and memory seconds, within the free tier at
+this rate), and the log view and its grant cost nothing. Secret Manager: two
+active versions per stack (USD 0.06 each a month after six free).
+
+### Order of the #45 change
+
+1. Apply the `staging` workspace (plan reviewed by the user): the migration
+   job's new environment and the log view and its grant; nothing else changes.
+2. Merge the pull request into `staging`. Its deploy migrates and prints the
+   lines, then deploys the api with the Cloud SQL connection and
+   `DATABASE_URL`, without the intake agent while #27's deploy command is not
+   in the branch.
+3. Apply the `default` workspace (production; plan reviewed by the user): the
+   accounts database, its secrets, the migration job, the log view, the api's
+   Cloud SQL Client role and the Cloud SQL Admin API, plus #24's pending WIF
+   update (production deploys cannot authenticate without it).
+4. Then the `staging` to `main` pull request. Its deploy creates production's
+   schema, and the smoke test requires `accounts: true`. Create the first
+   production HR account by hand afterwards ([First HR account](#first-hr-account)).
+
 ## Roll back
 
 A failed deploy or smoke test prints the exact commands in the job log and the
@@ -222,6 +421,11 @@ change. A rollback lasts until the next deploy: each deploy sends traffic back
 to the newest revision. To keep the old behaviour, revert the commit on `main`,
 which deploys the reverted code. You can roll back only to revisions whose
 images are among the newest 5 per image (`images_to_keep`).
+
+A service rollback does not undo the migrations the failed run applied (see
+[Roll back a migration](#roll-back-a-migration)): the previous revisions run
+against the migrated databases, so migrations must keep the previous code
+working (add columns, tables and fields; remove them only in a later release).
 
 ## Cloud Run settings
 
@@ -277,18 +481,25 @@ show "Memory limit exceeded".
   `ref`, `workflow_ref` and `event_name`, and the deployer binding uses
   `attribute.repository_id`.
 - The production deployer holds no project-level role. It holds Cloud Run
-  Developer on the three OnboardAi services, Artifact Registry Writer on the
-  `onboardai` repository, Service Account User on the three runtime accounts,
-  and nothing else. It cannot create services, change IAM policies, or touch
-  any other Cloud Run service in the project. The staging deployer also holds
-  `roles/aiplatform.user` on the project to deploy the intake agent (see
-  [Employee accounts and the intake agent](#employee-accounts-and-the-intake-agent-staging)).
-- Production has no API key and no Secret Manager secret. `onboardai-api-run` holds
-  `roles/aiplatform.user`, `roles/discoveryengine.viewer` (includes
-  `discoveryengine.servingConfigs.search`) and `roles/datastore.user` on the
-  project. Those are the only project-level bindings in this module; the web
-  and tts accounts and the deployer hold none. The API has no access to the
-  documents bucket.
+  Developer on the three OnboardAi services and on the migration job
+  `onboardai-db-migrate`, Logs View Accessor on the log view
+  `onboardai-db-migrate` (that job's log entries only), Artifact Registry Writer on
+  the `onboardai` repository, Service Account User on the three runtime
+  accounts, and nothing else. It cannot create services, change IAM policies,
+  read any other log, or touch any other Cloud Run service in the project.
+  The staging deployer also holds `roles/aiplatform.user` on the project to
+  deploy the intake agent (see [The intake agent (staging)](#the-intake-agent-staging)).
+- Production has no API key. Its only Secret Manager secrets are the accounts
+  database's password and `DATABASE_URL` (#45), generated by Terraform and
+  written with write-only arguments, so neither is in state, the repository
+  or a log. `onboardai-api-run` holds `roles/aiplatform.user`,
+  `roles/discoveryengine.viewer` (includes
+  `discoveryengine.servingConfigs.search`), `roles/datastore.user` and
+  `roles/cloudsql.client` (IAM condition: `onboardai-db` only) on the project,
+  and Secret Accessor on `onboardai-database-url`. Those are the only
+  project-level bindings in this module besides staging's intake agent roles;
+  the web and tts accounts and the deployer hold none. The API has no access
+  to the documents bucket.
 - The repository is public, so its Actions logs are public too, and they show
   the project ID and the service URLs. Neither is a credential. To hide the
   project ID, make `GCP_PROJECT_ID` a repository secret instead and change
@@ -304,6 +515,9 @@ default):
   the data store deletes the imported documents.
 - Firestore has delete protection on and `deletion_policy = "ABANDON"`:
   `terraform destroy` only drops it from state, and the data stays.
+- The accounts Cloud SQL instance has deletion protection on in Terraform and
+  in Cloud SQL, and its `onboardai` database is only abandoned. The migration
+  job has `deletion_protection = true`.
 - The documents bucket is never force-destroyed: empty it first.
 
 To tear a stack down, apply once with `-var deletion_protection=false` (review
@@ -427,9 +641,11 @@ into, and pushes to, both branches.
   push or workflow_dispatch). `onboardai-deployer-staging` holds Cloud Run
   Developer on the three staging services, Artifact Registry Writer on
   `onboardai-staging` and Service Account User on the three staging runtime
-  accounts: nothing on production. For the intake agent (#30) it also holds
-  Cloud Run Developer on `onboardai-db-migrate-staging`, Service Account User
-  on `onboardai-intake-staging`, and its one project-level role,
+  accounts: nothing on production. For the migrations (#45) it holds Cloud
+  Run Developer on `onboardai-db-migrate-staging` and Logs View Accessor on the
+  log view `onboardai-db-migrate-staging`. For the intake agent (#30) it also
+  holds Service Account User on `onboardai-intake-staging`, and its one
+  project-level role,
   `roles/aiplatform.user`, because Agent Engine has no resource-level grant
   for creating a reasoning engine. That role also reaches any other Vertex AI
   resource in the project, production's included; the staging deployer is
@@ -475,102 +691,52 @@ its plan stays empty:
 - The GitHub environment `production` has no protection rules; consider
   limiting it to `main`.
 
-### Employee accounts and the intake agent (staging)
+### The intake agent (staging)
 
-Employee accounts (#23) and the employee form intake agent (#27) run on
-staging only for now (#30). Every resource below is gated on
-`local.employee_accounts` (`environment.tf`), so production's plan is
-unchanged until its own plan is approved.
+The employee form intake agent (#27) runs on staging only (#30). Its resources
+are gated on `local.intake_agent` (`environment.tf`): staging, never
+production. The accounts database it relies on runs in both stacks (see
+[Employee accounts and database migrations](#employee-accounts-and-database-migrations)).
 
-| Resource           | Staging name                                                                                            | Settings                                                                                                                                                                                                                                       |
-| ------------------ | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cloud SQL instance | `onboardai-db-staging`                                                                                  | PostgreSQL 17, Enterprise edition, `db-f1-micro`, zonal, 10 GiB SSD (grows to 20 GiB at most), daily backups (3 kept, no point-in-time recovery), public IP with no authorized network, connector enforcement, TLS required, delete protection |
-| Database and user  | `onboardai` and `onboardai`                                                                             | The password is generated during apply and never stored in state                                                                                                                                                                               |
-| Secrets            | `onboardai-db-password-staging`, `onboardai-database-url-staging`, `onboardai-intake-mcp-token-staging` | Replicated in `asia-southeast1` only. Values are written with write-only arguments: none is in state                                                                                                                                           |
-| Migration job      | `onboardai-db-migrate-staging`                                                                          | Cloud Run job: `npm run db:migrate` from the api image, as `onboardai-api-run-staging`, through the Cloud SQL connection                                                                                                                       |
-| Agent identity     | `onboardai-intake-staging`                                                                              | Runtime service account of the intake agent on Vertex AI Agent Engine                                                                                                                                                                          |
-| Firestore TTL      | `employeeImports.purgeAt` in `onboardai-staging`                                                        | Expired draft imports are deleted (Firestore usually does it within a day); the field's single-field indexes are off                                                                                                                           |
-| API                | `sqladmin.googleapis.com`                                                                               | The one API staging's state enables, with `disable_on_destroy = false` (`main.tf`)                                                                                                                                                             |
+| Resource       | Staging name                                     | Settings                                                                                                             |
+| -------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Secret         | `onboardai-intake-mcp-token-staging`             | Replicated in `asia-southeast1` only; written with a write-only argument, never in state                             |
+| Agent identity | `onboardai-intake-staging`                       | Runtime service account of the intake agent on Vertex AI Agent Engine                                                |
+| Firestore TTL  | `employeeImports.purgeAt` in `onboardai-staging` | Expired draft imports are deleted (Firestore usually does it within a day); the field's single-field indexes are off |
 
 | Account                      | Gets                                       | On                                                                     |
 | ---------------------------- | ------------------------------------------ | ---------------------------------------------------------------------- |
-| `onboardai-api-run-staging`  | `roles/cloudsql.client`                    | The project, with an IAM condition: `onboardai-db-staging` only        |
-|                              | Secret Manager Secret Accessor             | `onboardai-database-url-staging`, `onboardai-intake-mcp-token-staging` |
+| `onboardai-api-run-staging`  | Secret Manager Secret Accessor             | `onboardai-intake-mcp-token-staging`                                   |
 | `onboardai-intake-staging`   | `roles/aiplatform.user` (Gemini)           | The project                                                            |
 |                              | Secret Manager Secret Accessor             | `onboardai-intake-mcp-token-staging`                                   |
 | `onboardai-deployer-staging` | `roles/aiplatform.user` (deploy the agent) | The project: Agent Engine has no resource-level grant for creating one |
 |                              | Service Account User                       | `onboardai-intake-staging`                                             |
-|                              | Cloud Run Developer                        | `onboardai-db-migrate-staging`                                         |
 
 The api queries the agent and deletes its sessions with the
-`roles/aiplatform.user` it already holds. Nobody but project owners reads the
-bare password secret.
+`roles/aiplatform.user` it already holds.
 
-**Deploy.** A push to `staging` runs, after CI and the image builds:
+**Deploy.** Job `agent` runs after the image builds and decides first:
 
-1. job `agent`: `npm run intake-agent:deploy` (#27) creates or updates the
-   reasoning engine `OnboardAi employee form intake (staging)` (its display
-   name, the key the command creates or updates by) in `INTAKE_AGENT_LOCATION`
-   (`deploy.yml`, equal to `var.intake_agent_location`, default
-   `asia-southeast1`), running as `onboardai-intake-staging`, with the api's
-   `/mcp` URL and the token's secret ID. Its last output line is the engine's
-   resource name.
-2. job `deploy`: points `onboardai-db-migrate-staging` at this commit's api
-   image and executes it with `--wait`. If the migration fails, nothing is
-   deployed.
-3. Then tts, api and web as before. The api gets the Cloud SQL connection,
-   `DATABASE_URL` and `INTAKE_MCP_TOKEN` as Secret Manager references, and
-   `INTAKE_AGENT_ENGINE`. No secret value passes through the runner or its log.
-4. The smoke test also checks that `GET /api/config` reports `accounts` and
-   `employeeImport` as `true`, and that `POST /mcp` without the token gets 401.
+- on `main`, it skips with a notice;
+- on `staging`, it skips with a notice while `package.json` has no
+  `intake-agent:deploy` script (#27 not merged yet);
+- otherwise `npm run intake-agent:deploy` (#27) creates or updates the
+  reasoning engine `OnboardAi employee form intake (staging)` (its display
+  name, the key the command creates or updates by) in `INTAKE_AGENT_LOCATION`
+  (`deploy.yml`, equal to `var.intake_agent_location`, default
+  `asia-southeast1`), running as `onboardai-intake-staging`, with the api's
+  `/mcp` URL and the token's secret ID. Its last output line is the engine's
+  resource name.
 
-On `main` every one of these steps is skipped, and production deploys exactly
-as before.
+A skip never fails the deploy. When the agent was deployed, the api also gets
+`INTAKE_AGENT_ENGINE` and `INTAKE_MCP_TOKEN` (a Secret Manager reference), and
+the smoke test also checks that `GET /api/config` reports `employeeImport:
+true` and that `POST /mcp` without the token gets 401. Otherwise the api
+deploys without them and those two checks are skipped.
 
-**Order.** Apply this Terraform in the `staging` workspace first: nothing uses
-it until the workflow change merges. The pull request that changes
-`deploy.yml` must merge into `staging` after #18, #23 and #27, because its
-steps call `npm run db:migrate` (#23) and `npm run intake-agent:deploy` (#27),
-and the api image must contain them.
-
-**Rotate.** Terraform generates the database password and the MCP token during
-apply (`ephemeral "random_password"`) and sends them only when their version
-variable changes. To rotate, raise `db_password_version` or
-`intake_mcp_token_version` by one in `staging.tfvars`, plan, apply, then run
-the staging deploy again (`gh workflow run deploy.yml --repo UniVRse-Team/univrse-onboardai --ref staging`):
-running api instances keep the old value until they are replaced. A database
-password rotation updates the user, the password secret and `DATABASE_URL` in
-the same apply. If an apply ever fails after creating the database user but
-before writing its secrets, raise `db_password_version` by one and apply again:
-the three get one consistent new password.
-
-**First HR account.** There is no public sign-up, so the first HR account is
-created once, by hand, by a project owner, with `npm run hr:create` (#23)
-through the Cloud SQL Auth Proxy. The password is typed at a prompt that does
-not echo it; it never reaches a log, the repository or a workflow, and the
-database stores only its scrypt hash. You need the
-[Cloud SQL Auth Proxy v2](https://cloud.google.com/sql/docs/postgres/sql-proxy)
-(`brew install cloud-sql-proxy`), Application Default Credentials
-(`gcloud auth application-default login`) and a checkout of `staging` with #23
-merged and `npm ci` done.
-
-```sh
-# Terminal 1: the proxy, on localhost only. Connector enforcement allows it;
-# no authorized network is needed.
-cloud-sql-proxy --address 127.0.0.1 --port 15432 \
-  project-65a9b676-abdb-4393-bc1:asia-southeast1:onboardai-db-staging
-
-# Terminal 2, at the repository root. A shell variable keeps the password out
-# of the command line and the shell history.
-DB_PASSWORD=$(gcloud secrets versions access latest \
-  --secret=onboardai-db-password-staging --project=project-65a9b676-abdb-4393-bc1)
-DATABASE_URL="postgresql://onboardai:${DB_PASSWORD}@127.0.0.1:15432/onboardai" npm run hr:create
-unset DB_PASSWORD
-# hr:create asks for the HR ID and the password twice, without echo.
-```
-
-Stop the proxy afterwards. `npm run hr:reset-password` works the same way. The
-first staging deploy must have run the migration before this.
+**Rotate the token.** Raise `intake_mcp_token_version` by one in
+`staging.tfvars`, plan, apply, then run the staging deploy again: the api and
+the agent both read the latest version.
 
 ### Cost of staging
 

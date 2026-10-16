@@ -144,7 +144,7 @@ run "deployer_holds_only_resource_level_roles" {
 
   assert {
     condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("resource\\s+\"google_(folder|organization)_iam_", file("${path.module}/${f}")))])
-    error_message = "No folder- or organization-level IAM. The project-level roles are pinned in api_runtime_holds_exactly_three_project_roles; every other grant must be on a single resource."
+    error_message = "No folder- or organization-level IAM. The project-level roles are pinned in api_runtime_holds_exactly_four_project_roles; every other grant must be on a single resource."
   }
 
   assert {
@@ -191,12 +191,15 @@ run "deployer_holds_only_resource_level_roles" {
   }
 }
 
-run "api_runtime_holds_exactly_three_project_roles" {
+run "api_runtime_holds_exactly_four_project_roles" {
   command = apply
 
+  # The three it was applied with, and Cloud SQL Client on its own accounts
+  # instance since #45 (tests/accounts_production.tftest.hcl checks the
+  # condition).
   assert {
-    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/discoveryengine.viewer", "roles/datastore.user"]) && length(google_project_iam_member.api_runtime) == 3
-    error_message = "onboardai-api-run holds exactly roles/aiplatform.user, roles/discoveryengine.viewer and roles/datastore.user on the project."
+    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/discoveryengine.viewer", "roles/datastore.user", "roles/cloudsql.client"]) && length(google_project_iam_member.api_runtime) == 4
+    error_message = "onboardai-api-run holds exactly roles/aiplatform.user, roles/discoveryengine.viewer, roles/datastore.user and roles/cloudsql.client on the project."
   }
 
   assert {
@@ -235,20 +238,20 @@ run "api_runtime_holds_exactly_three_project_roles" {
     error_message = "The deployer, web-run and tts-run hold no project-level role."
   }
 
-  # The Gemini key is gone: production manages no secret, secret IAM or secret
-  # version. Staging's #30 secrets (accounts.tf, intake_agent.tf) have no
-  # instance here; tests/accounts.tftest.hcl checks them.
+  # The Gemini key is gone: production's only secrets are the accounts
+  # database's two (#45, accounts.tf), whose values Terraform generates. The
+  # intake agent's token (staging only) has no instance here.
   assert {
     condition = (
-      length(google_secret_manager_secret.accounts) == 0 &&
+      toset(keys(google_secret_manager_secret.accounts)) == toset(["db_password", "database_url"]) &&
+      length(google_secret_manager_secret_version.db_password) == 1 &&
+      length(google_secret_manager_secret_version.database_url) == 1 &&
+      length(google_secret_manager_secret_iam_member.api_reads_database_url) == 1 &&
       length(google_secret_manager_secret.intake_mcp_token) == 0 &&
-      length(google_secret_manager_secret_version.db_password) == 0 &&
-      length(google_secret_manager_secret_version.database_url) == 0 &&
       length(google_secret_manager_secret_version.intake_mcp_token) == 0 &&
-      length(google_secret_manager_secret_iam_member.api_reads_database_url) == 0 &&
       length(google_secret_manager_secret_iam_member.intake_mcp_token) == 0
     )
-    error_message = "Production manages no Secret Manager resource; its API authenticates to Google APIs with its service account."
+    error_message = "Production manages the accounts database's password and DATABASE_URL secrets only; its API authenticates to Google APIs with its service account."
   }
 
   # Wherever a secret is managed, its value never reaches state: every secret
@@ -347,8 +350,8 @@ run "cloud_run_matches_service_contract" {
   }
 
   assert {
-    condition     = toset(keys(google_project_service.required)) == toset(["run.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "secretmanager.googleapis.com", "aiplatform.googleapis.com", "discoveryengine.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "monitoring.googleapis.com"]) && alltrue([for s in google_project_service.required : s.disable_on_destroy == false])
-    error_message = "Exactly the required APIs are managed (no Drive API), and none is disabled on destroy."
+    condition     = toset(keys(google_project_service.required)) == toset(["run.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "secretmanager.googleapis.com", "aiplatform.googleapis.com", "discoveryengine.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "monitoring.googleapis.com", "sqladmin.googleapis.com"]) && alltrue([for s in google_project_service.required : s.disable_on_destroy == false])
+    error_message = "Exactly the required APIs are managed (no Drive API; sqladmin since #45), and none is disabled on destroy."
   }
 
   assert {
@@ -681,8 +684,8 @@ run "production_keeps_its_names_labels_and_grants" {
   }
 
   assert {
-    condition     = alltrue([for m in google_project_iam_member.api_runtime : length(m.condition) == 0])
-    error_message = "Production's api roles carry no IAM condition (adding one would replace the binding)."
+    condition     = alltrue([for role, m in google_project_iam_member.api_runtime : length(m.condition) == 0 if role != "roles/cloudsql.client"])
+    error_message = "The api roles production was applied with carry no IAM condition (adding one would replace the binding); only the new roles/cloudsql.client (#45) has one."
   }
 
   assert {
@@ -695,33 +698,33 @@ run "production_keeps_its_names_labels_and_grants" {
     error_message = "Production keeps its repository variables; the GitHub environment setup output is staging's only (null keeps production's outputs unchanged)."
   }
 
-  # Employee accounts and the intake agent (#30) are staging's until
-  # production's own plan is approved: production's plan must not change.
+  # Employee accounts run in production since #45 (only new resources; tests/
+  # accounts_production.tftest.hcl checks them). The intake agent (#30) stays
+  # staging's.
   assert {
     condition = (
-      length(google_project_service.accounts) == 0 &&
-      length(google_sql_database_instance.accounts) == 0 &&
-      length(google_sql_database.accounts) == 0 &&
-      length(google_sql_user.accounts) == 0 &&
-      length(google_cloud_run_v2_job.db_migrate) == 0 &&
-      length(google_cloud_run_v2_job_iam_member.deployer_runs_migrations) == 0 &&
+      length(google_sql_database_instance.accounts) == 1 &&
+      length(google_sql_database.accounts) == 1 &&
+      length(google_sql_user.accounts) == 1 &&
+      length(google_cloud_run_v2_job.db_migrate) == 1 &&
+      length(google_cloud_run_v2_job_iam_member.deployer_runs_migrations) == 1 &&
+      length(google_logging_log_view.db_migrate) == 1 &&
+      length(google_logging_log_view_iam_member.deployer_reads_migration_log) == 1 &&
       length(google_service_account.intake_agent) == 0 &&
       length(google_service_account_iam_member.deployer_acts_as_intake_agent) == 0 &&
-      length(google_firestore_field.employee_imports_ttl) == 0 &&
-      !contains(keys(google_project_iam_member.api_runtime), "roles/cloudsql.client")
+      length(google_firestore_field.employee_imports_ttl) == 0
     )
-    error_message = "Production gets none of the #30 resources (Cloud SQL, migration job, intake agent, Firestore TTL, sqladmin API, Cloud SQL Client)."
+    error_message = "Production gets the accounts database, its migration job and log view (#45), and none of the intake agent's resources (#30)."
   }
 
   assert {
     condition = (
-      output.cloud_sql_instance_connection_name == null &&
-      output.accounts_secret_ids == null &&
-      output.db_migrate_job_name == null &&
+      output.cloud_sql_instance_connection_name != null &&
+      output.db_migrate_job_name == "onboardai-db-migrate" &&
       output.intake_agent_service_account_email == null &&
       output.intake_agent_deploy_settings == null
     )
-    error_message = "The #30 outputs are null in production, which keeps its outputs unchanged."
+    error_message = "The accounts outputs name production's resources; the intake agent outputs are null in production."
   }
 
   assert {

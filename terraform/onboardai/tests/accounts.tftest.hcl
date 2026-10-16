@@ -1,8 +1,8 @@
 # Offline checks of employee accounts and the form intake agent on staging
-# (issue #30): `terraform test` in terraform/onboardai. Providers are mocked as
-# in tests/staging.tftest.hcl; the random provider is real (it only generates
-# values locally). tests/onboardai.tftest.hcl checks that production gets none
-# of this.
+# (issues #30, #45): `terraform test` in terraform/onboardai. Providers are
+# mocked as in tests/staging.tftest.hcl; the random provider is real (it only
+# generates values locally). tests/accounts_production.tftest.hcl checks
+# production's accounts database, which has no intake agent.
 
 mock_provider "google" {}
 mock_provider "google-beta" {}
@@ -143,12 +143,15 @@ run "accounts_instance_is_small_private_and_protected" {
     error_message = "Deletion protection is on in Terraform and in Cloud SQL, and the onboardai database is only abandoned, never dropped, while protected."
   }
 
+  # The Cloud SQL Admin API is production's (local.apis) since #45; staging's
+  # state forgets it without disabling it (removed block in main.tf).
   assert {
     condition = (
       google_sql_database_instance.accounts[0].settings[0].user_labels == tomap({ app = "onboardai", managed-by = "terraform", environment = "staging", component = "accounts" }) &&
-      toset(keys(google_project_service.accounts)) == toset(["sqladmin.googleapis.com"])
+      length(google_project_service.required) == 0 &&
+      can(regex("(?m)^removed \\{\\n  from = google_project_service\\.accounts\\n\\n  lifecycle \\{\\n    destroy = false\\n  \\}\\n\\}", file("${path.module}/main.tf")))
     )
-    error_message = "The instance carries the staging labels, and staging enables the Cloud SQL Admin API."
+    error_message = "The instance carries the staging labels; staging manages no API and forgets google_project_service.accounts with destroy = false (the API stays on)."
   }
 
   # The password is write-only: sent, never stored.
@@ -253,21 +256,40 @@ run "migration_job_runs_as_the_api_with_its_database" {
       google_cloud_run_v2_job.db_migrate[0].deletion_protection == true &&
       google_cloud_run_v2_job.db_migrate[0].template[0].template[0].service_account == "onboardai-api-run-staging@onboardai-test-123.iam.gserviceaccount.com" &&
       google_cloud_run_v2_job.db_migrate[0].template[0].template[0].max_retries == 1 &&
+      google_cloud_run_v2_job.db_migrate[0].template[0].template[0].timeout == "600s" &&
       output.db_migrate_job_name == "onboardai-db-migrate-staging"
     )
-    error_message = "onboardai-db-migrate-staging runs as onboardai-api-run-staging in asia-southeast1, retries once, and is delete-protected."
+    error_message = "onboardai-db-migrate-staging runs as onboardai-api-run-staging in asia-southeast1, gets 600 s per attempt, retries once, and is delete-protected."
   }
 
+  # DATABASE_URL first (the order it was applied with), as a secret
+  # reference; then the Firestore target and the target list (#45).
   assert {
     condition = (
       google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].command == tolist(["npm"]) &&
       google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].args == tolist(["run", "db:migrate"]) &&
-      length(google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env) == 1 &&
-      one([for e in google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env : e.name]) == "DATABASE_URL" &&
-      one([for e in google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env : e.value]) == null &&
-      one(flatten([for e in google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env : [for v in e.value_source : [for r in v.secret_key_ref : "${r.secret}@${r.version}"]]])) == "onboardai-database-url-staging@latest"
+      [for e in google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env : e.name] == ["DATABASE_URL", "FIRESTORE_DATABASE_ID", "GOOGLE_CLOUD_PROJECT", "MIGRATION_TARGETS"] &&
+      { for e in google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env : e.name => e.value == null ? "(no value)" : e.value } == {
+        DATABASE_URL          = "(no value)"
+        FIRESTORE_DATABASE_ID = "onboardai-staging"
+        GOOGLE_CLOUD_PROJECT  = "onboardai-test-123"
+        MIGRATION_TARGETS     = "sql,firestore"
+      } &&
+      one(flatten([for e in google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env : [for v in e.value_source : [for r in v.secret_key_ref : "${e.name}=${r.secret}@${r.version}"]]])) == "DATABASE_URL=onboardai-database-url-staging@latest"
     )
-    error_message = "The job runs npm run db:migrate with DATABASE_URL as a reference to the latest onboardai-database-url-staging version, and nothing else in its environment."
+    error_message = "The job runs npm run db:migrate with DATABASE_URL (a reference to the latest onboardai-database-url-staging version, the only secret), FIRESTORE_DATABASE_ID=onboardai-staging, GOOGLE_CLOUD_PROJECT and MIGRATION_TARGETS=sql,firestore."
+  }
+
+  # The job's Firestore database is the stack's, and the job's account may
+  # write it: staging's roles/datastore.user is conditioned on that database.
+  assert {
+    condition = (
+      one([for e in google_cloud_run_v2_job.db_migrate[0].template[0].template[0].containers[0].env : e.value if e.name == "FIRESTORE_DATABASE_ID"]) == google_firestore_database.default.name &&
+      google_project_iam_member.api_runtime["roles/datastore.user"].member == "serviceAccount:${google_cloud_run_v2_job.db_migrate[0].template[0].template[0].service_account}" &&
+      strcontains(google_project_iam_member.api_runtime["roles/datastore.user"].condition[0].expression, "/databases/onboardai-staging\"") &&
+      google_project_iam_member.api_runtime["roles/cloudsql.client"].member == "serviceAccount:${google_cloud_run_v2_job.db_migrate[0].template[0].template[0].service_account}"
+    )
+    error_message = "The staging job migrates onboardai-staging, and its account holds Firestore (on that database) and Cloud SQL Client."
   }
 
   assert {
@@ -286,6 +308,37 @@ run "migration_job_runs_as_the_api_with_its_database" {
       google_cloud_run_v2_job_iam_member.deployer_runs_migrations[0].member == "serviceAccount:onboardai-deployer-staging@onboardai-test-123.iam.gserviceaccount.com"
     )
     error_message = "The staging deployer may update and execute the migration job, on that job only."
+  }
+
+  # The deployer reads the job's output through a log view of that job's
+  # entries only, with Logs View Accessor on the view (no project logging
+  # role). The filter is a plain conjunction: the API rejects nesting (an OR
+  # group), so no parentheses and no OR.
+  assert {
+    condition = (
+      google_logging_log_view.db_migrate[0].name == "onboardai-db-migrate-staging" &&
+      google_logging_log_view.db_migrate[0].parent == "projects/onboardai-test-123" &&
+      google_logging_log_view.db_migrate[0].location == "global" &&
+      google_logging_log_view.db_migrate[0].bucket == "_Default" &&
+      google_logging_log_view.db_migrate[0].filter == "SOURCE(\"projects/onboardai-test-123\") AND resource.type = \"cloud_run_job\" AND resource.labels.job_name = \"onboardai-db-migrate-staging\"" &&
+      length(regexall("\\(", google_logging_log_view.db_migrate[0].filter)) == length(regexall("(SOURCE|LOG_ID)\\(", google_logging_log_view.db_migrate[0].filter)) &&
+      !can(regex("(?i)\\sOR\\s", google_logging_log_view.db_migrate[0].filter)) &&
+      output.db_migrate_log_view == "onboardai-db-migrate-staging"
+    )
+    error_message = "The log view onboardai-db-migrate-staging (bucket _Default, global, short IDs) shows the staging migration job's entries only, as a plain AND of SOURCE, resource.type and resource.labels.job_name (no OR, no nesting)."
+  }
+
+  assert {
+    condition = (
+      google_logging_log_view_iam_member.deployer_reads_migration_log[0].name == "onboardai-db-migrate-staging" &&
+      google_logging_log_view_iam_member.deployer_reads_migration_log[0].parent == "projects/onboardai-test-123" &&
+      google_logging_log_view_iam_member.deployer_reads_migration_log[0].location == "global" &&
+      google_logging_log_view_iam_member.deployer_reads_migration_log[0].bucket == "_Default" &&
+      google_logging_log_view_iam_member.deployer_reads_migration_log[0].role == "roles/logging.viewAccessor" &&
+      google_logging_log_view_iam_member.deployer_reads_migration_log[0].member == "serviceAccount:onboardai-deployer-staging@onboardai-test-123.iam.gserviceaccount.com" &&
+      alltrue([for f in fileset(path.module, "*.tf") : !can(regex("roles/logging\\.(viewer|privateLogViewer|admin)", file("${path.module}/${f}")))])
+    )
+    error_message = "The staging deployer holds Logs View Accessor on its migration log view only, and no broader logging role exists in the module."
   }
 
   # The job's command needs scripts/ in the api image.
@@ -411,13 +464,16 @@ run "deploy_workflow_uses_terraforms_names" {
     condition = (
       replace("onboardai-db-migrate$NAME_SUFFIX", "$NAME_SUFFIX", "-staging") == google_cloud_run_v2_job.db_migrate[0].name &&
       strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "job=\"onboardai-db-migrate$NAME_SUFFIX\"\n") &&
+      replace("onboardai-db-migrate$NAME_SUFFIX", "$NAME_SUFFIX", "-staging") == google_logging_log_view.db_migrate[0].name &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "view=\"onboardai-db-migrate$NAME_SUFFIX\"\n") &&
       strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--set-cloudsql-instances=\"$GCP_PROJECT_ID:$GCP_REGION:onboardai-db$NAME_SUFFIX\"") &&
       google_sql_database_instance.accounts[0].connection_name == "${var.project_id}:${var.region}:${replace("onboardai-db$NAME_SUFFIX", "$NAME_SUFFIX", "-staging")}" &&
-      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "--set-secrets=\"DATABASE_URL=onboardai-database-url$NAME_SUFFIX:latest,INTAKE_MCP_TOKEN=onboardai-intake-mcp-token$NAME_SUFFIX:latest\"") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "api_secrets=\"DATABASE_URL=onboardai-database-url$NAME_SUFFIX:latest\"\n") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "api_secrets+=\",INTAKE_MCP_TOKEN=onboardai-intake-mcp-token$NAME_SUFFIX:latest\"\n") &&
       google_secret_manager_secret.accounts["database_url"].secret_id == replace("onboardai-database-url$NAME_SUFFIX", "$NAME_SUFFIX", "-staging") &&
       google_secret_manager_secret.intake_mcp_token[0].secret_id == replace("onboardai-intake-mcp-token$NAME_SUFFIX", "$NAME_SUFFIX", "-staging")
     )
-    error_message = "The migration job, Cloud SQL connection and secret references deploy.yml computes with NAME_SUFFIX must be the ones Terraform creates for staging."
+    error_message = "The migration job, its log view, the Cloud SQL connection and the secret references deploy.yml computes with NAME_SUFFIX must be the ones Terraform creates for staging."
   }
 
   assert {

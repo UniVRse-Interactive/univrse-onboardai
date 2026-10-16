@@ -24,6 +24,9 @@ locals {
     "firestore.googleapis.com",
     "storage.googleapis.com",    # documents bucket
     "monitoring.googleapis.com", # alert policies and email channels
+    # Cloud SQL, the Cloud Run Cloud SQL connection and the Cloud SQL Auth
+    # Proxy (accounts.tf, #45). Enabled by staging's state until #45 (main.tf).
+    "sqladmin.googleapis.com",
   ]
 
   # Project-level roles of the api runtime account, the only project-level
@@ -32,6 +35,8 @@ locals {
   # production: the three roles it was applied with, none conditioned. They
   # reach every Firestore database and every Vertex AI Search engine in the
   # project, staging's included (README, Staging: production follow-ups).
+  # Since #45 also Cloud SQL Client, only on its own accounts instance (IAM
+  # condition below; a new binding, so it starts with its condition).
   #
   # staging: Gemini on the project (Vertex AI has no narrower grant; the same
   # role lets it query the intake agent on Agent Engine and delete the agent's
@@ -55,8 +60,9 @@ locals {
     local.employee_accounts ? [] : ["roles/cloudsql.client"],
   )
 
-  # IAM conditions on api_project_roles, by role (never production's: adding a
-  # condition replaces a binding).
+  # IAM conditions on api_project_roles, by role. Never on a binding production
+  # already holds: adding a condition replaces a binding. Production's
+  # roles/cloudsql.client is new (#45), so it is created with its condition.
   # - roles/datastore.user (staging): Firestore evaluates resource.name for
   #   database-level IAM conditions, so it reaches the staging database and not
   #   (default). Both spellings of the project are accepted; each one names the
@@ -90,16 +96,37 @@ locals {
   firestore_database_name = local.is_production ? "(default)" : "onboardai${local.name_suffix}"
 
   # ---------------------------------------------------------------------------
-  # Employee accounts and the form intake agent (#30), where
-  # local.employee_accounts is true. deploy.yml computes the same names from
-  # NAME_SUFFIX; tests/accounts.tftest.hcl checks that they match.
+  # Employee accounts (every environment, #45) and the form intake agent
+  # (staging only, #30). deploy.yml computes the same names from NAME_SUFFIX;
+  # tests/accounts.tftest.hcl checks that they match.
   # ---------------------------------------------------------------------------
   sql_instance_name = "onboardai-db${local.name_suffix}"
   # The database and its user (the app's DATABASE_URL user) inside it.
   sql_database_name = "onboardai"
   sql_user_name     = "onboardai"
-  # Cloud Run job that runs `npm run db:migrate` from the api image.
-  db_migrate_job_name = "onboardai-db-migrate${local.name_suffix}"
+  # Cloud Run job that runs `npm run db:migrate` from the api image, and the
+  # Cloud Logging view of its output that the deploy workflow reads.
+  db_migrate_job_name      = "onboardai-db-migrate${local.name_suffix}"
+  db_migrate_log_view_name = "onboardai-db-migrate${local.name_suffix}"
+  # What the migration job migrates (the runner's MIGRATION_TARGETS): Cloud SQL,
+  # then the environment's Firestore database. Listing both makes the runner
+  # fail before touching either database if one is not configured.
+  db_migrate_targets = "sql,firestore"
+
+  # Automated backups of the accounts instance. Staging keeps what it was
+  # applied with (#30). Production keeps a week of daily backups and point-in-
+  # time recovery over that week, so a bad migration or deletion can be undone
+  # by cloning the instance to the moment before it (README, Roll back a
+  # migration).
+  sql_backups = local.is_production ? {
+    retained_backups               = 7
+    point_in_time_recovery_enabled = true
+    transaction_log_retention_days = 7
+    } : {
+    retained_backups               = 3
+    point_in_time_recovery_enabled = false
+    transaction_log_retention_days = null # the API's default; staging has no PITR
+  }
 
   # Secret Manager secret IDs. Values are generated during apply and written
   # with write-only arguments, so none of them is in state.

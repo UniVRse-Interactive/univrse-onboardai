@@ -3,7 +3,9 @@
 # workflow creates or updates the reasoning engine itself with the backend's
 # `npm run intake-agent:deploy` (idempotent by display name) and hands its
 # resource name to the api as INTAKE_AGENT_ENGINE. Only where
-# local.employee_accounts is true (staging today).
+# local.intake_agent is true (staging only, environment.tf). The deploy job
+# skips the agent while the repository has no intake-agent:deploy script, and
+# the api then deploys without INTAKE_AGENT_ENGINE and INTAKE_MCP_TOKEN.
 #
 #   api --query (its own roles/aiplatform.user)--> agent on Agent Engine
 #   agent --Gemini (roles/aiplatform.user)--> Vertex AI, global endpoint
@@ -17,7 +19,7 @@
 # --- Agent runtime identity --------------------------------------------------
 
 resource "google_service_account" "intake_agent" {
-  count = local.employee_accounts ? 1 : 0
+  count = local.intake_agent ? 1 : 0
 
   account_id   = local.intake_agent_account_id
   display_name = "${local.display_name} intake agent: Agent Engine runtime"
@@ -28,7 +30,7 @@ resource "google_service_account" "intake_agent" {
 # account; no narrower GA role includes endpoints.predict. Logs written to
 # stdout and stderr reach Cloud Logging without a logging role.
 resource "google_project_iam_member" "intake_agent_runtime" {
-  count = local.employee_accounts ? 1 : 0
+  count = local.intake_agent ? 1 : 0
 
   project = var.project_id
   role    = "roles/aiplatform.user"
@@ -41,14 +43,14 @@ resource "google_project_iam_member" "intake_agent_runtime" {
 # in Secret Manager only, never in state, the repository or a log. 48 letters
 # and digits (about 285 bits); the API requires at least 32 characters.
 ephemeral "random_password" "intake_mcp_token" {
-  count = local.employee_accounts ? 1 : 0
+  count = local.intake_agent ? 1 : 0
 
   length  = 48
   special = false
 }
 
 resource "google_secret_manager_secret" "intake_mcp_token" {
-  count = local.employee_accounts ? 1 : 0
+  count = local.intake_agent ? 1 : 0
 
   secret_id = local.secret_ids.intake_mcp_token
   labels    = merge(local.labels, { component = "intake-agent" })
@@ -69,7 +71,7 @@ resource "google_secret_manager_secret" "intake_mcp_token" {
 }
 
 resource "google_secret_manager_secret_version" "intake_mcp_token" {
-  count = local.employee_accounts ? 1 : 0
+  count = local.intake_agent ? 1 : 0
 
   secret                 = google_secret_manager_secret.intake_mcp_token[0].id
   secret_data_wo         = ephemeral.random_password.intake_mcp_token[0].result
@@ -85,7 +87,7 @@ resource "google_secret_manager_secret_version" "intake_mcp_token" {
 # service agent needs access only for agents that use agent identity, which
 # this one does not.
 resource "google_secret_manager_secret_iam_member" "intake_mcp_token" {
-  for_each = local.employee_accounts ? {
+  for_each = local.intake_agent ? {
     api   = google_service_account.runtime["api"].email
     agent = google_service_account.intake_agent[0].email
   } : {}
@@ -104,7 +106,7 @@ resource "google_secret_manager_secret_iam_member" "intake_mcp_token" {
 # project-level role any deployer holds, staging's only. It is reachable only
 # from the deploy workflow on the staging branch (identity.tf).
 resource "google_project_iam_member" "deployer_deploys_agents" {
-  count = local.employee_accounts ? 1 : 0
+  count = local.intake_agent ? 1 : 0
 
   project = var.project_id
   role    = "roles/aiplatform.user"
@@ -113,7 +115,7 @@ resource "google_project_iam_member" "deployer_deploys_agents" {
 
 # Deploy the agent to run as its own service account, and no other new one.
 resource "google_service_account_iam_member" "deployer_acts_as_intake_agent" {
-  count = local.employee_accounts ? 1 : 0
+  count = local.intake_agent ? 1 : 0
 
   service_account_id = google_service_account.intake_agent[0].name
   role               = "roles/iam.serviceAccountUser"
