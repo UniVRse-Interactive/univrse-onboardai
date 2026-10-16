@@ -59,7 +59,7 @@ export function renderSummary(
   login,
   { webPort = process.env.LOCAL_WEB_PORT || '3100', adc = true } = {},
 ) {
-  const rows = [['App', login?.appUrl || `http://localhost:${webPort}`]];
+  const rows = [['App', `http://localhost:${webPort}`]];
   if (login) rows.push(['HR ID', login.hrId], ['HR password', login.password]);
   rows.push(
     ['Emulator UI', login?.emulatorUiUrl || 'http://localhost:4000'],

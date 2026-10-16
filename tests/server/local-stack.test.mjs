@@ -316,3 +316,10 @@ test('the emulator image is built once, before up, only when it is missing', asy
   assert.equal(result.exitCode, 1);
   assert.ok(!broken.calls.includes('docker compose build'));
 });
+
+test('the summary App line uses the current web port, not the stored URL', () => {
+  const text = renderSummary(login, { webPort: '3150' });
+  assert.match(text, /App\s+http:\/\/localhost:3150/);
+  assert.ok(!text.includes('http://localhost:3100'));
+  assert.match(renderSummary(null, { webPort: '3150' }), /App\s+http:\/\/localhost:3150/);
+});

@@ -156,6 +156,9 @@ export async function runLocalSetup({
       const stored = await readLogin(fs, loginPath);
       if (stored && (await verify(stored.password, account.password_hash))) {
         out(`${hrId} already exists; using the stored login.`);
+        // Only the URLs follow the current settings (for example another web port).
+        if (stored.appUrl !== appUrl || stored.emulatorUiUrl !== emulatorUiUrl)
+          await writeLogin(fs, directory, { ...stored, appUrl, emulatorUiUrl });
         banner(stored.password);
         return 0;
       }

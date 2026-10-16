@@ -318,3 +318,29 @@ test('generated passwords are readable and strong enough, and the banner marks a
   });
   assert.match(banner, /\(not stored here\)/);
 });
+
+test('a reused login follows a changed web port: only the URL fields are rewritten, still 0600', async () => {
+  const h = await harness();
+  try {
+    await h.run();
+    const before = await h.file();
+    const accounts = await h.database.rows('SELECT * FROM accounts');
+    assert.equal(
+      await h.run({
+        LOCAL_APP_URL: 'http://localhost:3150',
+        LOCAL_EMULATOR_UI_URL: 'http://localhost:4010',
+      }),
+      0,
+    );
+    assert.deepEqual(await h.file(), {
+      ...before,
+      appUrl: 'http://localhost:3150',
+      emulatorUiUrl: 'http://localhost:4010',
+    });
+    assert.equal((await stat(join(h.directory, loginFileName))).mode & 0o777, 0o600);
+    assert.deepEqual(await h.database.rows('SELECT * FROM accounts'), accounts);
+    assert.ok(h.text().includes('http://localhost:3150'));
+  } finally {
+    await h.cleanup();
+  }
+});
