@@ -1,43 +1,20 @@
-// The HR company Google Docs library, /api/hr/company-knowledge (issue #32), and
-// the restored read-only Drive reader. Google Drive is always an injected fake;
-// documents and people are synthetic.
+// The HR company knowledge library, /api/hr/company-knowledge: file uploads
+// (issue #35). Files and people are synthetic; nothing reaches Google.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { startAccountsApp, driveDenied } from './account-harness.mjs';
-import {
-  DriveKnowledgeError,
-  driveFailure,
-  parseGoogleDocLink,
-  readDriveKnowledge,
-  readGoogleDocument,
-} from '../../server/google-drive-documents.mjs';
-import { planConnection } from '../../server/company-documents.mjs';
+import { createHash, randomUUID } from 'node:crypto';
+import express from 'express';
+import { startAccountsApp } from './account-harness.mjs';
+import { docx, pdf } from './document-fixtures.mjs';
+import { planUpload } from '../../server/company-documents.mjs';
+import { createApiProxy } from '../../server/api-proxy.mjs';
 import { onboardingDocumentTopics } from '../../server/onboarding-document-topics.mjs';
 import { workspaceLimits } from '../../server/workspace-limits.mjs';
 
-const link = (id) => `https://docs.google.com/document/d/${id}/edit?usp=sharing`;
-// A fake Drive: Doc ID -> text, or an Error to throw. Records each read.
-function fakeDrive(docs) {
-  const reads = [];
-  return {
-    reads,
-    load: async (id) => {
-      reads.push(id);
-      const found = docs[id];
-      if (found instanceof Error) throw found;
-      if (found === undefined)
-        throw Object.assign(new Error('Synthetic not found'), { response: { status: 404 } });
-      return { text: found };
-    },
-  };
-}
-const guides = {
-  'handbook-doc-0001': 'Dress Code\nStaff wear smart casual clothing from Monday to Thursday.',
-  'handbook-doc-0002': 'Dress Code\nTeam shirts are worn every Friday in the synthetic office.',
-  'safety-doc-00001': 'Fire Safety\nThe synthetic assembly point is the north car park.',
-  'welcome-doc-0001': 'Welcome\nThe synthetic company builds onboarding tools.',
-};
+const path = '/api/hr/company-knowledge/documents';
+const handbook = 'Dress Code Staff wear smart casual clothing from Monday to Thursday.';
+const handbook2 = 'Dress Code Team shirts are worn every Friday in the synthetic office.';
+const safety = 'Fire Safety The synthetic assembly point is the north car park.';
 
 async function withApp(options, check) {
   const app = await startAccountsApp(options);
@@ -47,446 +24,408 @@ async function withApp(options, check) {
     await app.close();
   }
 }
+const sha = (text) => createHash('sha256').update(text).digest('hex');
 
-test('only native Google Docs links are accepted, and the reader checks the real file type', async () => {
-  assert.deepEqual(
-    parseGoogleDocLink(
-      'https://docs.google.com/document/u/0/d/handbook-12345/edit?usp=sharing#heading=test',
-    ),
-    { id: 'handbook-12345', url: 'https://docs.google.com/document/d/handbook-12345/edit' },
-  );
-  for (const value of [
-    null,
-    'not a link',
-    'https://docs.google.com.evil.example/document/d/handbook-12345/edit',
-    'https://drive.google.com/file/d/handbook-12345/view',
-    'https://docs.google.com/spreadsheets/d/handbook-12345/edit',
-    'http://docs.google.com/document/d/handbook-12345/edit',
-    'https://user:password@docs.google.com/document/d/handbook-12345/edit',
-    'https://docs.google.com/document/d/e/published-id/pub',
-  ])
-    assert.throws(() => parseGoogleDocLink(value), { code: 'GOOGLE_DOC_LINK_INVALID' });
-
-  const calls = [];
-  const client = {
-    request: async (request) => {
-      calls.push(request);
-      return request.url.endsWith('/export')
-        ? { data: ' Current company policy. ' }
-        : {
-            data: {
-              mimeType: 'application/vnd.google-apps.document',
-              capabilities: { canDownload: true },
-            },
-          };
-    },
-  };
-  assert.deepEqual(await readGoogleDocument('handbook-12345', { client }), {
-    text: 'Current company policy.',
-  });
-  assert.equal(calls[0].url, 'https://www.googleapis.com/drive/v3/files/handbook-12345');
-  assert.equal(calls[1].params.mimeType, 'text/plain');
-  assert.ok(calls.every((request) => !request.method)); // reads only
-  const typed = (mimeType, text = 'x', extra = {}) => ({
-    request: async (request) =>
-      request.url.endsWith('/export')
-        ? { data: text }
-        : { data: { mimeType, capabilities: { canDownload: true }, ...extra } },
-  });
-  for (const [client, code] of [
-    [typed('application/pdf'), 'GOOGLE_DOC_TYPE_REQUIRED'],
-    [typed('application/vnd.google-apps.spreadsheet'), 'GOOGLE_DOC_TYPE_REQUIRED'],
-    [
-      typed('application/vnd.google-apps.document', 'x', { trashed: true }),
-      'GOOGLE_DOC_TYPE_REQUIRED',
-    ],
-    [
-      typed('application/vnd.google-apps.document', 'x', { capabilities: { canDownload: false } }),
-      'DRIVE_DOCUMENT_RESTRICTED',
-    ],
-    [typed('application/vnd.google-apps.document', '   '), 'DRIVE_EMPTY_DOCUMENTS'],
-    [typed('application/vnd.google-apps.document', 'x'.repeat(250001)), 'GOOGLE_DOC_TOO_LARGE'],
-  ])
-    await assert.rejects(readGoogleDocument('handbook-12345', { client }), { code });
-  await assert.rejects(readGoogleDocument('../x', { client }), { code: 'GOOGLE_DOC_LINK_INVALID' });
-});
-
-test('the folder reader lists Google Docs and reports specific errors; Drive errors never leak', async () => {
-  const folderClient = (text, listing) => ({
-    request: async (request) =>
-      request.url.endsWith('/export') ? { data: text } : { data: listing },
-  });
-  const files = [
-    { id: 'core-doc-1', name: 'Overview', appProperties: { onboardaiTopic: 'company' } },
-    { id: 'core-doc-2', name: 'Parking notes' },
-  ];
-  const documents = await readDriveKnowledge('company-folder', {
-    client: folderClient('Short approved guidance.', { files }),
-  });
-  assert.deepEqual(
-    documents.map(({ googleDocId, title, category }) => [googleDocId, title, category]),
-    [
-      ['core-doc-1', 'Welcome & Company Overview', 'company'],
-      ['core-doc-2', 'Parking notes', ''],
-    ],
-  );
-  for (const [client, code] of [
-    [folderClient('', { files }), 'DRIVE_EMPTY_DOCUMENTS'],
-    [folderClient('a'.repeat(750001), { files: [files[0]] }), 'DRIVE_KNOWLEDGE_TOO_LARGE'],
-    [folderClient('', { files: [] }), 'DRIVE_NO_DOCUMENTS'],
-    [folderClient('', { files: [], nextPageToken: 'more' }), 'DRIVE_TOO_MANY_DOCUMENTS'],
-  ])
-    await assert.rejects(
-      readDriveKnowledge('company-folder', { client }),
-      (error) => error instanceof DriveKnowledgeError && error.code === code,
-    );
-  await assert.rejects(readDriveKnowledge("bad' or 1", {}), { code: 'DRIVE_FOLDER_INVALID' });
-
-  const error = Object.assign(new Error('Bearer synthetic-private-token'), {
-    response: { status: 403, data: { error: { message: 'synthetic-private-token' } } },
-  });
-  assert.equal(driveFailure(error).code, 'DRIVE_ACCESS_DENIED');
-  assert.ok(!JSON.stringify(driveFailure(error)).includes('synthetic-private-token'));
-  for (const [status, code] of [
-    [401, 'DRIVE_AUTH_REQUIRED'],
-    [404, 'DRIVE_NOT_FOUND'],
-    [429, 'DRIVE_RATE_LIMIT'],
-    [500, 'DRIVE_UNAVAILABLE'],
-  ])
-    assert.equal(driveFailure({ response: { status } }).code, code);
-  assert.equal(driveFailure(new Error('private-key-data')).code, 'DRIVE_UNAVAILABLE');
-});
-
-test('library rules: one Doc per topic, any number of related guides, twelve documents and the text limit', () => {
-  const doc = (id, category, googleDocId, text, characters = text.length) => ({
+test('library rules: one document per topic, any number of related guides, twelve documents and the text limit', () => {
+  const doc = (id, category, text, characters = text.length) => ({
     id,
     category,
-    googleDocId,
-    fingerprint: planFingerprint(text),
+    fingerprint: sha(text),
     characters,
   });
-  const stored = [
-    doc('a', 'handbook', 'doc-a', 'Handbook text'),
-    doc('b', 'additional', 'doc-b', 'Safety'),
-  ];
-  const connect = (category, googleDocId, text) =>
-    planConnection(stored, { category, googleDocId, text });
-  // A new topic, a replaced topic, the same Doc refreshed, a duplicate related guide.
+  const stored = [doc('a', 'handbook', 'Handbook text'), doc('b', 'additional', 'Safety')];
+  const plan = (category, text) => planUpload(stored, { category, text });
   assert.deepEqual(
-    { ...connect('it', 'doc-c', 'IT text'), id: 'new' },
+    { ...plan('it', 'IT text'), id: 'new' },
     { id: 'new', duplicate: false, replaced: false },
   );
-  assert.deepEqual(connect('handbook', 'doc-c', 'New handbook'), {
-    id: 'a',
-    duplicate: false,
-    replaced: true,
-  });
-  assert.deepEqual(connect('handbook', 'doc-a', 'Handbook text v2'), {
-    id: 'a',
-    duplicate: false,
-    replaced: true,
-  });
-  assert.deepEqual(connect('additional', 'doc-b', 'Safety'), { id: 'b', duplicate: true });
-  // The same Doc on another topic, or the same text twice.
-  assert.throws(() => connect('it', 'doc-a', 'x'), { code: 'GOOGLE_DOC_ALREADY_CONNECTED' });
-  assert.throws(() => connect('it', 'doc-z', 'Safety'), { code: 'GOOGLE_DOC_ALREADY_CONNECTED' });
+  assert.deepEqual(plan('handbook', 'New handbook'), { id: 'a', duplicate: false, replaced: true });
+  assert.deepEqual(plan('handbook', 'Handbook text'), { id: 'a', duplicate: true });
+  assert.deepEqual(plan('additional', 'Safety'), { id: 'b', duplicate: true });
+  // The same text under another topic is refused.
+  assert.throws(() => plan('it', 'Safety'), { code: 'COMPANY_DOCUMENT_DUPLICATE', status: 409 });
   // Twelve documents; a topic can still be replaced when full.
   const full = Array.from({ length: workspaceLimits.files }, (_, i) =>
-    doc(`d${i}`, i === 0 ? 'role' : 'additional', `doc-${i}`, `Guide ${i}`),
+    doc(`d${i}`, i === 0 ? 'role' : 'additional', `Guide ${i}`),
   );
-  assert.throws(
-    () => planConnection(full, { category: 'additional', googleDocId: 'doc-new', text: 'New' }),
-    { code: 'WORKSPACE_DOCUMENT_LIMIT', status: 409 },
-  );
-  assert.equal(
-    planConnection(full, { category: 'role', googleDocId: 'doc-new', text: 'New' }).replaced,
-    true,
-  );
+  assert.throws(() => planUpload(full, { category: 'additional', text: 'New' }), {
+    code: 'WORKSPACE_DOCUMENT_LIMIT',
+    status: 409,
+  });
+  assert.equal(planUpload(full, { category: 'role', text: 'New' }).replaced, true);
   // 750,000 characters in total.
-  const big = [doc('x', 'additional', 'doc-x', 'Big', 700000)];
-  assert.throws(
-    () => planConnection(big, { category: 'it', googleDocId: 'doc-y', text: 'y'.repeat(60000) }),
-    { code: 'WORKSPACE_TEXT_LIMIT', status: 413 },
-  );
+  const big = [doc('x', 'additional', 'Big', 700000)];
+  assert.throws(() => planUpload(big, { category: 'it', text: 'y'.repeat(60000) }), {
+    code: 'WORKSPACE_TEXT_LIMIT',
+    status: 413,
+  });
 });
 
-const planFingerprint = (text) => createHash('sha256').update(text).digest('hex');
-
-test('HR connects, lists, replaces and removes company Google Docs; another HR browser sees the same library', async () => {
-  const drive = fakeDrive(guides);
-  await withApp({ loadGoogleDocument: drive.load }, async (app) => {
+test('HR uploads PDF, DOCX, text and Markdown files; only text and metadata are stored', async () => {
+  await withApp({}, async (app) => {
     const hr = await app.hrBrowser();
     const hrId = (await hr.get('/api/auth/session')).body.account.id;
 
     const empty = await hr.get('/api/hr/company-knowledge');
     assert.equal(empty.status, 200);
     assert.equal(empty.headers.get('cache-control'), 'no-store');
-    assert.deepEqual(empty.body, {
-      documents: [],
-      limits: workspaceLimits,
-      companyKnowledge: { drive: { state: 'not-configured', documents: [] } },
-      driveMoves: { enabled: false, configured: false },
-    });
+    assert.deepEqual(empty.body, { documents: [], limits: workspaceLimits });
 
-    const connected = await hr.post('/api/hr/company-knowledge/documents', {
-      category: 'handbook',
-      url: link('handbook-doc-0001'),
-    });
-    assert.equal(connected.status, 201, connected.text);
-    assert.deepEqual(Object.keys(connected.body), ['id', 'duplicate', 'replaced']);
-    assert.deepEqual(
-      { ...connected.body, id: 'x' },
-      { id: 'x', duplicate: false, replaced: false },
-    );
-    const id = connected.body.id;
-    // Stored company-wide in Firestore companyDocuments.
-    const stored = app.firestore.read(`companyDocuments/${id}`);
+    const files = [
+      ['company', 'overview.pdf', pdf('Our synthetic company builds onboarding tools.')],
+      ['handbook', 'handbook.docx', docx(handbook)],
+      ['it', 'it guide.txt', Buffer.from('Laptops are collected from the synthetic IT desk.')],
+      ['role', 'role.md', Buffer.from('# Role\nSynthetic engineers pair on every change.')],
+    ];
+    const ids = [];
+    for (const [category, fileName, buffer] of files) {
+      const up = await hr.upload(`${path}?category=${category}`, buffer, fileName);
+      assert.equal(up.status, 201, up.text);
+      assert.deepEqual(Object.keys(up.body), ['id', 'duplicate', 'replaced']);
+      assert.deepEqual({ ...up.body, id: 'x' }, { id: 'x', duplicate: false, replaced: false });
+      ids.push(up.body.id);
+    }
+    const stored = app.firestore.read(`companyDocuments/${ids[1]}`);
     assert.deepEqual(
       { ...stored, connectedAt: 'iso', fingerprint: 'sha' },
       {
         category: 'handbook',
         title: 'Employee Handbook',
-        googleDocId: 'handbook-doc-0001',
-        text: guides['handbook-doc-0001'],
-        characters: guides['handbook-doc-0001'].length,
-        bytes: Buffer.byteLength(guides['handbook-doc-0001']),
+        fileName: 'handbook.docx',
+        text: handbook,
+        characters: handbook.length,
+        bytes: files[1][2].length,
         fingerprint: 'sha',
         connectedBy: hrId,
         connectedAt: 'iso',
       },
     );
+    assert.equal(stored.fingerprint, sha(handbook));
     assert.match(stored.connectedAt, /^\d{4}-\d{2}-\d{2}T/);
+    // The file's bytes are nowhere in what is stored.
+    assert.ok(!JSON.stringify(stored).includes('PK'));
 
-    const related = await hr.post('/api/hr/company-knowledge/documents', {
-      category: 'additional',
-      url: link('safety-doc-00001'),
-      name: '  Workplace Safety  ',
-    });
-    assert.equal(related.status, 201);
-    // The same related guide again is a duplicate (200), not a second copy.
-    const duplicate = await hr.post('/api/hr/company-knowledge/documents', {
-      category: 'additional',
-      url: link('safety-doc-00001'),
-      name: 'Another name',
-    });
+    const listed = (await hr.get('/api/hr/company-knowledge')).body;
+    assert.deepEqual(Object.keys(listed), ['documents', 'limits']);
     assert.deepEqual(
-      [duplicate.status, duplicate.body],
-      [200, { id: related.body.id, duplicate: true }],
+      listed.documents.map((d) => [d.id, d.fileName, d.category]),
+      files.map(([category, fileName], i) => [ids[i], fileName, category]),
     );
-
-    // GET mirrors #28's snapshot fields: id, title, bytes, created, category,
-    // googleDocId, characters (no text).
-    const listed = (await hr.get('/api/hr/company-knowledge')).body.documents;
-    assert.deepEqual(
-      listed.map((doc) => [doc.id, doc.title, doc.category, doc.googleDocId]),
-      [
-        [id, 'Employee Handbook', 'handbook', 'handbook-doc-0001'],
-        [related.body.id, 'Workplace Safety', 'additional', 'safety-doc-00001'],
-      ],
-    );
-    for (const doc of listed) {
+    assert.equal(listed.documents[1].title, 'Employee Handbook');
+    for (const doc of listed.documents) {
       assert.deepEqual(Object.keys(doc), [
         'id',
         'title',
+        'fileName',
+        'category',
+        'characters',
         'bytes',
         'created',
-        'category',
-        'googleDocId',
-        'characters',
       ]);
       assert.equal(typeof doc.created, 'number');
+      assert.ok(doc.characters > 0 && doc.bytes > 0);
     }
+    assert.ok(!JSON.stringify(listed).includes('Laptops'));
 
-    // Another HR account in another browser sees the same library.
-    const colleague = app.browser();
-    await app.createHr('HR-0002', 'synthetic-hr-pass-2');
-    assert.equal((await colleague.signIn('HR-0002', 'synthetic-hr-pass-2')).status, 200);
-    assert.deepEqual((await colleague.get('/api/hr/company-knowledge')).body.documents, listed);
-
-    // Changing a topic's Doc replaces it in place (200, same ID).
-    const replaced = await colleague.post('/api/hr/company-knowledge/documents', {
-      category: 'handbook',
-      url: link('handbook-doc-0002'),
-    });
-    assert.deepEqual(
-      [replaced.status, replaced.body],
-      [200, { id, duplicate: false, replaced: true }],
-    );
-    assert.equal(app.firestore.read(`companyDocuments/${id}`).text, guides['handbook-doc-0002']);
-    assert.equal(app.firestore.paths('companyDocuments/').length, 2);
-    // The same Doc on another topic is refused.
-    const taken = await hr.post('/api/hr/company-knowledge/documents', {
-      category: 'it',
-      url: link('handbook-doc-0002'),
-    });
-    assert.deepEqual([taken.status, taken.body.code], [409, 'GOOGLE_DOC_ALREADY_CONNECTED']);
-
-    // Disconnecting removes the record only (the Google Doc is never written to).
-    assert.equal((await hr.delete(`/api/hr/company-knowledge/documents/${id}`)).status, 204);
-    const missing = await hr.delete(`/api/hr/company-knowledge/documents/${id}`);
-    assert.deepEqual([missing.status, missing.body.code], [404, 'WORKSPACE_DOCUMENT_NOT_FOUND']);
-    const invalid = await hr.delete('/api/hr/company-knowledge/documents/not-an-id');
-    assert.deepEqual([invalid.status, invalid.body.code], [404, 'WORKSPACE_DOCUMENT_NOT_FOUND']);
-    assert.deepEqual(
-      (await colleague.get('/api/hr/company-knowledge')).body.documents.map((d) => d.id),
-      [related.body.id],
-    );
-
-    // Guest workspaces keep their own upload library: no company documents there.
+    // Guest workspaces keep their own library.
     const guest = await app.browser().get('/api/guest-workspace');
-    assert.equal(guest.status, 200);
     assert.deepEqual(guest.body.documents, []);
   });
 });
 
-test('request, link and Drive errors use #28’s codes and never reach Drive for a bad link', async () => {
-  const drive = fakeDrive({
-    'restricted-doc-01': driveDenied(),
-    'sheet-document-1': new DriveKnowledgeError('GOOGLE_DOC_TYPE_REQUIRED', 'Only native Docs.'),
-    'unauthorised-doc': Object.assign(new Error('Synthetic private detail'), {
-      response: { status: 401 },
-    }),
-  });
-  await withApp({ loadGoogleDocument: drive.load }, async (app) => {
+test('a topic upload replaces, identical text is a duplicate, and delete removes', async () => {
+  await withApp({}, async (app) => {
     const hr = await app.hrBrowser();
-    const post = (body, headers) => hr.post('/api/hr/company-knowledge/documents', body, headers);
-    for (const [body, status, code] of [
-      [{ category: 'payroll', url: link('restricted-doc-01') }, 400, 'DOCUMENT_TOPIC_REQUIRED'],
-      [{ url: link('restricted-doc-01') }, 400, 'DOCUMENT_TOPIC_REQUIRED'],
-      [{ category: 'additional', url: link('restricted-doc-01') }, 400, 'DOCUMENT_NAME_INVALID'],
-      [
-        { category: 'additional', name: 'x'.repeat(81), url: link('restricted-doc-01') },
-        400,
-        'DOCUMENT_NAME_INVALID',
-      ],
-      [
-        { category: 'additional', name: 'Line\nbreak', url: link('restricted-doc-01') },
-        400,
-        'DOCUMENT_NAME_INVALID',
-      ],
-      [{ category: 'it', url: 'https://example.com/handbook.pdf' }, 400, 'GOOGLE_DOC_LINK_INVALID'],
-      [{ category: 'it', url: 42 }, 400, 'GOOGLE_DOC_LINK_INVALID'],
-    ]) {
-      const response = await post(body);
-      assert.deepEqual([response.status, response.body.code], [status, code], JSON.stringify(body));
-    }
-    assert.deepEqual(drive.reads, []); // nothing reached Drive yet
+    const first = await hr.upload(`${path}?category=handbook`, Buffer.from(handbook), 'v1.txt');
+    assert.equal(first.status, 201);
+    const id = first.body.id;
 
-    // Not JSON (for example a file upload).
-    const upload = await fetch(app.url + '/api/hr/company-knowledge/documents', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream', cookie: hr.cookieHeader },
-      body: 'binary',
-    });
-    assert.deepEqual([upload.status, (await upload.json()).code], [415, 'GOOGLE_DOC_ONLY']);
+    const same = await hr.upload(`${path}?category=handbook`, Buffer.from(handbook), 'copy.txt');
+    assert.deepEqual([same.status, same.body], [200, { id, duplicate: true }]);
 
-    const warnings = [];
-    const warn = console.warn;
-    console.warn = (line) => warnings.push(String(line));
-    try {
-      for (const [id, status, code] of [
-        // A credential without the Drive scope, or a Doc not shared with it.
-        ['restricted-doc-01', 503, 'DRIVE_ACCESS_DENIED'],
-        ['unauthorised-doc', 503, 'DRIVE_AUTH_REQUIRED'],
-        ['missing-document', 503, 'DRIVE_NOT_FOUND'],
-        ['sheet-document-1', 422, 'GOOGLE_DOC_TYPE_REQUIRED'],
-      ]) {
-        const response = await post({ category: 'it', url: link(id) });
-        assert.deepEqual([response.status, response.body.code], [status, code], id);
-        assert.ok(!response.text.includes('Synthetic'));
-      }
-    } finally {
-      console.warn = warn;
-    }
-    assert.deepEqual(app.firestore.paths('companyDocuments/'), []);
-    // The log names the operation and code only, never the Doc or Google's text.
-    assert.ok(warnings.some((line) => line.includes('"code":"DRIVE_ACCESS_DENIED"')));
-    assert.ok(warnings.every((line) => !/restricted-doc-01|Synthetic/.test(line)));
+    const replaced = await hr.upload(`${path}?category=handbook`, Buffer.from(handbook2), 'v2.md');
+    assert.deepEqual(
+      [replaced.status, replaced.body],
+      [200, { id, duplicate: false, replaced: true }],
+    );
+    const doc = app.firestore.read(`companyDocuments/${id}`);
+    assert.deepEqual([doc.text, doc.fileName], [handbook2, 'v2.md']);
+    assert.equal(app.firestore.paths('companyDocuments/').length, 1);
+
+    // The same text under another topic is a 409.
+    const taken = await hr.upload(`${path}?category=it`, Buffer.from(handbook2), 'again.txt');
+    assert.deepEqual([taken.status, taken.body.code], [409, 'COMPANY_DOCUMENT_DUPLICATE']);
+
+    // Another HR browser sees the same library and can delete.
+    const colleague = app.browser();
+    await app.createHr('HR-0002', 'synthetic-hr-pass-2');
+    await colleague.signIn('HR-0002', 'synthetic-hr-pass-2');
+    assert.equal((await colleague.delete(`${path}/${id}`)).status, 204);
+    const missing = await hr.delete(`${path}/${id}`);
+    assert.deepEqual([missing.status, missing.body.code], [404, 'WORKSPACE_DOCUMENT_NOT_FOUND']);
+    assert.deepEqual((await hr.get('/api/hr/company-knowledge')).body.documents, []);
   });
 });
 
-test('the Drive folder state follows #28: connected documents or a fixed error', async () => {
-  const folder = [
-    {
-      googleDocId: 'folder-doc-0001',
-      title: 'Welcome & Company Overview',
-      category: 'company',
-      text: 'Welcome text',
-    },
-  ];
-  let fail = false;
-  const loadDriveKnowledge = async (folderId) => {
-    assert.equal(folderId, 'synthetic-folder');
-    if (fail) throw driveDenied();
-    return folder;
-  };
-  await withApp(
-    { env: { GOOGLE_DRIVE_FOLDER_ID: 'synthetic-folder' }, loadDriveKnowledge },
-    async (app) => {
-      const hr = await app.hrBrowser();
-      assert.deepEqual((await hr.get('/api/hr/company-knowledge')).body.companyKnowledge, {
-        drive: {
-          state: 'connected',
-          documents: [
-            {
-              title: 'Welcome & Company Overview',
-              googleDocId: 'folder-doc-0001',
-              category: 'company',
-              characters: 12,
-            },
-          ],
-        },
-      });
-    },
-  );
-  fail = true;
-  await withApp(
-    { env: { GOOGLE_DRIVE_FOLDER_ID: 'synthetic-folder' }, loadDriveKnowledge },
-    async (app) => {
-      const hr = await app.hrBrowser();
-      const { drive } = (await hr.get('/api/hr/company-knowledge')).body.companyKnowledge;
-      assert.deepEqual(
-        { ...drive, error: typeof drive.error },
-        { state: 'unavailable', documents: [], code: 'DRIVE_ACCESS_DENIED', error: 'string' },
+test('additional guides need a name of one line and up to 80 characters', async () => {
+  await withApp({}, async (app) => {
+    const hr = await app.hrBrowser();
+    const body = Buffer.from(safety);
+    const up = (query, buffer = body) => hr.upload(`${path}?${query}`, buffer, 'safety.txt');
+    const named = await up('category=additional&name=' + encodeURIComponent('  Workplace Safety '));
+    assert.equal(named.status, 201, named.text);
+    const second = await up(
+      'category=additional&name=Parking',
+      Buffer.from('Parking is on level three of the garage.'),
+    );
+    assert.equal(second.status, 201);
+    const duplicate = await up('category=additional&name=Another', body);
+    assert.deepEqual(
+      [duplicate.status, duplicate.body],
+      [200, { id: named.body.id, duplicate: true }],
+    );
+    const listed = (await hr.get('/api/hr/company-knowledge')).body.documents;
+    assert.deepEqual(
+      listed.map((d) => [d.title, d.category]),
+      [
+        ['Workplace Safety', 'additional'],
+        ['Parking', 'additional'],
+      ],
+    );
+    const other = Buffer.from('Other synthetic guidance text.');
+    for (const [query, status, code] of [
+      ['category=additional', 400, 'DOCUMENT_NAME_INVALID'],
+      ['category=additional&name=', 400, 'DOCUMENT_NAME_INVALID'],
+      ['category=additional&name=%20%20', 400, 'DOCUMENT_NAME_INVALID'],
+      ['category=additional&name=' + 'x'.repeat(81), 400, 'DOCUMENT_NAME_INVALID'],
+      ['category=additional&name=Line%0Abreak', 400, 'DOCUMENT_NAME_INVALID'],
+      ['category=additional&name=a&name=b', 400, 'DOCUMENT_NAME_INVALID'],
+      ['', 400, 'DOCUMENT_TOPIC_REQUIRED'],
+      ['category=payroll', 400, 'DOCUMENT_TOPIC_REQUIRED'],
+      ['category=it&category=role', 400, 'DOCUMENT_TOPIC_REQUIRED'],
+    ]) {
+      const response = await up(query, other);
+      assert.deepEqual([response.status, response.body.code], [status, code], query);
+    }
+    assert.equal((await up('category=additional&name=' + 'x'.repeat(80), other)).status, 201);
+    assert.equal(app.firestore.paths('companyDocuments/').length, 3);
+  });
+});
+
+test('file errors reuse the guest reader codes; JSON bodies are refused; nothing is stored', async () => {
+  await withApp({}, async (app) => {
+    const hr = await app.hrBrowser();
+    const post = (name, buffer) => hr.upload(`${path}?category=it`, buffer, name);
+    for (const [name, buffer, status, code] of [
+      ['guide.html', Buffer.from('<p>x</p>'), 415, 'FILE_TYPE_UNSUPPORTED'],
+      ['guide.docx', Buffer.from('x'), 422, 'FILE_INVALID'],
+      ['guide.pdf', Buffer.from('plain text'), 422, 'FILE_INVALID'],
+      ['guide.txt', Buffer.alloc(0), 400, 'FILE_EMPTY'],
+      ['guide.pdf', pdf(''), 422, 'FILE_NO_TEXT'],
+      ['guide.txt', Buffer.alloc(workspaceLimits.bytes + 1, 'x'), 413, 'FILE_TOO_LARGE'],
+      ['guide.txt', Buffer.from('a'.repeat(250001)), 422, 'FILE_TEXT_TOO_LONG'],
+      ['../guide.txt', Buffer.from('Some text.'), 400, 'FILE_NAME_INVALID'],
+    ]) {
+      const response = await post(name, buffer);
+      assert.deepEqual([response.status, response.body?.code], [status, code], `${name} ${code}`);
+    }
+    const badName = await hr.request(
+      'POST',
+      `${path}?category=it`,
+      undefined,
+      {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': '%E0%A4%A',
+      },
+      Buffer.from('x'),
+    );
+    assert.deepEqual([badName.status, badName.body.code], [400, 'FILE_NAME_INVALID']);
+
+    // The old Google Docs link body.
+    const json = await hr.post(path, {
+      category: 'it',
+      url: 'https://docs.google.com/document/d/abc12345/edit',
+    });
+    assert.deepEqual([json.status, json.body.code], [415, 'FILE_UPLOAD_REQUIRED']);
+    assert.deepEqual(app.firestore.paths('companyDocuments/'), []);
+  });
+});
+
+test('twelve documents and the shared text limit apply to uploads', async () => {
+  await withApp({}, async (app) => {
+    const hr = await app.hrBrowser();
+    for (let i = 0; i < workspaceLimits.files; i++) {
+      const up = await hr.upload(
+        `${path}?category=additional&name=Guide%20${i}`,
+        Buffer.from(`Synthetic guide number ${i} for staff.`),
+        `g${i}.txt`,
       );
-    },
-  );
+      assert.equal(up.status, 201, up.text);
+    }
+    const over = await hr.upload(
+      `${path}?category=additional&name=More`,
+      Buffer.from('One more synthetic guide for staff.'),
+      'more.txt',
+    );
+    assert.deepEqual([over.status, over.body.code], [409, 'WORKSPACE_DOCUMENT_LIMIT']);
+    // A topic upload cannot exceed 750,000 characters either: replace two by
+    // clearing and filling with 250,000-character files.
+    for (const doc of (await hr.get('/api/hr/company-knowledge')).body.documents)
+      await hr.delete(`${path}/${doc.id}`);
+    for (const [category, fill] of [
+      ['company', 'a'],
+      ['handbook', 'b'],
+      ['it', 'c'],
+    ])
+      assert.equal(
+        (await hr.upload(`${path}?category=${category}`, Buffer.from(fill.repeat(250000)), 'x.txt'))
+          .status,
+        201,
+      );
+    const tooMuch = await hr.upload(
+      `${path}?category=role`,
+      Buffer.from('Another synthetic guide.'),
+      'r.txt',
+    );
+    assert.deepEqual([tooMuch.status, tooMuch.body.code], [413, 'WORKSPACE_TEXT_LIMIT']);
+  });
+});
+
+test('documents connected from Google Docs before #35 still list and carry no Drive fields', async () => {
+  await withApp({}, async (app) => {
+    const hr = await app.hrBrowser();
+    const id = randomUUID();
+    await app.firestore
+      .connect()
+      .collection('companyDocuments')
+      .doc(id)
+      .set({
+        category: 'handbook',
+        title: 'Employee Handbook',
+        googleDocId: 'legacy-doc-0001',
+        text: handbook,
+        characters: handbook.length,
+        bytes: Buffer.byteLength(handbook),
+        fingerprint: sha(handbook),
+        connectedBy: 'someone',
+        connectedAt: '2026-10-01T00:00:00.000Z',
+      });
+    const snapshot = (await hr.get('/api/hr/company-knowledge')).body;
+    assert.deepEqual(snapshot.documents, [
+      {
+        id,
+        title: 'Employee Handbook',
+        fileName: '',
+        category: 'handbook',
+        characters: handbook.length,
+        bytes: Buffer.byteLength(handbook),
+        created: Date.parse('2026-10-01T00:00:00.000Z'),
+      },
+    ]);
+    assert.ok(!('companyKnowledge' in snapshot) && !('driveMoves' in snapshot));
+    // Uploading to that topic replaces the legacy document.
+    const replaced = await hr.upload(`${path}?category=handbook`, Buffer.from(handbook2), 'n.txt');
+    assert.deepEqual(
+      [replaced.status, replaced.body],
+      [200, { id, duplicate: false, replaced: true }],
+    );
+    assert.equal(app.firestore.read(`companyDocuments/${id}`).googleDocId, undefined);
+  });
 });
 
 test('the library is HR-only, and a Firestore failure is a fixed 503', async () => {
-  await withApp({ loadGoogleDocument: fakeDrive(guides).load }, async (app) => {
+  await withApp({}, async (app) => {
     const hr = await app.hrBrowser();
     const { browser: staff } = await app.readyEmployee(hr);
-    for (const [method, path, body] of [
+    const zero = '00000000-0000-0000-0000-000000000000';
+    for (const [method, url] of [
       ['get', '/api/hr/company-knowledge'],
-      [
-        'post',
-        '/api/hr/company-knowledge/documents',
-        { category: 'it', url: link('welcome-doc-0001') },
-      ],
-      ['delete', '/api/hr/company-knowledge/documents/00000000-0000-0000-0000-000000000000'],
+      ['delete', `${path}/${zero}`],
     ]) {
-      const asEmployee = await staff[method](path, body);
-      assert.deepEqual([asEmployee.status, asEmployee.body.code], [403, 'HR_ROLE_REQUIRED'], path);
-      const anonymous = await app.browser()[method](path, body);
-      assert.deepEqual([anonymous.status, anonymous.body.code], [401, 'AUTH_REQUIRED'], path);
+      const asEmployee = await staff[method](url);
+      assert.deepEqual([asEmployee.status, asEmployee.body.code], [403, 'HR_ROLE_REQUIRED']);
+      const anonymous = await app.browser()[method](url);
+      assert.deepEqual([anonymous.status, anonymous.body.code], [401, 'AUTH_REQUIRED']);
     }
+    const body = Buffer.from(handbook);
+    const asEmployee = await staff.upload(`${path}?category=it`, body, 'a.txt');
+    assert.deepEqual([asEmployee.status, asEmployee.body.code], [403, 'HR_ROLE_REQUIRED']);
+    const anonymous = await app.browser().upload(`${path}?category=it`, body, 'a.txt');
+    assert.deepEqual([anonymous.status, anonymous.body.code], [401, 'AUTH_REQUIRED']);
+    // Another site's request is refused.
+    const cross = await hr.upload(`${path}?category=it`, body, 'a.txt', {
+      Origin: 'https://other.example',
+    });
+    assert.equal(cross.status, 403);
     assert.deepEqual(app.firestore.paths('companyDocuments/'), []);
 
     app.firestore.fail(14, { only: ['query'] });
     const failed = await hr.get('/api/hr/company-knowledge');
     assert.deepEqual([failed.status, failed.body.code], [503, 'COMPANY_KNOWLEDGE_UNAVAILABLE']);
     app.firestore.fail(14, { only: ['transaction'] });
-    const notSaved = await hr.post('/api/hr/company-knowledge/documents', {
-      category: 'company',
-      url: link('welcome-doc-0001'),
-    });
+    const notSaved = await hr.upload(`${path}?category=company`, body, 'a.txt');
     assert.deepEqual([notSaved.status, notSaved.body.code], [503, 'COMPANY_KNOWLEDGE_UNAVAILABLE']);
     assert.deepEqual(app.firestore.paths('companyDocuments/'), []);
   });
-  // Every topic in the shared list can be connected.
   assert.deepEqual(
     onboardingDocumentTopics.map((topic) => topic.id),
     ['company', 'handbook', 'first-week', 'role', 'it', 'communication'],
   );
+});
+
+test('logs never contain file names or text', async () => {
+  const lines = [];
+  const warn = console.warn;
+  console.warn = (line) => lines.push(String(line));
+  try {
+    await withApp({}, async (app) => {
+      const hr = await app.hrBrowser();
+      app.firestore.fail(14, { only: ['transaction'] });
+      await hr.upload(
+        `${path}?category=it`,
+        Buffer.from('Secret synthetic text.'),
+        'secret-name.txt',
+      );
+      await hr.upload(`${path}?category=it`, Buffer.from('x'), 'secret-name.html');
+      assert.ok([...lines, ...app.logs].every((l) => !/secret/i.test(l)));
+    });
+  } finally {
+    console.warn = warn;
+  }
+});
+
+test('the web proxy forwards the upload path as a 5 MiB raw upload with the reader’s 413 code', async () => {
+  const seen = [];
+  const proxy = createApiProxy({
+    apiUrl: 'https://api.example',
+    fetchImpl: async (url, init) => {
+      seen.push([url, init.body?.length]);
+      return new Response('{}', { status: 201, headers: { 'content-type': 'application/json' } });
+    },
+  });
+  const web = express().use('/api', proxy);
+  const server = await new Promise((resolve) => {
+    const listening = web.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  const url = `http://127.0.0.1:${server.address().port}/api/hr/company-knowledge/documents?category=it`;
+  const post = (size, type) =>
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': type },
+      body: Buffer.alloc(size, 'x'),
+    });
+  try {
+    const ok = await post(workspaceLimits.bytes, 'application/octet-stream');
+    assert.equal(ok.status, 201);
+    assert.deepEqual(seen, [
+      ['https://api.example/api/hr/company-knowledge/documents?category=it', workspaceLimits.bytes],
+    ]);
+    const big = await post(workspaceLimits.bytes + 1, 'application/octet-stream');
+    assert.deepEqual([big.status, (await big.json()).code], [413, 'FILE_TOO_LARGE']);
+    // Without the octet-stream type the small JSON limit applies.
+    const json = await post(70 * 1024, 'application/json');
+    assert.deepEqual([json.status, (await json.json()).code], [413, 'REQUEST_TOO_LARGE']);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

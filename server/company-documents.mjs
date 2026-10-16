@@ -4,21 +4,23 @@ import { ChatError } from './chat-errors.mjs';
 import { createStorageCall } from './firestore-client.mjs';
 import { workspaceLimits } from './workspace-limits.mjs';
 
-// The company-wide Google Docs library that signed-in HR builds, one Firestore
-// document per connected Doc: companyDocuments/{id}
+// The company-wide knowledge library that signed-in HR builds by uploading
+// files, one Firestore document per file: companyDocuments/{id}
 //
 //   category      one of the six onboarding topic IDs, or 'additional'
 //   title         the topic's title, or HR's name for an additional guide
-//   googleDocId   the Google Docs file ID
-//   text          the Doc's plain text when it was connected (at most 250,000 characters)
-//   characters, bytes, fingerprint (SHA-256 of text)
+//   fileName      the uploaded file's name (absent on documents connected from
+//                 Google Docs before issue #35, which still list and retrieve)
+//   text          the file's extracted plain text (at most 250,000 characters)
+//   characters, bytes (the file's size), fingerprint (SHA-256 of text)
 //   connectedBy   the HR account ID; connectedAt: ISO 8601
 //
-// The rules mirror the guest workspace library from #28: one Doc per topic
-// (connecting another replaces it), any number of additional guides, twelve
-// documents and 750,000 characters in total, and no Doc or text twice. Every
-// call is bounded by the Firestore deadline; log lines name the operation and
-// Firestore status only, never titles or text.
+// The original file is never stored. The rules mirror the guest workspace
+// library from #28: one document per topic (uploading another replaces it),
+// any number of additional guides, twelve documents and 750,000 characters in
+// total, and no text twice. Every call is bounded by the Firestore deadline;
+// log lines name the operation and Firestore status only, never file names,
+// titles or text.
 export const companyDocumentCollection = 'companyDocuments';
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fingerprintOf = (text) => createHash('sha256').update(text).digest('hex');
@@ -30,17 +32,11 @@ export const companyDocumentErrors = {
       'WORKSPACE_DOCUMENT_NOT_FOUND',
       'That document is not in the company library.',
     ),
-  topicTaken: () =>
-    new AccountError(
-      409,
-      'GOOGLE_DOC_ALREADY_CONNECTED',
-      'This Google Doc is already connected to another topic. Choose a different document.',
-    ),
   textTaken: () =>
     new AccountError(
       409,
-      'GOOGLE_DOC_ALREADY_CONNECTED',
-      'This guidance is already in the company library. Connect a different Google Doc.',
+      'COMPANY_DOCUMENT_DUPLICATE',
+      'This guidance is already in the company library under another topic. Upload a different file.',
     ),
   full: () =>
     new AccountError(
@@ -68,21 +64,17 @@ export const companyDocumentErrors = {
     ),
 };
 
-// Where a new connection goes, given the stored documents ({ id, category,
-// googleDocId, fingerprint, characters }): { id, duplicate: true } when this
-// Doc already serves this topic (or is already an additional guide), else
-// { id, duplicate: false, replaced } where replaced means the topic's current
-// Doc is swapped (or refreshed, for the same link). Throws the 409/413 errors.
-export function planConnection(stored, { text, googleDocId, category }) {
-  const sameLink = stored.find((doc) => doc.googleDocId === googleDocId);
-  const slot = category === 'additional' ? null : stored.find((doc) => doc.category === category);
-  if (sameLink && sameLink.id !== slot?.id) {
-    if (sameLink.category === category) return { id: sameLink.id, duplicate: true };
-    throw companyDocumentErrors.topicTaken();
-  }
+// Where an upload goes, given the stored documents ({ id, category,
+// fingerprint, characters }): { id, duplicate: true } when identical text is
+// already stored under this topic, else { id, duplicate: false, replaced } where
+// replaced means the topic's current document is swapped. Throws the 409/413
+// errors.
+export function planUpload(stored, { text, category }) {
   const fingerprint = fingerprintOf(text);
-  if (stored.some((doc) => doc.id !== slot?.id && doc.fingerprint === fingerprint))
-    throw companyDocumentErrors.textTaken();
+  const slot = category === 'additional' ? null : stored.find((doc) => doc.category === category);
+  const same = stored.find((doc) => doc.fingerprint === fingerprint);
+  if (same && same.category === category) return { id: same.id, duplicate: true };
+  if (same) throw companyDocumentErrors.textTaken();
   const others = stored.filter((doc) => doc.id !== slot?.id);
   if (!slot && stored.length >= workspaceLimits.files) throw companyDocumentErrors.full();
   if (
@@ -104,7 +96,7 @@ const stored = (doc) => {
     id: doc.id,
     title: String(data.title || ''),
     category: String(data.category || ''),
-    googleDocId: String(data.googleDocId || ''),
+    fileName: String(data.fileName || ''),
     text: String(data.text || ''),
     characters: Number(data.characters) || 0,
     bytes: Number(data.bytes) || 0,
@@ -138,38 +130,38 @@ export function createCompanyDocumentStore({
   const collection = (db) => db.collection(companyDocumentCollection);
 
   return {
-    // Every connected document with its text, oldest connection first.
+    // Every stored document with its text, oldest first.
     list: () =>
       guarded('list company documents', async () => {
         const found = await collection(await database()).get();
         return found.docs.map(stored).sort(byConnection);
       }),
-    // connection: { category, title, googleDocId, text }. Checks and writes in
+    // upload: { category, title, fileName, text, bytes }. Checks and writes in
     // one transaction, so two HR browsers cannot both take the last place.
-    connect: (connection, connectedBy, at) =>
-      guarded('connect company document', async () => {
+    add: (upload, connectedBy, at) =>
+      guarded('add company document', async () => {
         const db = await database();
         return db.runTransaction(async (tx) => {
           const current = await tx.get(
-            collection(db).select('category', 'googleDocId', 'fingerprint', 'characters'),
+            collection(db).select('category', 'fingerprint', 'characters'),
           );
-          const plan = planConnection(
+          const plan = planUpload(
             current.docs.map((doc) => ({
               id: doc.id,
               ...doc.data(),
               characters: Number(doc.data().characters) || 0,
             })),
-            connection,
+            upload,
           );
           if (plan.duplicate) return plan;
-          const { category, title, googleDocId, text } = connection;
+          const { category, title, fileName, text, bytes } = upload;
           tx.set(collection(db).doc(plan.id), {
             category,
             title,
-            googleDocId,
+            fileName,
             text,
             characters: text.length,
-            bytes: Buffer.byteLength(text),
+            bytes,
             fingerprint: fingerprintOf(text),
             connectedBy,
             connectedAt: at.toISOString(),

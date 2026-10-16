@@ -2,6 +2,8 @@ import express from 'express';
 import { ChatError } from './chat-errors.mjs';
 import { accountErrors, autofillErrors } from './account-errors.mjs';
 import { companyKnowledgeRequestErrors } from './company-knowledge.mjs';
+import { readUploadedDocument } from './read-uploaded-document.mjs';
+import { workspaceLimits } from './workspace-limits.mjs';
 
 // HTTP routes for accounts (see docs/account-access.md for the contract):
 //   /api/auth/*           sign in, session, sign out, change password
@@ -9,7 +11,7 @@ import { companyKnowledgeRequestErrors } from './company-knowledge.mjs';
 //   /api/hr/employees*    HR-only employee administration, including deletion
 //   /api/hr/employees/autofill  HR-only profile autofill (profile-autofill.mjs)
 //   /api/hr/support-summaries   HR-only support summaries of employee accounts
-//   /api/hr/company-knowledge*  HR-only company Google Docs library (company-knowledge.mjs)
+//   /api/hr/company-knowledge*  HR-only company knowledge uploads (company-knowledge.mjs)
 // Every route checks the browser's Origin like the saved-chat routes, answers
 // 503 ACCOUNTS_NOT_CONFIGURED without DATABASE_URL, is never cached, and sits
 // behind the app's POST rate limiter.
@@ -163,8 +165,7 @@ export function mountAccountRoutes(
     });
   });
 
-  // The company Google Docs library: the shapes of #28's guest workspace
-  // library (GET snapshot fields, POST/DELETE /documents), stored company-wide.
+  // The company knowledge library: uploaded files, stored company-wide as text.
   const library = () => {
     if (!companyKnowledge) throw accountErrors.notConfigured();
     return companyKnowledge;
@@ -172,11 +173,43 @@ export function mountAccountRoutes(
   employees.get('/company-knowledge', hr, async (req, res) => {
     res.json(await library().snapshot());
   });
-  employees.post('/company-knowledge/documents', hr, async (req, res) => {
-    if (!req.is('application/json')) throw companyKnowledgeRequestErrors.googleDocOnly();
-    const added = await library().connect(req.accountSession.account.id, req.body, new Date());
-    if (!res.destroyed) res.status(added.duplicate || added.replaced ? 200 : 201).json(added);
-  });
+  // A raw file body (application/octet-stream, X-File-Name), read into text
+  // like a guest upload. Only the text and metadata are stored.
+  const rawFile = express.raw({ type: 'application/octet-stream', limit: workspaceLimits.bytes });
+  employees.post(
+    '/company-knowledge/documents',
+    hr,
+    (req, res, next) => {
+      if (!companyKnowledge) throw accountErrors.notConfigured();
+      if (!req.is('application/octet-stream')) throw companyKnowledgeRequestErrors.fileRequired();
+      // The topic is checked before the file is read.
+      req.knowledgeTopic = companyKnowledge.describe(req.query);
+      rawFile(req, res, (error) =>
+        next(
+          error?.type === 'entity.too.large'
+            ? new ChatError(413, 'FILE_TOO_LARGE', 'Each file must be 5 MB or smaller.')
+            : error,
+        ),
+      );
+    },
+    async (req, res) => {
+      let name;
+      try {
+        name = decodeURIComponent(req.get('X-File-Name') || '');
+      } catch {
+        throw new ChatError(400, 'FILE_NAME_INVALID', 'Choose a file with a valid name.');
+      }
+      const file = await readUploadedDocument(name, req.body);
+      if (req.aborted || res.destroyed) return;
+      const added = await companyKnowledge.add(
+        req.accountSession.account.id,
+        req.knowledgeTopic,
+        file,
+        new Date(),
+      );
+      if (!res.destroyed) res.status(added.duplicate || added.replaced ? 200 : 201).json(added);
+    },
+  );
   employees.delete('/company-knowledge/documents/:id', hr, async (req, res) => {
     await library().remove(req.params.id);
     res.status(204).end();

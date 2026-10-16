@@ -27,10 +27,10 @@ creates employee accounts.
 
 ## Roles
 
-| Role       | Created by                                           | Can                                                                                                                                                                                                                                                                                                          |
-| ---------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `hr`       | `npm run hr:create` on the server (no forced change) | Everything an employee can, plus list, read, create, edit and delete employees, reset their passwords, disable or enable them, read their support summaries and manage the company Google Docs library. HR accounts are not editable or deletable through the API; `npm run hr:reset-password` recovers one. |
-| `employee` | HR, with a temporary password                        | Change their own password, read their own profile, and keep saved chats that follow them across browsers.                                                                                                                                                                                                    |
+| Role       | Created by                                           | Can                                                                                                                                                                                                                                                                                                        |
+| ---------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hr`       | `npm run hr:create` on the server (no forced change) | Everything an employee can, plus list, read, create, edit and delete employees, reset their passwords, disable or enable them, read their support summaries and manage the company knowledge library. HR accounts are not editable or deletable through the API; `npm run hr:reset-password` recovers one. |
+| `employee` | HR, with a temporary password                        | Change their own password, read their own profile, and keep saved chats that follow them across browsers.                                                                                                                                                                                                  |
 
 An account created or reset by HR must choose a new password before anything else works.
 
@@ -42,7 +42,7 @@ An account created or reset by HR must choose a new password before anything els
 | Firestore `employeeProfiles/{accountId}`                           | Each employee's personal profile, written by HR.                                                                                                         |
 | Firestore `conversations`, `supportPreferences`, `chatCheckpoints` | A signed-in account's saved chats, support observations and LangGraph state, owned by `account:<accountId>` (see [Chat and memory](chat-and-memory.md)). |
 | Firestore `employeeImports/{importId}`                             | Short-lived employee form import drafts (issue #27), which can name accounts.                                                                            |
-| Firestore `companyDocuments/{id}`                                  | The company-wide Google Docs library that HR connects (see [Company knowledge library](#company-knowledge-library)).                                     |
+| Firestore `companyDocuments/{id}`                                  | The company-wide knowledge library that HR uploads (see [Company knowledge library](#company-knowledge-library)).                                        |
 
 PostgreSQL never holds profile values; Firestore never holds passwords or sessions. Guest
 workspaces keep their own SQLite file, as before.
@@ -254,7 +254,7 @@ ProfileSummary  { fullName, preferredName, jobTitle, department, startDate }
 | `GET /api/hr/support-summaries`                  | HR                              | none                                                     | 200 `{ employees: [{ account: EmployeeAccount, name, summary }] }`, by ID; see [Support summaries](#support-summaries)       |                                                                                                                                                                                                                   |
 | `GET /api/hr/company-knowledge`                  | HR                              | none                                                     | 200 `KnowledgeSnapshot`; see [Company knowledge library](#company-knowledge-library)                                         | 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                              |
 | `POST /api/hr/company-knowledge/documents`       | HR                              | `{ category, url, name? }`                               | 201 `{ id, duplicate: false, replaced: false }`; 200 `{ id, duplicate: false, replaced: true }` or `{ id, duplicate: true }` | see [Company knowledge library](#company-knowledge-library)                                                                                                                                                       |
-| `DELETE /api/hr/company-knowledge/documents/:id` | HR                              | none                                                     | 204: the record is removed (the Google Doc is never changed)                                                                 | 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                          |
+| `DELETE /api/hr/company-knowledge/documents/:id` | HR                              | none                                                     | 204: the record is removed (the stored text is removed)                                                                      | 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                          |
 
 `PROFILE_INVALID` example:
 
@@ -378,59 +378,53 @@ employee account, in the order of `GET /api/hr/employees` (by ID, ignoring case)
 
 ### Company knowledge library
 
-Signed-in HR keeps one company-wide Google Docs library, the "Good guidance starts here" page
-from #28. Request and response shapes are those of #28's guest workspace library
-(`GET /api/guest-workspace` snapshot fields and `POST`/`DELETE /api/guest-workspace/documents`)
-under the base path `/api/hr/company-knowledge`. Guest workspaces keep their own upload
-library; they never see this one.
+Signed-in HR keeps one company-wide library of uploaded files, the Company knowledge page. HR
+uploads PDF, Word (`.docx`), text or Markdown files (5 MiB each) under `/api/hr/company-knowledge`;
+the server reads each file into plain text with the guest upload reader
+(`server/read-uploaded-document.mjs`) and stores only that text and its metadata. The original
+file is never stored. Guest workspaces keep their own upload library; they never see this one.
+Google Drive and Google Docs are not used.
 
 ```text
 KnowledgeSnapshot {
-  documents: [{ id, title, bytes, created: ms since epoch, category, googleDocId, characters }],
-                                     oldest connection first; never the text
-  limits: { files: 12, guests: 5, bytes: 5242880, characters: 250000, totalCharacters: 750000 },
-  companyKnowledge: { drive: DriveState },
-  driveMoves: { enabled: false, configured: false }   #28's local Drive moves are not offered
+  documents: [{ id, title, fileName, category, characters, bytes, created: ms since epoch }],
+                                     oldest first; never the text
+  limits: { files: 12, guests: 5, bytes: 5242880, characters: 250000, totalCharacters: 750000 }
 }
-DriveState  { state: "not-configured", documents: [] }          GOOGLE_DRIVE_FOLDER_ID unset
-          | { state: "connected", documents: [{ title, googleDocId, category, characters }] }
-          | { state: "unavailable", documents: [], code, error }   e.g. DRIVE_ACCESS_DENIED
 ```
 
-- **Connect** (`POST …/documents`, JSON only): `category` is one of the six topic IDs in
+- **Upload** (`POST /api/hr/company-knowledge/documents?category=<category>[&name=<title>]`): the
+  body is the raw file, `Content-Type: application/octet-stream`, with the file name in
+  `X-File-Name: encodeURIComponent(fileName)`. `category` is one of the six topic IDs in
   `server/onboarding-document-topics.mjs` (`company`, `handbook`, `first-week`, `role`, `it`,
-  `communication`), whose title becomes the document title, or `additional` with `name` (1–80
-  characters, one line). `url` is a native Google Docs link
-  (`https://docs.google.com/document/d/<id>/…`). The server reads the Doc's file type and plain
-  text with the read-only Drive reader and saves it. One Doc per topic: connecting another Doc to
-  a topic, or the same Doc again (which refreshes its text), replaces it (200, same `id`,
-  `replaced: true`). An additional guide that is already connected is `200 { id, duplicate: true }`.
-- **Storage**: Firestore `companyDocuments/{id}`: `category`, `title`, `googleDocId`, `text` (at
-  most 250,000 characters), `characters`, `bytes`, `fingerprint` (SHA-256 of the text),
+  `communication`), whose title becomes the document title, or `additional` with `name` (1-80
+  characters, one line). One document per topic: uploading another file to a topic replaces it
+  (`200 { id, duplicate: false, replaced: true }`, same `id`). Identical text already stored under
+  the same topic is `200 { id, duplicate: true }`. A new document is
+  `201 { id, duplicate: false, replaced: false }`. A JSON body (the old Google Docs link) is
+  `415 FILE_UPLOAD_REQUIRED`.
+- **Storage**: Firestore `companyDocuments/{id}`: `category`, `title`, `fileName`, `text` (at most
+  250,000 characters), `characters`, `bytes` (the file's size), `fingerprint` (SHA-256 of the text),
   `connectedBy` (the HR account ID) and `connectedAt` (ISO 8601). At most twelve documents and
-  750,000 characters in total; checks and writes run in one transaction.
-- **Errors** (besides the session and route tables):
+  750,000 characters in total; checks and writes run in one transaction. Documents connected from
+  Google Docs before issue #35 have no `fileName` (listed as `''`) and still list and retrieve.
+  Log lines never contain file names or text.
+- **Errors** (besides the session and route tables; file errors are the guest upload reader's):
 
-  | Status | Code                                                                                                                                  | When                                                    |
-  | ------ | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-  | 415    | `GOOGLE_DOC_ONLY`                                                                                                                     | The body is not JSON (for example a file upload)        |
-  | 400    | `DOCUMENT_TOPIC_REQUIRED`                                                                                                             | `category` is not a topic ID or `additional`            |
-  | 400    | `DOCUMENT_NAME_INVALID`                                                                                                               | `additional` without a valid `name`                     |
-  | 400    | `GOOGLE_DOC_LINK_INVALID`                                                                                                             | Not a native Google Docs link (Drive is not contacted)  |
-  | 422    | `GOOGLE_DOC_TYPE_REQUIRED`, `GOOGLE_DOC_TOO_LARGE`, `DRIVE_EMPTY_DOCUMENTS`                                                           | Not a Google Doc, over 250,000 characters, or empty     |
-  | 409    | `GOOGLE_DOC_ALREADY_CONNECTED`                                                                                                        | The Doc serves another topic, or its text is already in |
-  | 409    | `WORKSPACE_DOCUMENT_LIMIT`                                                                                                            | Twelve documents already                                |
-  | 413    | `WORKSPACE_TEXT_LIMIT`                                                                                                                | Over 750,000 characters in total                        |
-  | 503    | `DRIVE_ACCESS_DENIED`, `DRIVE_AUTH_REQUIRED`, `DRIVE_NOT_FOUND`, `DRIVE_RATE_LIMIT`, `DRIVE_DOCUMENT_RESTRICTED`, `DRIVE_UNAVAILABLE` | Drive refused or failed; fixed messages only            |
-  | 503    | `COMPANY_KNOWLEDGE_UNAVAILABLE`                                                                                                       | Firestore failed                                        |
-  | 504    | `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                           | Firestore gave no answer within 10 seconds              |
+  | Status              | Code                                                                                                                                                                                                               | When                                                           |
+  | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+  | 415                 | `FILE_UPLOAD_REQUIRED`                                                                                                                                                                                             | The body is not `application/octet-stream`                     |
+  | 400                 | `DOCUMENT_TOPIC_REQUIRED`                                                                                                                                                                                          | `category` is not a topic ID or `additional`                   |
+  | 400                 | `DOCUMENT_NAME_INVALID`                                                                                                                                                                                            | `additional` without a valid `name`                            |
+  | 400/413/415/422/503 | `FILE_NAME_INVALID`, `FILE_EMPTY`, `FILE_TOO_LARGE`, `FILE_TYPE_UNSUPPORTED`, `FILE_INVALID`, `FILE_NO_TEXT`, `FILE_TEXT_TOO_LONG`, `FILE_UNREADABLE`, `FILE_READ_TIMEOUT`, password-protected, `FILE_READER_BUSY` | The reader refused the file (see `read-uploaded-document.mjs`) |
+  | 409                 | `COMPANY_DOCUMENT_DUPLICATE`                                                                                                                                                                                       | The same text is already stored under another topic            |
+  | 409                 | `WORKSPACE_DOCUMENT_LIMIT`                                                                                                                                                                                         | Twelve documents already                                       |
+  | 413                 | `WORKSPACE_TEXT_LIMIT`                                                                                                                                                                                             | Over 750,000 characters in total                               |
+  | 503                 | `COMPANY_KNOWLEDGE_UNAVAILABLE`                                                                                                                                                                                    | Firestore failed                                               |
+  | 504                 | `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                                                                        | Firestore gave no answer within 10 seconds                     |
 
-- **Drive access** uses Application Default Credentials with the `drive.readonly` scope; the
-  Doc must be shared with that identity. A local `gcloud auth application-default login` has no
-  Drive scope, so connecting answers `503 DRIVE_ACCESS_DENIED` locally. The reader never writes
-  to Drive. Log lines name the operation and code only, never the Doc or Google's text.
-- **The folder** `GOOGLE_DRIVE_FOLDER_ID` (optional) behaves as in #28: its Google Docs are
-  listed in `companyKnowledge.drive` (checked at most every 30 seconds) and searched for answers.
+- **Web service**: `server/api-proxy.mjs` forwards this path as an upload with a 5 MiB limit and
+  answers `413 FILE_TOO_LARGE` for a larger file.
 
 ### Account chats and the company library
 
@@ -441,9 +435,7 @@ the company search (Vertex AI Search, or the sample guide without `VERTEX_SEARCH
 - `AI_MODE=document-search`: the two best quotes, alternating the same way.
 - Single-turn Gemini and sample answers do not search documents, as before.
 
-The library is the Drive folder's Docs plus the connected Docs that are not also in the folder,
-using the text saved when HR connected them. An empty folder adds nothing; any other folder
-failure fails the answer with its fixed Drive code (`503`) and saves nothing, as in #28.
+The library is the uploaded documents, using the text saved at upload.
 Anonymous browsers and guest workspaces never search the library.
 
 ### Account-owned chats
@@ -505,10 +497,9 @@ storage, expiry and deployment boundary.
 - `server/password-hashing.mjs`: scrypt hashing and password rules.
 - `server/employee-profiles.mjs`: profile validation and Firestore storage, and removal of an
   account's profile and import drafts.
-- `server/company-knowledge.mjs`: the HR company library (snapshot, connect, remove), the
-  Drive folder status and the library search for account chats.
+- `server/company-knowledge.mjs`: the HR company library (snapshot, upload, remove) and the
+  library search for account chats.
 - `server/company-documents.mjs`: Firestore `companyDocuments` and the library rules.
-- `server/google-drive-documents.mjs`: read-only Google Docs and Drive folder reader.
 - `server/onboarding-document-topics.mjs`: the six onboarding topics.
 - `server/profile-autofill.mjs`: profile autofill (file checks, the Gemini request, answer checks).
 - `server/database-migrations.mjs`, `server/migrations/*.sql`: the migration runner and SQL.
@@ -525,4 +516,4 @@ storage, expiry and deployment boundary.
 - `tests/server/account-*.test.mjs`, `password-hashing.test.mjs`, `employee-profiles.test.mjs`,
   `profile-autofill.test.mjs`, `employee-delete.test.mjs`, `support-summaries.test.mjs`,
   `company-knowledge.test.mjs`: account tests, using pg-mem (the real migrations), an in-memory
-  Firestore fake, a fake Google Drive and a fake Vertex AI endpoint with synthetic documents.
+  Firestore fake, a fake Vertex AI endpoint with synthetic documents.

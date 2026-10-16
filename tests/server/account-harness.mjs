@@ -114,7 +114,7 @@ export class Browser {
       else this.cookies.set(name, value);
     }
   }
-  async request(method, path, body, headers = {}) {
+  async request(method, path, body, headers = {}, raw = undefined) {
     const response = await fetch(this.url + path, {
       method,
       headers: {
@@ -122,7 +122,7 @@ export class Browser {
         ...(this.cookies.size ? { cookie: this.cookieHeader } : {}),
         ...headers,
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: raw ?? (body === undefined ? undefined : JSON.stringify(body)),
     });
     this.remember(response);
     const text = await response.text();
@@ -137,28 +137,29 @@ export class Browser {
   get = (path, headers) => this.request('GET', path, undefined, headers);
   post = (path, body = {}, headers) => this.request('POST', path, body, headers);
   put = (path, body = {}, headers) => this.request('PUT', path, body, headers);
+  // A raw file upload, as the HR Company knowledge page sends it.
+  upload = (path, buffer, fileName, headers) =>
+    this.request(
+      'POST',
+      path,
+      undefined,
+      {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': encodeURIComponent(fileName),
+        ...headers,
+      },
+      buffer,
+    );
   delete = (path, headers) => this.request('DELETE', path, undefined, headers);
   signIn = (username, password) => this.post('/api/auth/sign-in', { username, password });
 }
-
-// Google Drive stand-ins that refuse every request like a credential without
-// the Drive scope (403), so no test can reach Google.
-export const driveDenied = () =>
-  Object.assign(new Error('Synthetic Drive refusal'), { response: { status: 403 } });
-const refuseDoc = async () => {
-  throw driveDenied();
-};
-const refuseFolder = async () => {
-  throw driveDenied();
-};
 
 // Starts the app with accounts on. mode is the AI_MODE; `accounts: false`
 // starts it without the accounts service (DATABASE_URL unset). `autofill`, when
 // given, is passed to createProfileAutofill (model, fetchImpl, timeoutMs, ...)
 // with its log lines kept in `logs`; without it the app builds its default
 // autofill service, whose Vertex AI requests fail. The company search is the
-// synthetic handbook (`companyRetrieve`); `loadGoogleDocument(id)` and
-// `loadDriveKnowledge(folderId)` stand in for Google Drive (both refuse by default).
+// synthetic handbook (`companyRetrieve`).
 export async function startAccountsApp({
   mode = 'document-search',
   env: extraEnv = {},
@@ -166,8 +167,6 @@ export async function startAccountsApp({
   storageTimeoutMs = 300,
   autofill = undefined,
   companyRetrieve = fakeRetrieve,
-  loadGoogleDocument = refuseDoc,
-  loadDriveKnowledge = refuseFolder,
 } = {}) {
   const database = await createTestDatabase();
   const firestore = new FakeFirestore();
@@ -199,8 +198,6 @@ export async function startAccountsApp({
     conversationService,
     companyDocuments,
     companyRetrieve,
-    loadGoogleDocument,
-    loadDriveKnowledge,
     getAccessToken,
     fetchImpl,
     ...(autofill
