@@ -8,6 +8,7 @@ import { companyKnowledgeRequestErrors } from './company-knowledge.mjs';
 //   /api/me/*             the signed-in account's own data
 //   /api/hr/employees*    HR-only employee administration, including deletion
 //   /api/hr/employees/autofill  HR-only profile autofill (profile-autofill.mjs)
+//   /api/hr/departments*        HR-only departments and Employee ID prefixes (Settings)
 //   /api/hr/support-summaries   HR-only support summaries of employee accounts
 //   /api/hr/company-knowledge*  HR-only company Google Docs library (company-knowledge.mjs)
 // Every route checks the browser's Origin like the saved-chat routes, answers
@@ -164,6 +165,17 @@ export function mountAccountRoutes(
     res.json({
       employees: await accounts.supportSummaries((owner) => chatMemory().supportSummary(owner)),
     });
+  });
+
+  // HR Settings: the departments and their Employee ID prefixes.
+  employees.get('/departments', hr, async (req, res) => {
+    res.json({ departments: await accounts.listDepartments() });
+  });
+  employees.post('/departments', hr, async (req, res) => {
+    res.status(201).json(await accounts.createDepartment(req.accountSession, req.body));
+  });
+  employees.patch('/departments/:id', hr, async (req, res) => {
+    res.json(await accounts.updateDepartment(req.accountSession, req.params.id, req.body));
   });
 
   // The company Google Docs library: the shapes of #28's guest workspace

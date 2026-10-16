@@ -10,7 +10,12 @@ const at = new Date('2026-10-15T01:00:00.000Z');
 const hash = 'scrypt$n=1024,r=8,p=1$synthetic$synthetic';
 
 test('migrations are plain SQL files, applied once and recorded in schema_migrations', async () => {
-  const all = ['001_accounts.sql', '002_account_event_labels.sql', '003_employee_id_counters.sql'];
+  const all = [
+    '001_accounts.sql',
+    '002_account_event_labels.sql',
+    '003_employee_id_counters.sql',
+    '004_departments.sql',
+  ];
   assert.deepEqual(migrationFiles(), all);
   const sql = readFileSync(join(migrationsDirectory, '001_accounts.sql'), 'utf8');
   for (const table of ['accounts', 'sessions', 'account_events'])
@@ -50,12 +55,14 @@ test('migrations are plain SQL files, applied once and recorded in schema_migrat
     'username',
   ]);
   assert.deepEqual(of('sessions'), ['account_id', 'created_at', 'expires_at', 'token_hash']);
-  // Events hold who, whom (and a deleted account's username), what and when:
-  // no column for secrets or profile values.
+  // Events hold who, whom (and a deleted account's username), what and when,
+  // and for department changes a detail object: no column for secrets or
+  // profile values.
   assert.deepEqual(of('account_events'), [
     'action',
     'actor_id',
     'created_at',
+    'detail',
     'id',
     'target_id',
     'target_label',

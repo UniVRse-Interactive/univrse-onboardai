@@ -17,11 +17,16 @@ import {
 } from './autofill-fixtures.mjs';
 import {
   autofillInstruction,
+  autofillInstructionFor,
   autofillResponseSchema,
+  autofillResponseSchemaFor,
   readAutofillAnswer,
 } from '../../server/profile-autofill.mjs';
 import { checkProfileValue, profileSchema } from '../../server/employee-profiles.mjs';
 import { departments } from '../../server/departments.mjs';
+
+// The app reads the active names from the database, in name order.
+const departmentNames = departments.map((department) => department.name).sort();
 import { readUploadedDocument } from '../../server/read-uploaded-document.mjs';
 import { createWebApp } from '../../server/web-app.mjs';
 
@@ -234,7 +239,9 @@ test('a PDF is sent inline with the schema and system instruction, and the profi
     ]);
     assert.equal(request.tools, undefined);
     assert.equal(request.toolConfig, undefined);
-    assert.deepEqual(request.systemInstruction, { parts: [{ text: autofillInstruction }] });
+    assert.deepEqual(request.systemInstruction, {
+      parts: [{ text: autofillInstructionFor(departmentNames) }],
+    });
     for (const rule of [
       /Copy only values that are written in the document/,
       /Never guess/,
@@ -247,7 +254,7 @@ test('a PDF is sent inline with the schema and system instruction, and the profi
       temperature: 0,
       maxOutputTokens: 4096,
       responseMimeType: 'application/json',
-      responseSchema: autofillResponseSchema,
+      responseSchema: autofillResponseSchemaFor(departmentNames),
     });
     // The schema mirrors ProfileInput: four groups, every field text, and the
     // department limited to the six departments, or null when unclear.
@@ -325,7 +332,9 @@ test('scanned PDFs and images go inline; DOCX, TXT and MD go as extracted text o
       assert.ok(parts[1].text.includes(injection), name);
       assert.ok(!JSON.stringify(request.systemInstruction).includes('Avery'), name);
       assert.ok(!JSON.stringify(request).includes('inlineData'), name);
-      assert.deepEqual(request.systemInstruction, { parts: [{ text: autofillInstruction }] });
+      assert.deepEqual(request.systemInstruction, {
+        parts: [{ text: autofillInstructionFor(departmentNames) }],
+      });
     }
     // Extracted text is capped at the 250,000-character document limit.
     const long = await upload(hr, 'long.txt', Buffer.from('Avery Example. '.repeat(20000)));
@@ -510,12 +519,12 @@ test('the department is one of the six or empty: an enum for Gemini, a rule to c
     }
     const sent = vertex.calls[0].request.generationConfig.responseSchema;
     assert.deepEqual(sent.properties.job.properties.department.enum, [
-      'Product & Engineering',
       'Customer Success',
-      'Sales & Marketing',
       'Finance',
-      'People & Culture',
       'Operations & Facilities',
+      'People & Culture',
+      'Product & Engineering',
+      'Sales & Marketing',
     ]);
     assert.equal(sent.properties.job.properties.department.nullable, true);
     // No enum value is empty: Vertex AI answers 400 to that.

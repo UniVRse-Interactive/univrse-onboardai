@@ -9,7 +9,7 @@ import { startAccountsApp, syntheticProfile } from './account-harness.mjs';
 import { createTestDatabase } from './test-database.mjs';
 import { departments } from '../../server/departments.mjs';
 import { migrationsDirectory } from '../../server/database-migrations.mjs';
-import { departmentPrefix, formatEmployeeId } from '../../server/employee-ids.mjs';
+import { formatEmployeeId, prefixPattern, reservedPrefix } from '../../server/employee-ids.mjs';
 import { validateProfile } from '../../server/employee-profiles.mjs';
 import {
   generatedPasswordPattern,
@@ -47,7 +47,7 @@ const problemsOf = (input, options) => {
   return [];
 };
 
-test('the six departments and their prefixes are fixed, and the module imports nothing', () => {
+test('the seed departments and prefix rules are fixed, and the seed module imports nothing', () => {
   assert.deepEqual(departments, [
     { name: 'Product & Engineering', prefix: 'PE' },
     { name: 'Customer Success', prefix: 'CS' },
@@ -60,9 +60,10 @@ test('the six departments and their prefixes are fixed, and the module imports n
   // The browser imports this file too, so it must stay free of imports.
   const source = readFileSync(new URL('../../server/departments.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /^\s*import\b/m);
-  assert.equal(departmentPrefix('Finance'), 'FN');
-  for (const other of ['finance', 'People Operations', '', null, '__proto__'])
-    assert.equal(departmentPrefix(other), null, String(other));
+  assert.equal(reservedPrefix, 'HR');
+  for (const good of ['PE', 'LEG', 'ABCD']) assert.match(good, prefixPattern);
+  for (const bad of ['P', 'ABCDE', 'pe', 'P1', 'PE-', ' PE', 'PE\n'])
+    assert.doesNotMatch(bad, prefixPattern, JSON.stringify(bad));
   assert.equal(formatEmployeeId('PE', 7), 'PE-0007');
   assert.equal(formatEmployeeId('PE', 9999), 'PE-9999');
   assert.equal(formatEmployeeId('PE', 10000), 'PE-10000');
@@ -490,7 +491,7 @@ test('createEmployeeAccount is the one shared entry point for creating employees
 // pg-mem cannot run CREATE TABLE IF NOT EXISTS over an existing table with
 // constraints, so running the file twice is checked on the real PostgreSQL in
 // the live run; here the guard is checked in the text.
-test('migration 003 is guarded for a second run and holds only two-letter prefixes and positive numbers', async () => {
+test('migration 003 is guarded for a second run and holds only positive numbers per prefix', async () => {
   const database = await createTestDatabase();
   const sql = readFileSync(join(migrationsDirectory, '003_employee_id_counters.sql'), 'utf8');
   assert.match(sql, /CREATE TABLE IF NOT EXISTS employee_id_counters \(/);
@@ -502,9 +503,12 @@ test('migration 003 is guarded for a second run and holds only two-letter prefix
       number,
     ]);
   await insert('PE', 1);
+  // Migration 004 relaxed the two-letter rule to two to four letters.
+  await insert('PEX', 1);
   for (const [prefix, number] of [
     ['pe', 1],
-    ['PEX', 1],
+    ['PEXTR', 1],
+    ['P', 1],
     ['P1', 1],
     ['CS', 0],
   ])

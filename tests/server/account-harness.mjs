@@ -211,6 +211,7 @@ export async function startAccountsApp({
             log,
             getAccessToken,
             fetchImpl,
+            departmentNames: () => accounts.activeDepartmentNames(),
             ...autofill,
           }),
         }

@@ -1,6 +1,6 @@
 import pg from 'pg';
 import { ChatError } from './chat-errors.mjs';
-import { accountErrors } from './account-errors.mjs';
+import { accountErrors, departmentErrors } from './account-errors.mjs';
 import { formatEmployeeId, prefixPattern } from './employee-ids.mjs';
 
 // Sign-in data in PostgreSQL (tables in server/migrations/*.sql): accounts,
@@ -40,6 +40,14 @@ const accountColumns = (alias) =>
     .map((column) => `${alias}.${column}`)
     .join(', ');
 const uniqueViolation = '23505';
+// Active first, then by name (any letter case), then by name itself.
+const byDepartment = (a, b) =>
+  Number(a.archived) - Number(b.archived) ||
+  a.name.toLowerCase().localeCompare(b.name.toLowerCase(), 'en') ||
+  (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+const departmentColumns = 'id, name, prefix, archived, created_at, updated_at';
+// A department as the audit trail records it: no timestamps, no secrets.
+const departmentDetail = (row) => ({ id: row.id, name: row.name, prefix: row.prefix });
 
 export function createAccountStore({ pool, log = (line) => console.warn(line) }) {
   function failure(operation, error) {
@@ -75,11 +83,35 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
       client.release();
     }
   }
-  const event = (query, actorId, targetId, action, at) =>
-    query(
-      'INSERT INTO account_events (actor_id, target_id, action, created_at) VALUES ($1, $2, $3, $4)',
-      [actorId, targetId, action, at],
+  const event = (query, actorId, targetId, action, at, detail = null) =>
+    detail
+      ? query(
+          'INSERT INTO account_events (actor_id, target_id, action, created_at, detail) VALUES ($1, $2, $3, $4, $5)',
+          [actorId, targetId, action, at, JSON.stringify(detail)],
+        )
+      : query(
+          'INSERT INTO account_events (actor_id, target_id, action, created_at) VALUES ($1, $2, $3, $4)',
+          [actorId, targetId, action, at],
+        );
+  // Throws the 409 for a name or prefix another department (exceptId aside)
+  // already has.
+  async function departmentConflicts(query, exceptId, name, prefix) {
+    const taken = await query(
+      `SELECT lower(name) = lower($2) AS same_name, prefix = $3 AS same_prefix
+       FROM departments WHERE (lower(name) = lower($2) OR prefix = $3)
+         AND ($1::uuid IS NULL OR id <> $1::uuid)`,
+      [exceptId, name, prefix],
     );
+    if (taken.rows.some((row) => row.same_name)) throw departmentErrors.nameTaken();
+    if (taken.rows.some((row) => row.same_prefix)) throw departmentErrors.prefixTaken();
+  }
+  // Two requests racing past the check above end here.
+  const uniqueDepartmentFailure = (error) =>
+    error?.code !== uniqueViolation
+      ? error
+      : /prefix/.test(String(error.constraint ?? ''))
+        ? departmentErrors.prefixTaken()
+        : departmentErrors.nameTaken();
   const insertSession = (query, accountId, session) =>
     query(
       'INSERT INTO sessions (token_hash, account_id, created_at, expires_at) VALUES ($1, $2, $3, $4)',
@@ -234,7 +266,7 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
         open = true;
         const allocated = await client.query(
           `INSERT INTO employee_id_counters AS c (prefix, last_number)
-           SELECT $1, COALESCE(MAX(CAST(substring(upper(username) FROM 4) AS integer)), 0) + 1
+           SELECT $1, COALESCE(MAX(CAST(substring(upper(username) FROM ${prefix.length + 2}) AS integer)), 0) + 1
            FROM accounts WHERE upper(username) ~ $2
            ON CONFLICT (prefix) DO UPDATE
              SET last_number = GREATEST(c.last_number + 1, EXCLUDED.last_number)
@@ -379,6 +411,104 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
           [actorId, account.username, at],
         );
         return account;
+      });
+    },
+    // Departments (issue #36). The table is the one list of departments and
+    // prefixes; archived ones are kept. Order: active first, then by name.
+    async listDepartments() {
+      const found = await run('list departments', `SELECT ${departmentColumns} FROM departments`);
+      return found.rows.sort(byDepartment);
+    },
+    async activeDepartments() {
+      const found = await run(
+        'list active departments',
+        `SELECT ${departmentColumns} FROM departments WHERE archived = false`,
+      );
+      return found.rows.sort(byDepartment);
+    },
+    async department(id) {
+      const found = await run(
+        'read department',
+        `SELECT ${departmentColumns} FROM departments WHERE id = $1`,
+        [id],
+      );
+      return found.rows[0] || null;
+    },
+    // 409 DEPARTMENT_NAME_TAKEN / DEPARTMENT_PREFIX_TAKEN when another
+    // department (archived ones too) has the name (any letter case) or prefix.
+    async createDepartment(actorId, { name, prefix }, at) {
+      return transaction('create department', async (query) => {
+        await departmentConflicts(query, null, name, prefix);
+        let inserted;
+        try {
+          inserted = await query(
+            `INSERT INTO departments (name, prefix, archived, created_at, updated_at)
+             VALUES ($1, $2, false, $3, $3) RETURNING ${departmentColumns}`,
+            [name, prefix, at],
+          );
+        } catch (error) {
+          throw uniqueDepartmentFailure(error);
+        }
+        const department = inserted.rows[0];
+        await event(query, actorId, null, 'department_created', at, {
+          department: departmentDetail(department),
+        });
+        return department;
+      });
+    },
+    // Applies changes ({ name?, prefix?, archived? }) and records the events,
+    // then runs during(before, after) before the commit; if it throws (the
+    // Firestore profile rename), nothing is kept. Returns { before, after },
+    // or null when no department has that ID. Nothing changes (and no event is
+    // recorded) when the values are the ones already stored.
+    async updateDepartment(actorId, id, changes, at, during = null) {
+      return transaction('update department', async (query) => {
+        const found = await query(
+          `SELECT ${departmentColumns} FROM departments WHERE id = $1 FOR UPDATE`,
+          [id],
+        );
+        const before = found.rows[0];
+        if (!before) return null;
+        const next = {
+          name: changes.name ?? before.name,
+          prefix: changes.prefix ?? before.prefix,
+          archived: changes.archived ?? before.archived,
+        };
+        const nameChanged = next.name !== before.name,
+          prefixChanged = next.prefix !== before.prefix,
+          archivedChanged = next.archived !== before.archived;
+        if (!nameChanged && !prefixChanged && !archivedChanged) return { before, after: before };
+        await departmentConflicts(query, id, next.name, next.prefix);
+        let updated;
+        try {
+          updated = await query(
+            `UPDATE departments SET name = $2, prefix = $3, archived = $4, updated_at = $5
+             WHERE id = $1 RETURNING ${departmentColumns}`,
+            [id, next.name, next.prefix, next.archived, at],
+          );
+        } catch (error) {
+          throw uniqueDepartmentFailure(error);
+        }
+        const after = updated.rows[0];
+        if (nameChanged || prefixChanged)
+          await event(query, actorId, null, 'department_updated', at, {
+            department: departmentDetail(after),
+            changes: {
+              ...(nameChanged ? { name: { from: before.name, to: after.name } } : {}),
+              ...(prefixChanged ? { prefix: { from: before.prefix, to: after.prefix } } : {}),
+            },
+          });
+        if (archivedChanged)
+          await event(
+            query,
+            actorId,
+            null,
+            after.archived ? 'department_archived' : 'department_restored',
+            at,
+            { department: departmentDetail(after) },
+          );
+        if (during) await during(before, after);
+        return { before, after };
       });
     },
     async employee(id) {

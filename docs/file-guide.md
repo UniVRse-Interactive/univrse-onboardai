@@ -143,8 +143,8 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | `server/account-routes.mjs`             | `/api/auth`, `/api/me` and `/api/hr` routes and the `onboardai_account` cookie                                                |
 | `server/account-errors.mjs`             | Account error codes and messages                                                                                              |
 | `server/password-hashing.mjs`           | scrypt password hashes, password rules and generated passwords (temporary and local HR)                                       |
-| `server/departments.mjs`                | The six departments and their Employee ID prefixes; import-free, the browser imports it too                                   |
-| `server/employee-ids.mjs`               | Department checks and the `PE-0001` Employee ID format                                                                        |
+| `server/departments.mjs`                | The six first departments and prefixes, seed data only (migration 004 holds the live list in `departments`); import-free      |
+| `server/employee-ids.mjs`               | The prefix rule (2–4 letters, `HR` reserved) and the `PE-0001` Employee ID format                                             |
 | `server/employee-profiles.mjs`          | Profile validation and `employeeProfiles/{accountId}` in Firestore; removes an account's profile and `employeeImports` drafts |
 | `server/company-knowledge.mjs`          | HR company Google Docs library, Drive folder status, and its search for account-owned chats                                   |
 | `server/company-documents.mjs`          | Firestore `companyDocuments` and the library rules (one Doc per topic, twelve documents)                                      |

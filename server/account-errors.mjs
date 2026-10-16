@@ -74,6 +74,42 @@ export const accountErrors = {
   notFound: () => new AccountError(404, 'NOT_FOUND', 'This account action is unavailable.'),
 };
 
+// HR Settings: /api/hr/departments. Fixed messages; names are never echoed.
+const departmentProblemText = {
+  required: 'is required',
+  too_long: 'is too long',
+  invalid_format: 'is not in the right format',
+  reserved: 'is reserved',
+};
+export const departmentErrors = {
+  invalid: (fields) =>
+    new AccountError(
+      400,
+      'DEPARTMENT_INVALID',
+      'Check the department: ' +
+        (fields.length
+          ? fields
+              .map(({ field, problem }) => `${field} ${departmentProblemText[problem]}`)
+              .join('; ')
+          : 'send a name, a prefix or archived') +
+        '.',
+      { fields },
+    ),
+  nameTaken: () =>
+    new AccountError(
+      409,
+      'DEPARTMENT_NAME_TAKEN',
+      'A department with that name already exists. Choose a different name.',
+    ),
+  prefixTaken: () =>
+    new AccountError(
+      409,
+      'DEPARTMENT_PREFIX_TAKEN',
+      'That prefix is already used by a department. Choose a different prefix.',
+    ),
+  notFound: () => new AccountError(404, 'DEPARTMENT_NOT_FOUND', 'This department was not found.'),
+};
+
 // POST /api/hr/employees/autofill. Fixed messages only: provider text, file
 // names and document content never reach the browser.
 export const autofillErrors = {

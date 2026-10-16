@@ -87,7 +87,13 @@ export function createApp({
   const autofill =
     profileAutofill !== undefined
       ? profileAutofill
-      : createProfileAutofill({ env, fetchImpl, getAccessToken: vertexToken });
+      : createProfileAutofill({
+          env,
+          fetchImpl,
+          getAccessToken: vertexToken,
+          // The active departments, read per request.
+          departmentNames: accounts ? () => accounts.activeDepartmentNames() : undefined,
+        });
   // Company passages for gemini-chat and document-search: Vertex AI Search, or
   // the sample guide when VERTEX_SEARCH_ENGINE_ID is unset.
   const retrieve =
@@ -148,7 +154,7 @@ export function createApp({
   const requests = new Map();
 
   app.use('/api', (req, res, next) => {
-    if (req.method !== 'POST') return next();
+    if (req.method !== 'POST' && req.method !== 'PATCH') return next();
 
     const now = Date.now();
 

@@ -1,7 +1,7 @@
 import { AccountError } from './account-errors.mjs';
 import { commitInBatches, deleteOperation } from './firestore-checkpointer.mjs';
 import { createStorageCall } from './firestore-client.mjs';
-import { isDepartment } from './employee-ids.mjs';
+import { departments as seedDepartments } from './departments.mjs';
 
 // Each employee's personal profile is one Firestore document,
 // employeeProfiles/{accountId}. Only HR writes it; an employee reads their own.
@@ -18,8 +18,8 @@ export const importMentions = (data, accountId) =>
     data.possibleDuplicates.some((match) => match?.accountId === accountId));
 
 // group -> field -> rule. Every field is optional text except job.fullName and
-// job.department, which validateProfile requires to be one of the six
-// departments (departmentProblem below; `max` still bounds stored values).
+// job.department, which validateProfile requires to be one of the
+// active departments (departmentProblem below; `max` still bounds stored values).
 export const profileSchema = Object.freeze({
   job: {
     fullName: { max: 120, required: true },
@@ -104,22 +104,32 @@ export function checkProfileValue(group, name, value) {
   return problem ? { problem } : { value: text };
 }
 
-// job.department is one of the six departments (departments.mjs), which also
-// decides the Employee ID prefix. `keep`, when given, is the value already
-// stored for the employee: it is accepted unchanged, so a profile saved before
-// the list existed (free text, or empty) stays editable without a new choice.
-function departmentProblem(value, keep) {
+// The department names a profile may be saved with when the caller does not
+// pass the active ones from the database: the seed list. Tests only; the
+// account service always passes the departments table's active names.
+const seedDepartmentNames = Object.freeze(seedDepartments.map((department) => department.name));
+
+// job.department is the name of an active department (the departments table),
+// which also decides the Employee ID prefix. `keep`, when given, is the value
+// already stored for the employee: it is accepted unchanged, so a profile saved
+// before the list existed, or with a department since archived or renamed,
+// stays editable without a new choice.
+function departmentProblem(value, keep, names) {
   if (value !== undefined && value !== null && typeof value !== 'string') return ['not_text'];
   const text = typeof value === 'string' ? value.trim() : '';
-  if (isDepartment(text) || (typeof keep === 'string' && text === keep)) return [null, text];
+  if (names.includes(text) || (typeof keep === 'string' && text === keep)) return [null, text];
   return [text ? 'invalid_department' : 'required'];
 }
 
 // Returns the stored form (every field present, trimmed, '' when empty), or
 // throws 400 PROFILE_INVALID with details.fields = [{ field, problem }].
-// job.department must be one of the six departments; keepDepartment (an
-// update) also allows exactly the employee's stored department.
-export function validateProfile(input, { keepDepartment } = {}) {
+// job.department must be one of activeDepartments (names; the seed list when
+// omitted); keepDepartment (an update) also allows exactly the employee's
+// stored department.
+export function validateProfile(
+  input,
+  { keepDepartment, activeDepartments = seedDepartmentNames } = {},
+) {
   const problems = [];
   const profile = {};
   if (!isObject(input)) problems.push({ field: 'profile', problem: 'not_object' });
@@ -139,7 +149,7 @@ export function validateProfile(input, { keepDepartment } = {}) {
       for (const [name, rule] of Object.entries(fields)) {
         const [problem, value] =
           group === 'job' && name === 'department'
-            ? departmentProblem(given[name], keepDepartment)
+            ? departmentProblem(given[name], keepDepartment, activeDepartments)
             : fieldProblem(given[name], rule);
         if (problem) problems.push({ field: `${group}.${name}`, problem });
         else profile[group][name] = value;
@@ -250,6 +260,56 @@ export function createProfileStore({
         const stored = { ...profile, updatedAt: at.toISOString(), updatedBy };
         await ref(await database(), accountId).set(stored);
         return presentProfile(stored);
+      }),
+    // Department -> number of profiles, for HR's department list. The profile
+    // collection is small, so this reads each profile's job group.
+    countByDepartment: () =>
+      guarded('count employee departments', async () => {
+        const db = await database();
+        const snapshot = await db.collection(profileCollection).select('job').get();
+        const counts = new Map();
+        for (const doc of snapshot.docs) {
+          const name = doc.data()?.job?.department;
+          if (typeof name === 'string') counts.set(name, (counts.get(name) || 0) + 1);
+        }
+        return counts;
+      }),
+    // Sets job.department to `to` on every profile whose value is exactly
+    // `from`, in batches. Resolves to { updated, undo }: the count, and a
+    // function putting `from` back on those profiles (best effort, for when a
+    // later step fails). If a batch fails, the batches before it are put back
+    // here and the error is thrown, so the rename is all or (as far as
+    // Firestore allows) nothing; repeating it is safe.
+    renameDepartment: (from, to) =>
+      guarded('rename profile department', async () => {
+        const db = await database();
+        const snapshot = await db.collection(profileCollection).select('job').get();
+        const matching = snapshot.docs
+          .map((doc) => ({ ref: doc.ref, job: doc.data()?.job }))
+          .filter(({ job }) => job?.department === from);
+        const changeAll = async (list, department) => {
+          for (let i = 0; i < list.length; i += 400) {
+            const batch = db.batch();
+            for (const { ref, job } of list.slice(i, i + 400))
+              batch.update(ref, { job: { ...job, department } });
+            await batch.commit();
+          }
+        };
+        const done = [];
+        try {
+          for (let i = 0; i < matching.length; i += 400) {
+            const slice = matching.slice(i, i + 400);
+            await changeAll(slice, to);
+            done.push(...slice);
+          }
+        } catch (error) {
+          await changeAll(done, from).catch(() => {});
+          throw error;
+        }
+        return {
+          updated: matching.length,
+          undo: () => guarded('undo profile department rename', () => changeAll(done, from)),
+        };
       }),
     remove: (accountId) =>
       guarded('delete employee profile', async () => {

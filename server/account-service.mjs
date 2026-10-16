@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { accountErrors } from './account-errors.mjs';
+import { accountErrors, departmentErrors } from './account-errors.mjs';
 import { createAccountStore, createDatabasePool } from './account-store.mjs';
-import { departmentPrefix, isDepartment } from './employee-ids.mjs';
+import { formatEmployeeId, prefixPattern, reservedPrefix } from './employee-ids.mjs';
 import { createFirestoreClient } from './firestore-client.mjs';
 import {
   createProfileStore,
@@ -48,6 +48,25 @@ const asProfileStorageError = (error) =>
     : typeof error?.code === 'string' && error.code.startsWith('STORAGE_')
       ? profileStorageErrors.unavailable()
       : error;
+
+// Department names (issue #36): one line, trimmed, 1 to 60 characters.
+export const departmentNameMax = 60;
+const controlCharacters = /[\u0000-\u001f\u007f\u0085\u2028\u2029]/;
+// The check for one department field: { value } or { problem }.
+function checkDepartmentField(field, raw) {
+  if (raw === undefined || raw === null) return { problem: 'required' };
+  if (typeof raw !== 'string') return { problem: 'invalid_format' };
+  const value = raw.trim();
+  if (!value) return { problem: 'required' };
+  if (field === 'name') {
+    if ([...value].length > departmentNameMax) return { problem: 'too_long' };
+    if (controlCharacters.test(value)) return { problem: 'invalid_format' };
+  } else {
+    if (!prefixPattern.test(value)) return { problem: 'invalid_format' };
+    if (value === reservedPrefix) return { problem: 'reserved' };
+  }
+  return { value };
+}
 
 // The chat store's summary scope describes a browser's chats; an account's
 // chats follow the employee, so HR's summaries say so.
@@ -228,10 +247,106 @@ export function createAccountService({
     return { account: accountView(row, now()), profile: await profiles.read(row.id) };
   }
 
+  // Departments (issue #36), kept in the departments table. exampleId only
+  // shows the format; employees counts the profiles whose job.department
+  // equals the name.
+  const departmentView = (row, employees) => ({
+    id: row.id,
+    name: row.name,
+    prefix: row.prefix,
+    archived: row.archived,
+    exampleId: formatEmployeeId(row.prefix, 1),
+    employees,
+  });
+  // The count after a change is a courtesy: a Firestore failure there must not
+  // turn a change that already succeeded into an error.
+  async function employeesIn(name) {
+    try {
+      return (await profiles.countByDepartment()).get(name) || 0;
+    } catch {
+      return 0;
+    }
+  }
+  // The names of the active departments, the choices for a new hire and the
+  // autofill's enum.
+  async function activeDepartmentNames() {
+    return (await store.activeDepartments()).map((row) => row.name);
+  }
+  // Active departments first, then by name, with their employee counts.
+  async function listDepartments() {
+    const rows = await store.listDepartments();
+    const counts = await profiles.countByDepartment();
+    return rows.map((row) => departmentView(row, counts.get(row.name) || 0));
+  }
+  function departmentFields(body, keys) {
+    if (!isPlainObject(body)) throw departmentErrors.invalid([]);
+    const problems = [],
+      values = {};
+    for (const key of keys) {
+      if (key === 'archived') {
+        if (typeof body.archived !== 'boolean')
+          problems.push({ field: key, problem: 'invalid_format' });
+        else values.archived = body.archived;
+        continue;
+      }
+      const checked = checkDepartmentField(key, body[key]);
+      if (checked.problem) problems.push({ field: key, problem: checked.problem });
+      else values[key] = checked.value;
+    }
+    if (problems.length) throw departmentErrors.invalid(problems);
+    return values;
+  }
+  // POST /api/hr/departments { name, prefix } -> { department }.
+  async function createDepartment(actor, body) {
+    if (!isPlainObject(body)) throw departmentErrors.invalid([]);
+    const unknown = Object.keys(body).filter((key) => !['name', 'prefix'].includes(key));
+    if (unknown.length) throw departmentErrors.invalid([]);
+    const values = departmentFields(body, ['name', 'prefix']);
+    const row = await store.createDepartment(actor.account.id, values, now());
+    return { department: departmentView(row, await employeesIn(row.name)) };
+  }
+  // PATCH /api/hr/departments/:id { name?, prefix?, archived? } ->
+  // { department, updatedProfiles }. A new name is also written to every
+  // profile with the old one, before the change is committed: if Firestore
+  // fails, the department keeps its name (503/504) and a retry works.
+  async function updateDepartment(actor, id, body) {
+    if (!isPlainObject(body)) throw departmentErrors.invalid([]);
+    const keys = Object.keys(body);
+    if (!keys.length || keys.some((key) => !['name', 'prefix', 'archived'].includes(key)))
+      throw departmentErrors.invalid([]);
+    const changes = departmentFields(body, keys);
+    if (!validId(id)) throw departmentErrors.notFound();
+    let renamed = null;
+    let result;
+    try {
+      result = await store.updateDepartment(
+        actor.account.id,
+        id,
+        changes,
+        now(),
+        async (before, after) => {
+          if (before.name !== after.name)
+            renamed = await profiles.renameDepartment(before.name, after.name);
+        },
+      );
+    } catch (error) {
+      // The commit failed after the profiles were renamed: put them back.
+      if (renamed) await renamed.undo().catch(() => {});
+      throw error;
+    }
+    if (!result) throw departmentErrors.notFound();
+    const employees = renamed ? renamed.updated : await employeesIn(result.after.name);
+    return {
+      department: departmentView(result.after, employees),
+      updatedProfiles: renamed ? renamed.updated : 0,
+    };
+  }
+
   // The one way an employee account is created: HR's "Add employee account"
   // (POST /api/hr/employees) and the employee form import approval (#27).
-  //   profile: ProfileInput. job.department must be one of the six departments
-  //            (departments.mjs); it decides the Employee ID prefix.
+  //   profile: ProfileInput. job.department must be the name of an active
+  //            department (the departments table); its prefix decides the
+  //            Employee ID.
   //   actorId: the HR account creating the employee (created_by, the event
   //            actor and the profile's updatedBy).
   // Resolves to { employee: { account: EmployeeAccount, profile: Profile },
@@ -246,8 +361,9 @@ export function createAccountService({
   // was written, the orphaned profile is removed (best effort).
   async function createEmployeeAccount({ profile: input, actorId } = {}) {
     if (!validId(actorId)) throw new TypeError('createEmployeeAccount needs the HR actorId.');
-    const profile = validateProfile(input);
-    const prefix = departmentPrefix(profile.job.department);
+    const active = await store.activeDepartments();
+    const profile = validateProfile(input, { activeDepartments: active.map((row) => row.name) });
+    const prefix = active.find((row) => row.name === profile.job.department).prefix;
     const temporaryPassword = generatePassword();
     const passwordHash = await hashing.hash(temporaryPassword);
     const at = now();
@@ -282,17 +398,19 @@ export function createAccountService({
     return createEmployeeAccount({ profile: body.profile, actorId: actor.account.id });
   }
 
-  // A department outside the six is accepted only when it is the one already
-  // stored (a profile saved before the list existed), so it stays editable.
+  // A department that is not active is accepted only when it is the one already
+  // stored (archived since, or saved before the list existed), so it stays
+  // editable.
   async function replaceProfile(actor, id, body) {
     if (!validId(id)) throw accountErrors.employeeNotFound();
     const job = isPlainObject(body?.profile) ? body.profile.job : undefined;
     const requested =
       isPlainObject(job) && typeof job.department === 'string' ? job.department.trim() : '';
-    const keepDepartment = isDepartment(requested)
+    const activeDepartments = await activeDepartmentNames();
+    const keepDepartment = activeDepartments.includes(requested)
       ? undefined
       : ((await profiles.read(id))?.job.department ?? '');
-    const profile = validateProfile(body?.profile, { keepDepartment });
+    const profile = validateProfile(body?.profile, { keepDepartment, activeDepartments });
     const at = now();
     let saved = null;
     const row = await store.employeeChange(
@@ -388,6 +506,10 @@ export function createAccountService({
     myProfile,
     listEmployees,
     getEmployee,
+    listDepartments,
+    activeDepartmentNames,
+    createDepartment,
+    updateDepartment,
     createEmployeeAccount,
     createEmployee,
     replaceProfile,

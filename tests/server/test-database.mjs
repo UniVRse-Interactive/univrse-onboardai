@@ -40,7 +40,19 @@ export async function createTestDatabase() {
   let queue = Promise.resolve();
   const statements = [];
 
-  async function query(text, values) {
+  // pg-mem names an inline CHECK <table>_constraint_<n> where PostgreSQL names
+  // it <table>_<column>_check, so migration 004's DROP CONSTRAINT of the 2-letter
+  // prefix rule would find nothing. The live run covers the real name.
+  const pgMemNames = (text) =>
+    typeof text === 'string'
+      ? text.replace(
+          'DROP CONSTRAINT IF EXISTS employee_id_counters_prefix_check',
+          'DROP CONSTRAINT IF EXISTS employee_id_counters_constraint_1',
+        )
+      : text;
+
+  async function query(rawText, values) {
+    const text = pgMemNames(rawText);
     statements.push(typeof text === 'string' ? text : text.text);
     const fault = faults.find((f) => f.times > 0 && (!f.match || f.match.test(text)));
     if (fault) {

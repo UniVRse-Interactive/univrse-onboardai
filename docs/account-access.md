@@ -54,13 +54,18 @@ workspaces keep their own SQLite file, as before.
   `must_change_password`, `failed_attempts`, `locked_until`, `created_at`, `updated_at`,
   `last_sign_in_at`, `created_by`.
 - **sessions**: `token_hash` (SHA-256 of the cookie token), `account_id`, `created_at`, `expires_at`.
-- **employee_id_counters** (`003_employee_id_counters.sql`): `prefix` (two capital letters),
-  `last_number` (the last number handed out for that prefix). See
+- **employee_id_counters** (`003_employee_id_counters.sql`): `prefix` (two to four capital
+  letters since `004`), `last_number` (the last number handed out for that prefix). See
   [Employee IDs and temporary passwords](#employee-ids-and-temporary-passwords).
-- **account_events**: `actor_id`, `target_id`, `target_label`, `action`, `created_at`. Actions:
+- **departments** (`004_departments.sql`): `id` (uuid), `name`, `prefix`, `archived`,
+  `created_at`, `updated_at`; unique on `lower(name)` and on `prefix`. Seeded with the six
+  first departments. See [Departments (HR Settings)](#departments-hr-settings).
+- **account_events**: `actor_id`, `target_id`, `target_label`, `detail` (`jsonb`, department
+  events only), `action`, `created_at`. Actions:
   `hr_account_created`, `employee_created`, `profile_updated`, `password_reset`,
   `account_disabled`, `account_enabled`, `password_changed`, `signed_in`, `account_locked`,
-  `hr_password_reset` (by `npm run hr:reset-password`, no actor), `employee_deleted`.
+  `hr_password_reset` (by `npm run hr:reset-password`, no actor), `employee_deleted`,
+  `department_created`, `department_updated`, `department_archived`, `department_restored`.
   No secrets or profile values. `target_id` becomes `NULL` when its account is deleted, so
   deleting an employee writes the account's username (its Employee ID) into `target_label` on
   every event about it, including `employee_deleted` (`002_account_event_labels.sql`).
@@ -73,20 +78,20 @@ its own transaction, and recorded in `schema_migrations`. Running it again chang
 Every field is text, stored trimmed, `''` when empty. `job.fullName` and `job.department` are
 required. Unknown fields are rejected. Values are single-line (no control characters).
 
-`job.department` is one of the six departments in `server/departments.mjs` (exactly, after
-trimming): Product & Engineering, Customer Success, Sales & Marketing, Finance, People & Culture
-or Operations & Facilities. Missing or empty is `required`; anything else is
-`invalid_department`. An edit (`PUT …/profile`) may also keep exactly the department already
-stored for that employee, so a profile saved before the list existed (free text, or empty) stays
-editable without a new choice; changing it means choosing one of the six. The department decides
-the Employee ID prefix at creation only: editing it later never changes the ID.
+`job.department` is the name of an **active** department in the `departments` table (exactly,
+after trimming; `GET /api/hr/departments` lists them). Missing or empty is `required`; anything
+else is `invalid_department`. An edit (`PUT …/profile`) may also keep exactly the department
+already stored for that employee, so a profile saved before the list existed (free text, or
+empty) or with a department since archived stays editable without a new choice; changing it
+means choosing an active one. The department decides the Employee ID prefix at creation only:
+editing it later never changes the ID.
 
-| Group              | Field (maximum characters)                                                                                                                                        |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `job`              | `fullName` (120, required), `preferredName` (80), `jobTitle` (120), `department` (one of six, required), `startDate` (`YYYY-MM-DD`, a real date), `manager` (120) |
-| `contact`          | `workEmail` (254, email), `personalEmail` (254, email), `mobileNumber` (32, digits, spaces, `+ - ( ) .`)                                                          |
-| `emergencyContact` | `name` (120), `relationship` (60), `phoneNumber` (32, as `mobileNumber`)                                                                                          |
-| `homeAddress`      | `line1` (200), `line2` (200), `city` (100), `state` (100), `postcode` (20), `country` (100)                                                                       |
+| Group              | Field (maximum characters)                                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `job`              | `fullName` (120, required), `preferredName` (80), `jobTitle` (120), `department` (active department, required), `startDate` (`YYYY-MM-DD`, a real date), `manager` (120) |
+| `contact`          | `workEmail` (254, email), `personalEmail` (254, email), `mobileNumber` (32, digits, spaces, `+ - ( ) .`)                                                                 |
+| `emergencyContact` | `name` (120), `relationship` (60), `phoneNumber` (32, as `mobileNumber`)                                                                                                 |
+| `homeAddress`      | `line1` (200), `line2` (200), `city` (100), `state` (100), `postcode` (20), `country` (100)                                                                              |
 
 The server adds `updatedAt` (ISO 8601) and `updatedBy` (the HR account ID). Log lines
 about profiles name the operation and Firestore status only, never values.
@@ -257,12 +262,15 @@ ProfileSummary  { fullName, preferredName, jobTitle, department, startDate }
 | `GET /api/hr/employees`                          | HR                              | none                                                | 200 `{ employees: [{ account: EmployeeAccount, profile: ProfileSummary \| null }] }`, by ID, at most 500                                                                 |                                                                                                                                                                                                                   |
 | `POST /api/hr/employees`                         | HR                              | `{ profile: ProfileInput }` (nothing else)          | 201 `{ employee: { account: EmployeeAccount, profile: Profile }, temporaryPassword }`; see [Employee IDs and temporary passwords](#employee-ids-and-temporary-passwords) | 400 `EMPLOYEE_INVALID` (not an object, or any key but `profile`, such as `username` or `temporaryPassword`), `PROFILE_INVALID` (`job.department` `required` or `invalid_department` among them)                   |
 | `GET /api/hr/employees/:id`                      | HR                              | none                                                | 200 `{ employee: { account, profile: Profile \| null } }`                                                                                                                | 404 `EMPLOYEE_NOT_FOUND` (unknown, not a UUID, or an HR account)                                                                                                                                                  |
-| `PUT /api/hr/employees/:id/profile`              | HR                              | `{ profile: ProfileInput }` (full replacement)      | 200 `{ employee: { account, profile } }`                                                                                                                                 | 400 `PROFILE_INVALID` (`job.department` must be one of the six or exactly the stored value); 404 `EMPLOYEE_NOT_FOUND`                                                                                             |
+| `PUT /api/hr/employees/:id/profile`              | HR                              | `{ profile: ProfileInput }` (full replacement)      | 200 `{ employee: { account, profile } }`                                                                                                                                 | 400 `PROFILE_INVALID` (`job.department` must be an active department or exactly the stored value); 404 `EMPLOYEE_NOT_FOUND`                                                                                       |
 | `POST /api/hr/employees/:id/password`            | HR                              | `{ temporaryPassword }`                             | 200 `{ account: EmployeeAccount }`: forced change set, lock cleared, sessions ended                                                                                      | 400 `PASSWORD_REJECTED`; 404 `EMPLOYEE_NOT_FOUND`                                                                                                                                                                 |
 | `PUT /api/hr/employees/:id/status`               | HR                              | `{ status: "active" \| "disabled" }`                | 200 `{ account: EmployeeAccount }`; disabling ends the sessions                                                                                                          | 400 `STATUS_INVALID`; 404 `EMPLOYEE_NOT_FOUND`                                                                                                                                                                    |
 | `POST /api/hr/employees/autofill`                | HR                              | raw file, see [Profile autofill](#profile-autofill) | 200 `{ profile: ProfileInput, filled, warnings }`; nothing is saved                                                                                                      | 400 `AUTOFILL_FILE_INVALID`; 413 `AUTOFILL_FILE_TOO_LARGE`; 422 `AUTOFILL_NOTHING_FOUND`; 429 `AUTOFILL_RATE_LIMITED`; 503 `AUTOFILL_NOT_CONFIGURED`, `AUTOFILL_UNAVAILABLE`; 504 `AUTOFILL_TIMEOUT`              |
 | `DELETE /api/hr/employees/:id`                   | HR                              | none                                                | 204; see [Deleting an employee](#deleting-an-employee)                                                                                                                   | 404 `EMPLOYEE_NOT_FOUND` (unknown, not a UUID, or an HR account); 409 `CHAT_BUSY`; 503 `PROFILE_STORAGE_UNAVAILABLE`, 504 `PROFILE_STORAGE_TIMEOUT` (the account is kept; retry)                                  |
 | `GET /api/hr/support-summaries`                  | HR                              | none                                                | 200 `{ employees: [{ account: EmployeeAccount, name, summary }] }`, by ID; see [Support summaries](#support-summaries)                                                   |                                                                                                                                                                                                                   |
+| `GET /api/hr/departments`                        | HR                              | none                                                | 200 `{ departments: Department[] }`; see [Departments (HR Settings)](#departments-hr-settings)                                                                           | 503 `PROFILE_STORAGE_UNAVAILABLE`, 504 `PROFILE_STORAGE_TIMEOUT`                                                                                                                                                  |
+| `POST /api/hr/departments`                       | HR                              | `{ name, prefix }`                                  | 201 `{ department: Department }`                                                                                                                                         | 400 `DEPARTMENT_INVALID`; 409 `DEPARTMENT_NAME_TAKEN`, `DEPARTMENT_PREFIX_TAKEN`                                                                                                                                  |
+| `PATCH /api/hr/departments/:id`                  | HR                              | `{ name?, prefix?, archived? }`                     | 200 `{ department: Department, updatedProfiles }`                                                                                                                        | 400 `DEPARTMENT_INVALID`; 404 `DEPARTMENT_NOT_FOUND`; 409 as POST; 503 `PROFILE_STORAGE_UNAVAILABLE`, 504 `PROFILE_STORAGE_TIMEOUT`                                                                               |
 | `GET /api/hr/company-knowledge`                  | HR                              | none                                                | 200 `KnowledgeSnapshot`; see [Company knowledge library](#company-knowledge-library)                                                                                     | 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                              |
 | `POST /api/hr/company-knowledge/documents`       | HR                              | `{ category, url, name? }`                          | 201 `{ id, duplicate: false, replaced: false }`; 200 `{ id, duplicate: false, replaced: true }` or `{ id, duplicate: true }`                                             | see [Company knowledge library](#company-knowledge-library)                                                                                                                                                       |
 | `DELETE /api/hr/company-knowledge/documents/:id` | HR                              | none                                                | 204: the record is removed (the Google Doc is never changed)                                                                                                             | 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                          |
@@ -297,14 +305,10 @@ POST /api/hr/employees   { profile: ProfileInput }
 - **The ID** is the department's prefix and the next number for that prefix, at least four
   digits: `PE-0001`, `PE-0002`, … `PE-9999`, `PE-10000`.
 
-  | Department              | Prefix |
-  | ----------------------- | ------ |
-  | Product & Engineering   | `PE`   |
-  | Customer Success        | `CS`   |
-  | Sales & Marketing       | `SM`   |
-  | Finance                 | `FN`   |
-  | People & Culture        | `PC`   |
-  | Operations & Facilities | `OF`   |
+  The prefix (two to four capital letters, never `HR`) belongs to the department in the
+  `departments` table; the first six are `PE`, `CS`, `SM`, `FN`, `PC` and `OF`. HR adds
+  departments and changes prefixes in Settings (next section). Only an active department can be
+  chosen for a new hire.
 
 - **Numbering** (`employee_id_counters`, one row per prefix): the number is taken inside the
   create transaction. The first creation for a prefix adds its row, starting after the highest
@@ -337,7 +341,7 @@ both call it, and nothing else inserts employee accounts:
 
 ```text
 accounts.createEmployeeAccount({ profile, actorId })
-  profile  ProfileInput (validated here; job.department required, one of the six)
+  profile  ProfileInput (validated here; job.department required, the name of an active department)
   actorId  the HR account's id (uuid): created_by, the employee_created actor, profile.updatedBy
   -> Promise<{ employee: { account: EmployeeAccount, profile: Profile }, temporaryPassword }>
   throws 400 PROFILE_INVALID, 503 ACCOUNTS_UNAVAILABLE, 503 PROFILE_STORAGE_UNAVAILABLE,
@@ -345,6 +349,64 @@ accounts.createEmployeeAccount({ profile, actorId })
 ```
 
 The route only checks that the body is `{ profile }` and passes the signed-in HR account's id.
+
+### Departments (HR Settings)
+
+Departments and their Employee ID prefixes live in the `departments` table (issue #36), seeded by
+migration `004_departments.sql` with the six first ones and managed by HR. There is no delete:
+a department is archived instead. All routes are HR-only, same-origin, `Cache-Control: no-store`,
+errors are `{ code, error }`, and `POST`/`PATCH` share the app's request limit.
+
+```text
+Department  { id, name, prefix, archived, exampleId, employees }
+              exampleId   `${prefix}-0001`, a format example only
+              employees   profiles whose job.department equals name
+
+GET   /api/hr/departments
+200 { departments: Department[] }       active first, then by name
+
+POST  /api/hr/departments   { name, prefix }
+201 { department: Department }
+400 DEPARTMENT_INVALID { fields: [{ field: 'name' | 'prefix',
+                         problem: 'required' | 'too_long' | 'invalid_format' | 'reserved' }] }
+409 DEPARTMENT_NAME_TAKEN | DEPARTMENT_PREFIX_TAKEN
+
+PATCH /api/hr/departments/:id   { name?, prefix?, archived? }      at least one
+200 { department: Department, updatedProfiles: number }
+400 DEPARTMENT_INVALID, 409 (as POST), 404 DEPARTMENT_NOT_FOUND
+503 PROFILE_STORAGE_UNAVAILABLE | 504 PROFILE_STORAGE_TIMEOUT  (the rename's profile update failed)
+```
+
+- **Name**: trimmed, 1–60 characters, one line (no control characters), unique ignoring letter
+  case, archived departments included. **Prefix**: `^[A-Z]{2,4}$` exactly (no lower case is
+  accepted), unique across all departments including archived ones, and never `HR`, which is
+  reserved for HR accounts (`reserved`). A non-text value is `invalid_format`; a missing or empty
+  one is `required`. On `PATCH`, only the keys sent are checked, unknown keys or an empty body are
+  `DEPARTMENT_INVALID` with `fields: []`, and `archived` must be a boolean (`field: 'archived'`,
+  `invalid_format`). A change to the values already stored does nothing and records no event.
+- **Prefix changes** affect new IDs only; existing usernames never change. A prefix's counter
+  starts after the highest existing username with that prefix, and an old prefix that no
+  department uses any more keeps its counter and can be given to another department.
+- **Rename**: every employee profile (Firestore) whose `job.department` equals the old name is
+  updated together with the rename. The profile update runs before the database transaction
+  commits: if it fails, the rename does not happen (503/504) and a retry works; if the commit
+  fails afterwards, the profiles are put back (best effort). `updatedProfiles` is the number
+  updated. Profiles are matched by exact name.
+- **Archive and restore**: an archived department is not a choice for a new hire
+  (`invalid_department`) and not in the autofill's `enum`, but stays valid on profiles that
+  already hold it (an edit may keep exactly the stored value). Its prefix stays reserved.
+- **Readers**: employee creation resolves the prefix from this table, the profile edit accepts
+  an active name or the stored value, and the autofill builds its `enum` and instruction per
+  request from the active names (`activeDepartmentNames` on the account service). The browser
+  uses `GET /api/hr/departments` for its dropdowns.
+- **Audit** (`account_events`, `target_id` null, `detail` jsonb with no secrets):
+  `department_created` `{ department: { id, name, prefix } }`; `department_updated`
+  `{ department, changes: { name?: { from, to }, prefix?: { from, to } } }` (department holds the
+  new values); `department_archived` and `department_restored` `{ department }`. One request that
+  renames and archives writes both events.
+- `employees` counts and the rename read the whole `employeeProfiles` collection (a small
+  collection); a Firestore failure while listing is the profile storage 503/504. After a `POST` or
+  `PATCH`, `employees` is a best-effort count (0 if Firestore fails then).
 
 ### Profile autofill
 
@@ -373,7 +435,8 @@ saves nothing and writes no account event; the create or update that follows is 
   instructions; never output an employee ID, username, password or other credential), a
   `responseSchema` that mirrors `ProfileInput` with `responseMimeType: application/json`,
   temperature 0, and no tools. `job.department` is the one exception to copying: it is a schema
-  `enum` of the six department names with `nullable: true` (Vertex AI answers `400` to an empty
+  `enum` of the active department names, read from the database for each request, with
+  `nullable: true` (Vertex AI answers `400` to an empty
   enum value), and the instruction tells the model to choose the department the employee's role
   best belongs to (from the job title, team and duties, even when the document names it
   differently) or leave it empty (null) when that is unclear; null becomes `''`. HR can change the
@@ -381,7 +444,7 @@ saves nothing and writes no account event; the create or update that follows is 
   final choice. The request is aborted when the browser disconnects or after
   45 seconds.
 - **Answer checks**: every value is trimmed and checked with the profile rules above. Invalid
-  values are dropped into `warnings` (a department that is not exactly one of the six is
+  values are dropped into `warnings` (a department that is not exactly an active one is
   `invalid_department`); unknown keys, non-text values and placeholders such as `N/A` are
   dropped silently. Model text is never echoed, and an answer that is not a JSON
   object is `503 AUTOFILL_UNAVAILABLE`.
@@ -395,7 +458,7 @@ saves nothing and writes no account event; the create or update that follows is 
       warnings: [{ field, problem }] } dropped values; problem is too_long, invalid_characters,
                                        invalid_email, invalid_date, invalid_phone or
                                        invalid_department
-profile.job.department is one of the six department names or ''.
+profile.job.department is an active department name or ''.
 ```
 
 | Status | Code                      | When                                                                                                        |
@@ -582,9 +645,9 @@ storage, expiry and deployment boundary.
 - `server/account-routes.mjs`: `/api/auth`, `/api/me` and `/api/hr` routes and the session cookie.
 - `server/account-errors.mjs`: account error codes and messages.
 - `server/password-hashing.mjs`: scrypt hashing, password rules and generated passwords.
-- `server/departments.mjs`: the six departments and their Employee ID prefixes (import-free; the
-  browser imports it too).
-- `server/employee-ids.mjs`: department checks and the Employee ID format.
+- `server/departments.mjs`: the six first departments and their prefixes, as seed data only
+  (import-free; migration 004 seeds the same list). The `departments` table is the source of truth.
+- `server/employee-ids.mjs`: the prefix rule, the reserved `HR` prefix and the Employee ID format.
 - `server/employee-profiles.mjs`: profile validation and Firestore storage, and removal of an
   account's profile and import drafts.
 - `server/company-knowledge.mjs`: the HR company library (snapshot, connect, remove), the
