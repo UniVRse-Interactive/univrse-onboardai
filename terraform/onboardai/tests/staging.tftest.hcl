@@ -351,6 +351,37 @@ run "staging_api_cannot_reach_production_data" {
   }
 }
 
+# #57: staging's invokers are production's on the staging services, plus the
+# intake agent on the staging api (its /mcp calls). No staging account may
+# invoke a production service.
+run "staging_services_are_private_except_web" {
+  command = apply
+
+  assert {
+    condition = toset(concat(
+      [for m in google_cloud_run_v2_service_iam_member.public_invoker : "${m.name} ${m.member}"],
+      [for m in google_cloud_run_v2_service_iam_member.runtime_invoker : "${m.name} ${m.member}"],
+      [for m in google_cloud_run_v2_service_iam_member.intake_agent_invokes_api : "${m.name} ${m.member}"],
+      )) == toset([
+      "onboardai-web-staging allUsers",
+      "onboardai-api-staging serviceAccount:onboardai-web-run-staging@onboardai-test-123.iam.gserviceaccount.com",
+      "onboardai-tts-staging serviceAccount:onboardai-api-run-staging@onboardai-test-123.iam.gserviceaccount.com",
+      "onboardai-api-staging serviceAccount:onboardai-intake-staging@onboardai-test-123.iam.gserviceaccount.com",
+    ])
+    error_message = "Staging's invokers: allUsers on web, onboardai-web-run-staging on the api, onboardai-api-run-staging on tts, onboardai-intake-staging on the api."
+  }
+
+  assert {
+    condition = alltrue([
+      for m in concat(
+        values(google_cloud_run_v2_service_iam_member.runtime_invoker),
+        google_cloud_run_v2_service_iam_member.intake_agent_invokes_api,
+      ) : m.role == "roles/run.invoker" && endswith(m.name, "-staging") && endswith(split("@", m.member)[0], "-staging")
+    ]) && length(google_cloud_run_v2_service_iam_member.intake_agent_invokes_api) == 1
+    error_message = "Every staging invoker grant is roles/run.invoker from a staging account on a staging service."
+  }
+}
+
 run "singletons_stay_in_production_state" {
   command = apply
 
@@ -402,8 +433,8 @@ run "staging_has_production_shape" {
   }
 
   assert {
-    condition     = length(google_cloud_run_v2_service_iam_member.public_invoker) == 3 && alltrue([for m in google_cloud_run_v2_service_iam_member.public_invoker : m.member == "allUsers" && endswith(m.name, "-staging")])
-    error_message = "Staging services are public like production's."
+    condition     = keys(google_cloud_run_v2_service_iam_member.public_invoker) == ["web"] && alltrue([for m in google_cloud_run_v2_service_iam_member.public_invoker : m.member == "allUsers" && m.name == "onboardai-web-staging"])
+    error_message = "Like production's, only staging's web is public; its api and tts are private (#57)."
   }
 
   assert {

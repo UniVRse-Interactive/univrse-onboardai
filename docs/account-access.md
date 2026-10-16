@@ -135,8 +135,8 @@ about profiles name the operation and Firestore status only, never values.
   issues a new one; a reset or disable ends all of that employee's sessions; signing out
   deletes the session on the server.
 - **Requests**: every account and HR route checks the browser's `Origin` like the saved-chat
-  routes, is never cached, and sits behind the API's limit of 30 POST requests per minute
-  per IP.
+  routes, is never cached, and sits behind the API's limit of 30 POST and PATCH requests per
+  minute per IP.
 - **Start-up guard**: with `DATABASE_URL` set the server refuses to start unless
   `FIRESTORE_DATABASE_ID` and a project are set and, outside Cloud Run (`K_SERVICE` unset),
   `FIRESTORE_EMULATOR_HOST` is set. Local test personal data therefore never reaches a cloud
@@ -233,16 +233,16 @@ answers `Cache-Control: no-store`.
 
 Answers every route can give:
 
-| Status | Code                          | When                                               |
-| ------ | ----------------------------- | -------------------------------------------------- |
-| 403    | `CROSS_ORIGIN_REJECTED`       | An `Origin` header that is not this site           |
-| 503    | `ACCOUNTS_NOT_CONFIGURED`     | `DATABASE_URL` is not set                          |
-| 503    | `ACCOUNTS_UNAVAILABLE`        | PostgreSQL failed                                  |
-| 503    | `PROFILE_STORAGE_UNAVAILABLE` | Firestore failed (routes that touch profiles)      |
-| 504    | `PROFILE_STORAGE_TIMEOUT`     | Firestore gave no answer within 10 seconds         |
-| 404    | `NOT_FOUND`                   | No such account route                              |
-| 429    | (no code)                     | More than 30 POST requests in a minute from one IP |
-| 500    | `ACCOUNT_REQUEST_FAILED`      | Unexpected failure                                 |
+| Status | Code                          | When                                                         |
+| ------ | ----------------------------- | ------------------------------------------------------------ |
+| 403    | `CROSS_ORIGIN_REJECTED`       | An `Origin` header that is not this site                     |
+| 503    | `ACCOUNTS_NOT_CONFIGURED`     | `DATABASE_URL` is not set                                    |
+| 503    | `ACCOUNTS_UNAVAILABLE`        | PostgreSQL failed                                            |
+| 503    | `PROFILE_STORAGE_UNAVAILABLE` | Firestore failed (routes that touch profiles)                |
+| 504    | `PROFILE_STORAGE_TIMEOUT`     | Firestore gave no answer within 10 seconds                   |
+| 404    | `NOT_FOUND`                   | No such account route                                        |
+| 429    | (no code)                     | More than 30 POST and PATCH requests in a minute from one IP |
+| 500    | `ACCOUNT_REQUEST_FAILED`      | Unexpected failure                                           |
 
 Routes that need a session check, in this order:
 

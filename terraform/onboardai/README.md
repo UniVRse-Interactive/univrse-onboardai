@@ -13,7 +13,7 @@ same code: **production** (deployed from `main`, described below) and
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, discoveryengine, firestore, storage, monitoring, sqladmin                                                     |
 | Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image                                                                                                               |
-| Cloud Run services (placeholder image) | `onboardai-web`, `onboardai-api`, `onboardai-tts`, all public (`allUsers` invoker)                                                                                                        |
+| Cloud Run services (placeholder image) | `onboardai-web` (public), `onboardai-api` and `onboardai-tts` (private, see [Private api and tts](#private-api-and-tts))                                                                  |
 | Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                                                                                                                             |
 | Deployer service account (no key)      | `onboardai-deployer`                                                                                                                                                                      |
 | Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                                                                                                                        |
@@ -149,8 +149,11 @@ gh run watch --repo UniVRse-Team/univrse-onboardai
 The workflow runs CI on the commit, builds and pushes the three images tagged
 with the commit SHA, migrates the databases with the new api image (see
 [Database migrations](#database-migrations)), deploys tts, then api, then web,
-and smoke-tests `/health`, `/api/health`, `/web-health`, `/api/health` through
-the web proxy, `/`, and that `GET /api/config` reports `accounts: true`.
+and smoke-tests through web, the way a browser reaches the stack:
+`/web-health`, `/`, `/api/health` (web to api), a short `POST /api/voice` (web
+to api to tts) and that `GET /api/config` reports `accounts: true`. It only
+reports whether the api's and tts's own URLs answer without credentials (see
+[Private api and tts](#private-api-and-tts)).
 
 **CI on pull requests and pushes.** `Verify` (format check, migration file
 check, tests, build and the secret scan) always runs. `Database migrations`
@@ -466,6 +469,73 @@ A service rollback does not undo the migrations the failed run applied (see
 against the migrated databases, so migrations must keep the previous code
 working (add columns, tables and fields; remove them only in a later release).
 
+A revision from before #57 sends no ID tokens. Once the api and tts are
+private, rolling web or the api back to such a revision breaks web to api or
+api to tts (Cloud Run answers 403). Make them public first (see
+[Private api and tts](#private-api-and-tts), Roll back), then roll back.
+
+## Private api and tts
+
+Since #57 only `onboardai-web` is public. `onboardai-api` and `onboardai-tts`
+refuse any request without a Google-signed ID token of a principal that holds
+Cloud Run Invoker (`roles/run.invoker`) on them; Cloud Run answers 403 itself.
+Ingress stays `all` (`--ingress=all`): IAM, not the network, does the gating,
+and every service keeps its `run.app` URL.
+
+| Service (staging: `-staging`) | Invoker                                                                   | Why                                       |
+| ----------------------------- | ------------------------------------------------------------------------- | ----------------------------------------- |
+| `onboardai-web`               | `allUsers`                                                                | The browser's way in                      |
+| `onboardai-api`               | `onboardai-web-run`                                                       | web proxies `/api/*` to it                |
+|                               | `onboardai-intake-staging` (staging only)                                 | the intake agent calls `/mcp` (#27)       |
+| `onboardai-tts`               | `onboardai-api-run`                                                       | the api renders voice with it             |
+| all three                     | `onboardai-deployer` (Cloud Run Developer includes the invoke permission) | deploys, and the smoke test's `POST /mcp` |
+
+Each caller mints an ID token for its own runtime account from the metadata
+server, with the target's origin as audience, and sends it in
+`X-Serverless-Authorization` (Cloud Run checks that header and leaves
+`Authorization` to the app). The app does it by itself on Cloud Run whenever
+the target URL is https (`SERVICE_AUTH` unset; see `docs/cloud-run-services.md`).
+A missing grant shows as Cloud Run's 403, passed through web's proxy; a failed
+mint as `API_UNAVAILABLE` (502) or `VOICE_UNAVAILABLE` (503).
+
+**Rollout (app first, then IAM).** Deploy the app that sends ID tokens first:
+it works against public services too. Then apply this module, which removes
+`allUsers` from the api and tts and adds the invokers above. The smoke test
+passes in both states: it checks everything through web and only reports the
+api's and tts's own URLs, as `public` (200, not applied yet) or `private`
+(403). For each stack:
+
+1. Merge the pull request into `staging` (or `main`); its deploy ships the app
+   and the smoke test reports both services as public.
+2. Apply the invoker grants alone (plan reviewed by the user; staging 3 to
+   add, production 2), so web and the api can call while `allUsers` is still
+   there. Terraform cannot order the removal of `allUsers` (a key leaving
+   `public_invoker`) after these creates within one apply:
+
+   ```sh
+   terraform apply -target=google_cloud_run_v2_service_iam_member.runtime_invoker \
+     -target=google_cloud_run_v2_service_iam_member.intake_agent_invokes_api
+   ```
+
+3. Apply the workspace in full (plan: 2 to destroy, the api's and tts's
+   `allUsers` bindings).
+4. Check: chat and voice work in the web app, and the api's and tts's URLs
+   answer 403 without credentials (the next deploy's smoke test reports them
+   as private).
+
+**Roll back.** To make a service public again, add its key to
+`public_services` in `cloud_run.tf` and apply; the invoker bindings can stay.
+Do that before rolling web or the api back to a revision from before #57.
+
+**Calling a private service yourself.** Your account needs Cloud Run Invoker
+on it (project owners have it). For example, with a local proxy that adds your
+ID token:
+
+```sh
+gcloud run services proxy onboardai-api --region=asia-southeast1 --project=project-65a9b676-abdb-4393-bc1 --port=8081
+curl http://localhost:8081/api/health
+```
+
 ## Cloud Run settings
 
 |                     | web                    | api                    | tts                 |
@@ -545,6 +615,12 @@ show "Memory limit exceeded".
   agent roles; the web and tts accounts and the deployer hold none. The API
   has no access to the documents bucket, staging's database or staging's
   engine.
+- Only web is public (#57). The api and tts accept only callers holding Cloud
+  Run Invoker on them: web's account on the api, the api's account on tts,
+  staging's intake agent on the staging api, and the stack's deployer, whose
+  Cloud Run Developer role includes the invoke permission (the smoke test uses
+  it for `POST /mcp`; the deployer is reachable only from the deploy
+  workflow). See [Private api and tts](#private-api-and-tts).
 - The repository is public, so its Actions logs are public too, and they show
   the project ID and the service URLs. Neither is a credential. To hide the
   project ID, make `GCP_PROJECT_ID` a repository secret instead and change
@@ -698,6 +774,11 @@ since #56), so neither reaches the other stack's database or engine.
   for creating a reasoning engine. That role also reaches any other Vertex AI
   resource in the project, production's included; the staging deployer is
   reachable only from the deploy workflow on the `staging` branch.
+- **Cloud Run invokers (#57).** Staging's api and tts accept only staging's
+  callers: `onboardai-web-run-staging` on `onboardai-api-staging`,
+  `onboardai-api-run-staging` on `onboardai-tts-staging`, and
+  `onboardai-intake-staging` on `onboardai-api-staging`. No staging account
+  holds an invoker grant on a production service, and the other way round.
 - **Firestore.** `onboardai-api-run-staging` holds `roles/datastore.user` on the
   project with an IAM condition, `resource.name` equal to
   `projects/<project>/databases/onboardai-staging` (by project ID or number).
@@ -794,6 +875,7 @@ production. The accounts database it relies on runs in both stacks (see
 | `onboardai-api-run-staging`  | Secret Manager Secret Accessor             | `onboardai-intake-mcp-token-staging`                                   |
 | `onboardai-intake-staging`   | `roles/aiplatform.user` (Gemini)           | The project                                                            |
 |                              | Secret Manager Secret Accessor             | `onboardai-intake-mcp-token-staging`                                   |
+|                              | Cloud Run Invoker (#57)                    | `onboardai-api-staging`: its `/mcp` calls                              |
 | `onboardai-deployer-staging` | `roles/aiplatform.user` (deploy the agent) | The project: Agent Engine has no resource-level grant for creating one |
 |                              | Service Account User                       | `onboardai-intake-staging`                                             |
 
@@ -816,8 +898,19 @@ The api queries the agent and deletes its sessions with the
 A skip never fails the deploy. When the agent was deployed, the api also gets
 `INTAKE_AGENT_ENGINE` and `INTAKE_MCP_TOKEN` (a Secret Manager reference), and
 the smoke test also checks that `GET /api/config` reports `employeeImport:
-true` and that `POST /mcp` without the token gets 401. Otherwise the api
-deploys without them and those two checks are skipped.
+true` and that `POST /mcp` without the MCP token gets the api's own 401 (its
+JSON-RPC error, not Cloud Run's page). That request is the smoke test's one
+direct call to the api, so it carries the deployer's ID token for the api
+(`google-github-actions/auth` with `token_format: id_token`, masked, no
+credentials file). Otherwise the api deploys without them and those two
+checks are skipped.
+
+**The agent and the private api (#57, for #27).** The api is private, so the
+agent's MCP client must send an ID token of `onboardai-intake-staging` (from
+Agent Engine's metadata server, audience the api's origin, the `--mcp-url`
+without `/mcp`) in `X-Serverless-Authorization`, next to the
+`Authorization: Bearer <INTAKE_MCP_TOKEN>` it sends today. Without it, Cloud
+Run answers 403 before the api sees the request.
 
 **Rotate the token.** Raise `intake_mcp_token_version` by one in
 `staging.tfvars`, plan, apply, then run the staging deploy again: the api and

@@ -132,6 +132,21 @@ Ambiguous names such as `Portal`, `AvatarStage`, `conversation` and `drive-knowl
 
 The existing removed pages and old standalone avatar demos stay removed. The unused device-voice controller and its obsolete tests were replaced with checks for the active audio player. The original avatar, live settings, saved conversations and voice cache are preserved.
 
+## Cloud Run services
+
+In the cloud the website runs as three services (web, api, tts); see [Cloud Run services](cloud-run-services.md).
+
+| File                         | Purpose                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `server/web-service.mjs`     | Starts the web service                                                           |
+| `server/web-app.mjs`         | Serves `dist/` and the avatar, and mounts the `/api` proxy                       |
+| `server/api-proxy.mjs`       | Forwards `/api/*` to the api service and streams the answer back                 |
+| `server/api-service.mjs`     | Starts the api service (the routes in `server/api-routes.mjs`)                   |
+| `server/tts-service.mjs`     | Starts the tts service (`server/tts-app.mjs`, Kokoro)                            |
+| `server/remote-voice.mjs`    | The api's client for the tts service                                             |
+| `server/service-auth.mjs`    | `SERVICE_AUTH` and the Google ID tokens the private api and tts services require |
+| `server/service-runtime.mjs` | `.env` loading, `TRUST_PROXY` and clean shutdown shared by the three entry files |
+
 ## Accounts
 
 HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds accounts, sessions and the audit trail; Firestore holds employee profiles, account-owned chats and the company knowledge library. See [Account access](account-access.md) for the setup, rules and API contract.
