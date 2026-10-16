@@ -1,4 +1,4 @@
-import { onboardingDocumentTopics } from './onboarding-document-topics.mjs';
+import { onboardingDocumentTopics } from '../../server/onboarding-document-topics.mjs';
 
 // Earlier Drive guides predate the six topic slots. Match clear document names
 // for display only; this does not move, copy or change the connected guidance.

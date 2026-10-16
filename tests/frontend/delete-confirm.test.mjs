@@ -32,3 +32,25 @@ test('storage errors say to try again', () => {
 test('not found explains the account is already gone', () => {
   assert.match(deleteErrorMessage({ code: 'EMPLOYEE_NOT_FOUND' }), /no longer exists/);
 });
+
+test('a busy chat (409) shows the server message so HR can retry', () => {
+  const message = 'Wait for this employee’s answer to finish before removing their record.';
+  assert.equal(deleteErrorMessage({ status: 409, code: 'CHAT_BUSY', message }), message);
+  assert.match(deleteErrorMessage({ status: 409, code: 'CHAT_BUSY' }), /Wait for this employee/);
+});
+
+test('a 409 from the real API client keeps its code and message', async () => {
+  const { accountRequest } = await import('../../src/access/account-api.mjs');
+  const message = 'Wait for this employee’s answer to finish before removing their record.';
+  const fetchImpl = async () => ({
+    ok: false,
+    status: 409,
+    json: async () => ({ code: 'CHAT_BUSY', error: message }),
+  });
+  const error = await accountRequest('/api/hr/employees/x', {
+    method: 'DELETE',
+    fetchImpl,
+  }).catch((e) => e);
+  assert.equal(error.code, 'CHAT_BUSY');
+  assert.equal(deleteErrorMessage(error), message);
+});

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from '../portal/Icon';
-import { onboardingDocumentTopics } from './onboarding-document-topics.mjs';
+import { onboardingDocumentTopics } from '../../server/onboarding-document-topics.mjs';
 import { connectedOnboardingTopics } from './onboarding-document-status.mjs';
 import './google-docs-library.css';
 

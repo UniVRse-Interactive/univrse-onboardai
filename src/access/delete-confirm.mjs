@@ -7,6 +7,11 @@ export function canConfirmDelete(typed, employeeId) {
 export function deleteErrorMessage(error) {
   if (error?.code === 'EMPLOYEE_NOT_FOUND' || error?.status === 404)
     return 'This account no longer exists. The list has been refreshed.';
+  // 409: the employee is mid-answer. Show the server's message; HR can retry.
+  if (error?.code === 'CHAT_BUSY' || error?.status === 409)
+    return (
+      error.message || 'Wait for this employee’s answer to finish before removing their record.'
+    );
   if (
     error?.code === 'PROFILE_STORAGE_UNAVAILABLE' ||
     error?.code === 'PROFILE_STORAGE_TIMEOUT' ||
