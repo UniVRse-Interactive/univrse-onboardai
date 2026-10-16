@@ -141,12 +141,19 @@ export function createGeminiVoice({
       token = null;
     }
     if (!token) throw voiceError('CREDENTIALS_UNAVAILABLE');
+    // A ref'd timer, not AbortSignal.timeout(): that timer is unref'd, so a
+    // pending synthesis would not keep the process alive in Node 22.
+    const deadline = new AbortController();
+    const timer = setTimeout(
+      () => deadline.abort(Object.assign(new Error('Timeout'), { name: 'TimeoutError' })),
+      timeoutMs,
+    );
     let response;
     try {
       response = await fetchImpl(url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: deadline.signal,
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: speechPrompt(text) }] }],
           generationConfig: {
@@ -156,7 +163,11 @@ export function createGeminiVoice({
         }),
       });
     } catch (error) {
-      throw voiceError(error?.name === 'TimeoutError' ? 'TIMEOUT' : 'UNREACHABLE');
+      throw voiceError(
+        deadline.signal.aborted || error?.name === 'TimeoutError' ? 'TIMEOUT' : 'UNREACHABLE',
+      );
+    } finally {
+      clearTimeout(timer);
     }
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});

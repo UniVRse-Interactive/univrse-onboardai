@@ -279,10 +279,15 @@ export function createCheckGrader({
     // { correct, feedback }; throws { code } when the model cannot grade.
     async grade(check, answer) {
       if (addressesGrader(answer)) return { correct: false, feedback: feedbackText.ownWords };
+      const deadline = new AbortController();
+      const timer = setTimeout(
+        () => deadline.abort(Object.assign(new Error('Timeout'), { name: 'TimeoutError' })),
+        timeoutMs,
+      );
       let output;
       try {
         const data = await generate(graderRequest(check, answer, { thinking }), {
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: deadline.signal,
         });
         const text = (data?.candidates?.[0]?.content?.parts || [])
           .map((part) => (typeof part?.text === 'string' ? part.text : ''))
@@ -297,6 +302,8 @@ export function createCheckGrader({
         const code = error?.code || (error instanceof SyntaxError ? 'BAD_RESPONSE' : 'UNKNOWN');
         log(`Check grader failed: ${JSON.stringify({ code, status: error?.status ?? null })}`);
         throw graderError(code, error?.status ?? null);
+      } finally {
+        clearTimeout(timer);
       }
       return decideWrittenCheck(check, answer, output);
     },
