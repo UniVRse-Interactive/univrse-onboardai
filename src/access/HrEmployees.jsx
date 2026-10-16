@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Icon from '../portal/Icon';
 import { accountApi } from './account-api.mjs';
+import AutofillControl, { useProfileAutofill } from './AutofillControl';
 import { SecretField, TextField, useFocusFirstError } from './account-fields';
 import { accountBadges, employeeNames, formatDateTime, formatDay } from './profile-display.mjs';
 import {
@@ -18,7 +19,15 @@ import './accounts.css';
 const inputTypes = { date: 'date', email: 'email', phone: 'tel' };
 
 // The four profile groups. `errors` is keyed 'job.fullName' etc.
-export function ProfileFields({ idPrefix, form, onChange, errors }) {
+export function ProfileFields({
+  idPrefix,
+  form,
+  onChange,
+  errors,
+  marks = {},
+  notes = {},
+  onEdit,
+}) {
   return profileGroups.map((group) => (
     <fieldset className="account-group" key={group.key}>
       <legend>{group.title}</legend>
@@ -35,10 +44,13 @@ export function ProfileFields({ idPrefix, form, onChange, errors }) {
               inputMode={field.kind === 'phone' ? 'tel' : undefined}
               maxLength={field.kind === 'date' ? undefined : field.max}
               value={form[group.key][field.key]}
-              onChange={(value) =>
-                onChange({ ...form, [group.key]: { ...form[group.key], [field.key]: value } })
-              }
+              onChange={(value) => {
+                onEdit?.(path);
+                onChange({ ...form, [group.key]: { ...form[group.key], [field.key]: value } });
+              }}
               error={errors[path]}
+              fromDocument={!!marks[path]}
+              note={notes[path]}
             />
           );
         })}
@@ -113,9 +125,10 @@ function applyServerError(error, setErrors, setSummary) {
   setSummary(error.message);
 }
 
-function AddEmployeePanel({ onClose, onDone }) {
+function AddEmployeePanel({ onClose, onDone, autofillEnabled }) {
   const [account, setAccount] = useState({ username: '', temporaryPassword: '', confirmation: '' });
   const [profile, setProfile] = useState(() => profileToForm(null));
+  const autofill = useProfileAutofill(profile, setProfile);
   const [errors, setErrors] = useState({});
   const [summary, setSummary] = useState('');
   const [busy, setBusy] = useState(false);
@@ -131,7 +144,7 @@ function AddEmployeePanel({ onClose, onDone }) {
   useFocusFirstError(formRef, errors, summaryRef, summary);
   async function submit(event) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || autofill.reading) return;
     const submitted = { ...account };
     const found = { ...validateNewEmployee(submitted) };
     Object.assign(found, fieldErrors(validateProfileForm(profile)).errors);
@@ -195,10 +208,19 @@ function AddEmployeePanel({ onClose, onDone }) {
             />
           </div>
         </fieldset>
-        <ProfileFields idPrefix="add" form={profile} onChange={setProfile} errors={errors} />
+        <AutofillControl idPrefix="add" enabled={autofillEnabled} autofill={autofill} />
+        <ProfileFields
+          idPrefix="add"
+          form={profile}
+          onChange={setProfile}
+          errors={errors}
+          marks={autofill.marks}
+          notes={autofill.notes}
+          onEdit={autofill.edited}
+        />
         <ErrorSummary message={summary} summaryRef={summaryRef} />
         <div className="account-actions">
-          <button className="account-primary" type="submit" disabled={busy}>
+          <button className="account-primary" type="submit" disabled={busy || !!autofill.reading}>
             {busy ? 'Creating…' : 'Create employee account'}
           </button>
           <button type="button" className="account-secondary" onClick={onClose}>
@@ -210,13 +232,14 @@ function AddEmployeePanel({ onClose, onDone }) {
   );
 }
 
-function EditProfilePanel({ employee, onClose, onDone }) {
+function EditProfilePanel({ employee, onClose, onDone, autofillEnabled }) {
   const [form, setForm] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [errors, setErrors] = useState({});
   const [summary, setSummary] = useState('');
   const [busy, setBusy] = useState(false);
   const [updatedAt, setUpdatedAt] = useState('');
+  const autofill = useProfileAutofill(form, setForm);
   const formRef = useRef(null),
     summaryRef = useRef(null),
     alive = useRef(true);
@@ -237,7 +260,7 @@ function EditProfilePanel({ employee, onClose, onDone }) {
   useFocusFirstError(formRef, errors, summaryRef, summary);
   async function submit(event) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || autofill.reading) return;
     const found = fieldErrors(validateProfileForm(form)).errors;
     setSummary('');
     if (Object.keys(found).length) {
@@ -270,10 +293,19 @@ function EditProfilePanel({ employee, onClose, onDone }) {
       ) : (
         <form className="account-form" onSubmit={submit} ref={formRef} noValidate>
           {updatedAt && <p className="account-note">Last updated {formatDateTime(updatedAt)}.</p>}
-          <ProfileFields idPrefix="edit" form={form} onChange={setForm} errors={errors} />
+          <AutofillControl idPrefix="edit" enabled={autofillEnabled} autofill={autofill} />
+          <ProfileFields
+            idPrefix="edit"
+            form={form}
+            onChange={setForm}
+            errors={errors}
+            marks={autofill.marks}
+            notes={autofill.notes}
+            onEdit={autofill.edited}
+          />
           <ErrorSummary message={summary} summaryRef={summaryRef} />
           <div className="account-actions">
-            <button className="account-primary" type="submit" disabled={busy}>
+            <button className="account-primary" type="submit" disabled={busy || !!autofill.reading}>
               {busy ? 'Saving…' : 'Save profile'}
             </button>
             <button type="button" className="account-secondary" onClick={onClose}>
@@ -442,6 +474,7 @@ export default function HrEmployees() {
   const [notice, setNotice] = useState('');
   const [panel, setPanel] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [autofillEnabled, setAutofillEnabled] = useState(false);
   const opener = useRef(null),
     headingRef = useRef(null),
     sequence = useRef(0);
@@ -460,6 +493,10 @@ export default function HrEmployees() {
     }
   }, []);
   useEffect(() => {
+    accountApi
+      .config({ report: false })
+      .then((config) => setAutofillEnabled(config?.profileAutofill === true))
+      .catch(() => {});
     load();
     // Employees change their own password and sign in elsewhere; refresh when
     // HR returns to this page.
@@ -525,9 +562,17 @@ export default function HrEmployees() {
           </button>
         </div>
       )}
-      {panel?.type === 'add' && <AddEmployeePanel onClose={close} onDone={done} />}
+      {panel?.type === 'add' && (
+        <AddEmployeePanel onClose={close} onDone={done} autofillEnabled={autofillEnabled} />
+      )}
       {panel?.type === 'edit' && selected && (
-        <EditProfilePanel key={panel.id} employee={selected} onClose={close} onDone={done} />
+        <EditProfilePanel
+          key={panel.id}
+          employee={selected}
+          onClose={close}
+          onDone={done}
+          autofillEnabled={autofillEnabled}
+        />
       )}
       {panel?.type === 'reset' && selected && (
         <ResetPasswordPanel key={panel.id} employee={selected} onClose={close} onDone={done} />

@@ -54,7 +54,15 @@ export function networkErrorMessage() {
 
 export async function accountRequest(
   path,
-  { method = 'GET', body, signal, report = true, fetchImpl = globalThis.fetch } = {},
+  {
+    method = 'GET',
+    body,
+    rawBody,
+    headers,
+    signal,
+    report = true,
+    fetchImpl = globalThis.fetch,
+  } = {},
 ) {
   let response;
   try {
@@ -62,8 +70,13 @@ export async function accountRequest(
       method,
       signal,
       credentials: 'same-origin',
-      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers:
+        rawBody !== undefined
+          ? { ...headers }
+          : body === undefined
+            ? {}
+            : { 'Content-Type': 'application/json' },
+      body: rawBody !== undefined ? rawBody : body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
@@ -104,6 +117,17 @@ export const accountApi = {
     accountRequest('/api/hr/employees', {
       method: 'POST',
       body: { username, temporaryPassword, profile },
+    }),
+  // Raw file bytes, the same pattern as the guest document upload.
+  autofillProfile: (file, signal) =>
+    accountRequest('/api/hr/employees/autofill', {
+      method: 'POST',
+      rawBody: file,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name': enc(file.name),
+      },
+      signal,
     }),
   employee: (id, options) => accountRequest('/api/hr/employees/' + enc(id), options),
   saveProfile: (id, profile) =>

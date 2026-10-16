@@ -511,3 +511,73 @@
     font-size: 16px;
   }
 }
+
+/* Autofill from document. All colours sit on the light accounts card. */
+.account-autofill {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #e8eff4;
+  border: 1px dashed #6c8995;
+  border-radius: 6px;
+}
+.account-autofill input[type='file'] {
+  max-width: 100%;
+  font-size: 13px;
+  color: #1f3047;
+}
+.account-autofill input[type='file']:disabled {
+  cursor: not-allowed;
+}
+.account-autofill input[type='file']:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 2px;
+}
+.account-autofill-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  font-size: 13px;
+  color: #1f3047;
+  overflow-wrap: anywhere;
+}
+.account-autofill-progress[hidden] {
+  display: none;
+}
+.account-autofill-summary {
+  padding: 10px 14px;
+  background: #dcefe3;
+  border-left: 3px solid #1d6b3f;
+  border-radius: 0 5px 5px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #17492c;
+  overflow-wrap: anywhere;
+}
+.account-autofill-summary[hidden] {
+  display: none;
+}
+.account-autofill-summary:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 3px;
+}
+.account-field-mark {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #17492c;
+}
+.account-field-mark::before {
+  content: '\2713\00a0';
+}
+.account-field-note {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #6a3f00;
+}
+.account-field input:has(~ .account-field-mark) {
+  background: #eef7f1;
+  border-color: #1d6b3f;
+}

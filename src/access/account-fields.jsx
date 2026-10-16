@@ -36,10 +36,15 @@ export function TextField({
   inputMode,
   readOnly = false,
   describedBy = '',
+  fromDocument = false,
+  note = '',
 }) {
   const hintId = hint ? id + '-hint' : '';
   const errorId = error ? id + '-error' : '';
-  const described = [hintId, errorId, describedBy].filter(Boolean).join(' ') || undefined;
+  const markId = fromDocument ? id + '-mark' : '';
+  const noteId = note ? id + '-note' : '';
+  const described =
+    [hintId, errorId, markId, noteId, describedBy].filter(Boolean).join(' ') || undefined;
   return (
     <div className="access-field account-field">
       <label htmlFor={id}>
@@ -68,6 +73,16 @@ export function TextField({
         </p>
       )}
       <FieldError id={errorId} message={error} />
+      {fromDocument && (
+        <p className="account-field-mark" id={markId}>
+          From document, please check
+        </p>
+      )}
+      {note && (
+        <p className="account-field-note" id={noteId}>
+          {note}
+        </p>
+      )}
     </div>
   );
 }

@@ -86,3 +86,24 @@ test('request sends JSON body and same-origin credentials', async () => {
   assert.equal(call.init.body, '{"username":"a","password":"b"}');
   assert.ok(!call.url.includes('b'));
 });
+
+test('autofillProfile sends the raw file with the upload headers', async () => {
+  const { accountApi } = await import('../../src/access/account-api.mjs');
+  const calls = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    return { status: 200, ok: true, json: async () => ({ profile: {}, filled: [], warnings: [] }) };
+  };
+  try {
+    const file = { name: 'Ada Löve.pdf', size: 3 };
+    await accountApi.autofillProfile(file);
+    assert.equal(calls[0].path, '/api/hr/employees/autofill');
+    assert.equal(calls[0].init.method, 'POST');
+    assert.equal(calls[0].init.body, file);
+    assert.equal(calls[0].init.headers['Content-Type'], 'application/octet-stream');
+    assert.equal(calls[0].init.headers['X-File-Name'], encodeURIComponent('Ada Löve.pdf'));
+  } finally {
+    globalThis.fetch = real;
+  }
+});
