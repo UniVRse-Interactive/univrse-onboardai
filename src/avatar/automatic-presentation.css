@@ -1,0 +1,372 @@
+/* An open presentation environment. Only the audio clock advances the scenes. */
+.scene-presentation.automatic-stage {
+  background: radial-gradient(ellipse at 50% 40%, #f6f4e9 0, #e2ebeb 48%, #b9cdd5 100%);
+}
+.scene-presentation.automatic-stage > .alya-office {
+  opacity: 0.16;
+}
+.scene-presentation.automatic-stage .ap-presenter {
+  left: 30%;
+  width: 40%;
+  top: 70px;
+  bottom: 116px;
+}
+.automatic-stage .ap-presenter .alya-stage-bottom {
+  background: none;
+  padding: 32px 18px 16px;
+}
+.automatic-stage .ap-presenter .alya-canvas {
+  mask-image: linear-gradient(to bottom, #000 86%, transparent 100%);
+}
+.automatic-stage .ap-presenter .alya-avatar-name strong {
+  font-size: 28px;
+}
+.automatic-stage .ap-presenter .alya-avatar-name small {
+  display: none;
+}
+.automatic-stage .ap-presenter .alya-presence {
+  font-size: 10px;
+}
+.automatic-presentation {
+  position: absolute;
+  inset: 100px 0 30px;
+  pointer-events: none;
+  z-index: 5;
+  color: #29445c;
+}
+.automatic-scene {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 300ms ease,
+    visibility 300ms;
+}
+.automatic-scene.is-current {
+  opacity: 1;
+  visibility: visible;
+}
+.automatic-scene-title {
+  position: absolute;
+  top: 0;
+  left: 4%;
+  right: 4%;
+  text-align: center;
+}
+.automatic-eyebrow {
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.18em;
+  color: #4e6f79;
+}
+.automatic-scene-title h2 {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 9px;
+  margin: 6px 0 0;
+  font-size: clamp(22px, 3.7cqw, 36px);
+  font-weight: 550;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+  color: #29445c;
+}
+.automatic-scene-title.is-avoid h2 {
+  color: #8a4a3e;
+}
+.automatic-avoid-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  font-size: 25px;
+  line-height: 1;
+}
+.automatic-cue {
+  position: absolute;
+  top: 21%;
+  width: 28%;
+  margin: 0;
+  text-align: center;
+  transform: translateY(12px) scale(0.94);
+  transition: transform 500ms cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+.automatic-cue.from-left {
+  left: 1%;
+}
+.automatic-cue.from-right {
+  right: 1%;
+  top: 27%;
+}
+.is-current .automatic-cue {
+  transform: none;
+}
+.automatic-floating-art {
+  animation: automatic-float 5s ease-in-out infinite;
+}
+.from-right .automatic-floating-art {
+  animation-delay: -2s;
+}
+.automatic-art {
+  display: block;
+  width: 100%;
+  height: clamp(150px, 26cqw, 280px);
+  overflow: visible;
+  filter: drop-shadow(0 10px 9px #29445c12);
+}
+.automatic-cue figcaption {
+  margin-top: 8px;
+  padding: 0 6px;
+  font-size: clamp(12px, 1.8cqw, 17px);
+  font-weight: 550;
+  line-height: 1.5;
+  text-wrap: balance;
+}
+.automatic-cue-rule {
+  display: block;
+  width: 24px;
+  height: 2px;
+  background: #7faaa9;
+  margin: 12px auto 0;
+}
+.automatic-caption {
+  position: absolute;
+  bottom: 42px;
+  left: 7%;
+  right: 7%;
+  text-align: center;
+  text-wrap: pretty;
+  margin: 0;
+  color: #29445c;
+  font-size: clamp(13px, 1.8cqw, 17px);
+  line-height: 1.6;
+}
+.automatic-sequence {
+  position: absolute;
+  bottom: 10px;
+  left: 7%;
+  right: 7%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 9px;
+  color: #496874;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+}
+.automatic-sequence > div {
+  display: flex;
+  gap: 4px;
+  width: 64px;
+}
+.automatic-sequence i {
+  height: 2px;
+  flex: 1;
+  background: #9db4bc;
+  border-radius: 2px;
+}
+.automatic-sequence i.has-played {
+  background: #376b74;
+}
+.automatic-voice-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #376b74;
+}
+.automatic-replay {
+  position: absolute;
+  bottom: 15px;
+  left: 5%;
+  right: 5%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: #496874;
+  font-size: 12px;
+  pointer-events: auto;
+}
+.automatic-replay button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  color: #245b72;
+  font-size: 12px;
+  padding: 5px;
+}
+@keyframes automatic-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-5px) rotate(1deg);
+  }
+}
+.automatic-presentation.is-calm *,
+.automatic-presentation.is-calm *::after {
+  animation: none;
+  transition: none;
+}
+@media (max-height: 780px) and (min-width: 981px) {
+  .automatic-presentation {
+    top: 90px;
+  }
+  .automatic-art {
+    height: clamp(110px, 20cqw, 200px);
+  }
+  .automatic-cue {
+    top: 22%;
+  }
+  .automatic-caption {
+    bottom: 35px;
+    font-size: 14px;
+  }
+}
+@media (max-width: 980px) {
+  .scene-presentation.automatic-stage .ap-presenter {
+    left: 30%;
+    width: 40%;
+    top: 48px;
+    bottom: 92px;
+  }
+  .automatic-presentation {
+    inset: 61px 0 24px;
+  }
+  .automatic-eyebrow {
+    font-size: 7px;
+  }
+  .automatic-scene-title h2 {
+    font-size: 23px;
+    margin-top: 3px;
+  }
+  .automatic-cue,
+  .automatic-cue.from-right {
+    top: 22%;
+    width: 28%;
+  }
+  .automatic-art {
+    height: clamp(85px, 19cqw, 170px);
+  }
+  .automatic-cue figcaption {
+    font-size: 11px;
+    margin-top: 0;
+  }
+  .automatic-cue-rule {
+    margin-top: 6px;
+  }
+  .automatic-caption {
+    left: 4%;
+    right: 4%;
+    bottom: 30px;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .automatic-sequence {
+    bottom: 7px;
+  }
+  .automatic-stage .ap-presenter .alya-stage-bottom {
+    padding: 25px 8px 8px;
+    gap: 5px;
+  }
+  .automatic-stage .ap-presenter .alya-avatar-name strong {
+    font-size: 22px;
+  }
+  .automatic-stage .ap-presenter .alya-presence {
+    font-size: 8px;
+  }
+  .automatic-replay {
+    font-size: 10px;
+    gap: 10px;
+  }
+}
+@media (max-width: 560px) {
+  .scene-presentation.automatic-stage .ap-presenter {
+    top: 70px;
+    bottom: 107px;
+    left: 29%;
+    width: 42%;
+  }
+  .automatic-presentation {
+    top: 59px;
+  }
+  .automatic-cue,
+  .automatic-cue.from-right {
+    top: 26%;
+  }
+  .automatic-art {
+    height: clamp(85px, 26cqw, 140px);
+  }
+  .automatic-caption {
+    bottom: 33px;
+    font-size: 12px;
+  }
+  /* Keep the composer on screen on typical phones instead of two overflowing
+     minimum grid rows. Short screens may scroll the whole workspace. */
+  .alya-live-page .alya-live-shell {
+    grid-template-rows: minmax(310px, 0.95fr) minmax(290px, 1fr);
+  }
+  .uv-assistant-workspace {
+    min-height: 720px;
+    height: max(720px, 100dvh);
+    overflow: auto;
+  }
+  .automatic-stage .ap-presenter .alya-stage-bottom {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .automatic-presentation *,
+  .automatic-presentation *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.automatic-art > .av-artwork,
+.automatic-art > .onboarding-artwork {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.automatic-cue .av-artwork {
+  overflow: visible;
+}
+/* Captions follow the current spoken words and stay inside reserved space. */
+.automatic-caption {
+  height: 58px;
+  display: grid;
+  align-items: center;
+  overflow: hidden;
+}
+.automatic-caption-text {
+  margin: 0;
+  font: inherit;
+  line-height: inherit;
+  color: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.automatic-caption-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  visibility: hidden;
+  pointer-events: none;
+}
+@media (max-width: 980px) {
+  .automatic-caption {
+    height: 50px;
+  }
+}
+@media (max-width: 560px) {
+  .automatic-scene-title h2 {
+    font-size: 21px;
+  }
+}

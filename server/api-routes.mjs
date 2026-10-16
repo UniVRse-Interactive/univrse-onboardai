@@ -16,6 +16,11 @@ import { parseVoiceRequest, voiceRequestError, voiceFailure } from './voice-requ
 import { randomBytes } from 'node:crypto';
 import { sessionHash } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
+import {
+  createAlyaConversationService,
+  usesAlyaBrain,
+  alyaBrainInfo,
+} from './alya-brain-service.mjs';
 import { mountGuestWorkspaceRoutes } from './guest-workspace-routes.mjs';
 import { moveGoogleDocumentToFolder } from './google-drive-document-moves.mjs';
 import { vertexConfig, vertexGenerateContentUrl, createAccessTokenProvider } from './vertex-ai.mjs';
@@ -32,16 +37,24 @@ export function createApp({
     : createSharedVoice(),
   trustProxy = false,
   conversationService = null,
+  brainModels = null,
   guestModels = null,
   guestStore = null,
   getAccessToken = null,
 } = {}) {
   const app = express();
   const documentSearch = env.AI_MODE === 'document-search';
-  const memoryChat = env.AI_MODE === 'gemini-chat';
+  const suppliedBrain = usesAlyaBrain(env);
+  const memoryChat = suppliedBrain || env.AI_MODE === 'gemini-chat';
   let conversations = conversationService;
   const chatService = () =>
-    (conversations ||= createConversationService({ env, loadDocuments: loadDriveKnowledge }));
+    (conversations ||= suppliedBrain
+      ? createAlyaConversationService({
+          env,
+          loadDocuments: (folderId) => (folderId ? loadDriveKnowledge(folderId) : []),
+          models: brainModels,
+        })
+      : createConversationService({ env, loadDocuments: loadDriveKnowledge }));
 
   app.disable('x-powered-by');
   // With a trusted proxy in front, req.ip and req.host are the browser's IP and host.
@@ -108,14 +121,19 @@ export function createApp({
   // Public configuration. Credentials stay on the server.
   app.get('/api/config', (req, res) => {
     res.json({
-      aiMode: memoryChat
-        ? 'gemini-memory'
-        : documentSearch
-          ? 'document-search'
-          : vertexConfig(env)
-            ? 'gemini'
-            : 'demo',
+      aiMode: suppliedBrain
+        ? 'alya-brain'
+        : memoryChat
+          ? 'gemini-memory'
+          : documentSearch
+            ? 'document-search'
+            : vertexConfig(env)
+              ? 'gemini'
+              : 'demo',
       conversationMemory: memoryChat,
+      ...(suppliedBrain
+        ? { brain: alyaBrainInfo(env, brainModels), answerContext: 'stateless' }
+        : {}),
       memoryRetentionDays: memoryChat ? 30 : null,
       adaptiveLearning: memoryChat,
       supportSummary: false,

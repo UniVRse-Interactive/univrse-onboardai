@@ -1,4 +1,4 @@
-import { speechChunks, makeWordSchedule } from './speech-text-and-mouth-timing.js';
+import { speechChunks, makeWordSchedule, spokenText } from './speech-text-and-mouth-timing.js';
 
 export function createServerSpeech({ onStatus = () => {} } = {}) {
   const Context = window.AudioContext || window.webkitAudioContext;
@@ -51,7 +51,17 @@ export function createServerSpeech({ onStatus = () => {} } = {}) {
     }
     return { speaking: true, viseme: 'sil', value: 0 };
   }
-  async function speak(text, { rate = 0.95 } = {}) {
+  function getProgress() {
+    if (!frame || context?.state !== 'running') return null;
+    const elapsed = Math.max(0, (context.currentTime - frame.start) * 1000);
+    let offset = 0;
+    for (const word of frame.words) {
+      offset += (word.duration + 60) * frame.scale;
+      if (elapsed < offset) return frame.character + word.charIndex;
+    }
+    return frame.character + frame.length - 1;
+  }
+  async function speak(text, { rate = 0.95, segments } = {}) {
     stop(false);
     const token = generation;
     if (!supported) {
@@ -62,7 +72,13 @@ export function createServerSpeech({ onStatus = () => {} } = {}) {
       return;
     }
     prime();
-    const chunks = speechChunks(text);
+    // Scene boundaries are also audio boundaries. Validate against the actual
+    // answer so a stale presentation can never replace or omit spoken words.
+    const prepared = Array.isArray(segments) ? segments.map(spokenText).filter(Boolean) : [];
+    const chunks =
+      prepared.length && prepared.join(' ') === spokenText(text)
+        ? prepared.flatMap(speechChunks)
+        : speechChunks(text);
     if (!chunks.length) return;
     abort = new AbortController();
     const signal = abort.signal;
@@ -98,7 +114,13 @@ export function createServerSpeech({ onStatus = () => {} } = {}) {
         active.connect(context.destination);
         const words = makeWordSchedule(chunks[i], rate),
           estimated = words.reduce((sum, word) => sum + word.duration + 60, 0) || 1;
-        frame = { words, scale: (audio.duration * 1000) / estimated, start: context.currentTime };
+        frame = {
+          words,
+          scale: (audio.duration * 1000) / estimated,
+          start: context.currentTime,
+          character: chunks.slice(0, i).reduce((sum, chunk) => sum + chunk.length + 1, 0),
+          length: chunks[i].length,
+        };
         onStatus({ state: 'speaking', error: '' });
         await new Promise((resolve) => {
           active.onended = resolve;
@@ -126,5 +148,5 @@ export function createServerSpeech({ onStatus = () => {} } = {}) {
     stop(false);
     context?.close().catch(() => {});
   }
-  return { supported, prime, speak, stop, getFrame, dispose };
+  return { supported, prime, speak, stop, getFrame, getProgress, dispose };
 }

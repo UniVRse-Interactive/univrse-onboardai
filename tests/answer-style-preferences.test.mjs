@@ -57,6 +57,7 @@ test('support uses direct requests, not diagnoses, spelling, identities or alleg
     'What does a brief meeting mean?',
     "I don't need smaller steps.",
     'I do not want smaller steps.',
+    'Do not keep the answer brief.',
   ]) {
     assert.equal(adaptLearning({}, { question }).format, 'standard', question);
   }
@@ -68,6 +69,7 @@ test('support uses direct requests, not diagnoses, spelling, identities or alleg
   assert.equal(adaptLearning({}, { question: 'Saya tak faham.' }).format, 'steps');
   assert.equal(adaptLearning({}, { question: 'Give me a worked example.' }).format, 'example');
   assert.equal(adaptLearning({}, { question: 'Keep it short please.' }).format, 'brief');
+  assert.equal(adaptLearning({}, { question: 'Please keep the answer brief.' }).format, 'brief');
   assert.equal(adaptLearning({}, { question: 'Do not keep it short.' }).format, 'standard');
   const profile = normaliseLearning({
     diagnosis: 'autism',
@@ -306,4 +308,7 @@ test('learning prompts keep the same policy access and reject health or employme
   const prompt = learningInstruction(adaptLearning({}, { question: 'I do not understand.' }));
   assert.match(prompt, /same company guidance and access to all company and onboarding questions/);
   assert.match(prompt, /No sanctions or employment decisions/);
+  const standard = learningInstruction({ format: 'standard' });
+  assert.match(standard, /three clear, complete sentences/);
+  assert.match(standard, /accuracy takes priority over length/);
 });

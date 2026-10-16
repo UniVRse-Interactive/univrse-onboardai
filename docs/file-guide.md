@@ -12,7 +12,7 @@ The project stays in JavaScript and React. `.jsx` files contain React screens; `
 | `server/`              | API routes, Gemini workflow, document search, saved chats and voice generation |
 | `scripts/`             | Development, connection checks, avatar import and voice setup                  |
 | `tests/`               | Regression checks using temporary data and synthetic company documents         |
-| `public/avatars/alya/` | The original avatar, loading poster and asset information                      |
+| `public/avatars/alya/` | The supplied ALYA avatar, loading poster and asset information                 |
 | `docs/`                | Architecture and behaviour explanations                                        |
 
 `node_modules`, `dist`, `.cache` and `artifacts` are generated or private working folders. They are excluded from sharing. `.env` holds this installation's private settings; `.env.example` is the blank setup template.
@@ -81,7 +81,8 @@ The guide uses `src/avatar/use-visual-text-pages.js` to measure available paragr
 | `src/avatar/alya-workspace.css`              | Window-sized chat and visual panes with a visible avatar                 |
 | `server/kokoro-voice.mjs`                    | Fixed Kokoro Heart voice, startup warmup, synthesis queue and WAV output |
 | `scripts/download-voice-model.mjs`           | Cache the voice model and create a sample                                |
-| `scripts/import-avatar-model.mjs`            | Import and compress a revised original GLB                               |
+| `src/avatar/digital-human.js`                | Supplied material settings for skin, hair, eyes and clothing             |
+| `scripts/import-avatar-model.mjs`            | Validate, back up and losslessly compress a supplied ALYA package        |
 
 The browser plays WAV audio from `/api/voice`, starting with a short opening while the next segment is prepared. The installed model warms at server startup. Mouth movement follows the audio clock using estimated phonemes. The unused browser-voice controller was removed; text and mouth-timing helpers remain because the current player uses them.
 

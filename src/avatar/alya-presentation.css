@@ -1,0 +1,1159 @@
+/* One continuous presentation stage; chat remains a separate reading surface. */
+.alya-live-page .alya-live-shell {
+  grid-template-columns: minmax(0, 7fr) minmax(300px, 3fr);
+  grid-template-areas: 'presentation answers';
+  gap: 18px;
+}
+.alya-presentation-stage {
+  grid-area: presentation;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid #738c9e;
+  border-radius: 16px;
+  background: #c4d6dc;
+  container-type: inline-size;
+}
+.alya-presentation-stage > .alya-office {
+  background: linear-gradient(120deg, #b7cbd2, #d8e3e3 50%, #91a9b7);
+  filter: blur(5px);
+  opacity: 0.7;
+}
+.alya-presentation-stage .alya-office-window {
+  border-color: #718a95;
+  background: repeating-linear-gradient(0deg, #e8efec 0, #d7e3df 7px, #b5c9cc 8px);
+}
+.alya-presentation-stage .alya-office-frame {
+  border-color: #657d8b;
+  opacity: 0.6;
+}
+.ap-stage-heading {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 23px 27px;
+  color: #223d56;
+  background: linear-gradient(#e3edefee, #e3edefb8 75%, transparent);
+}
+.ap-stage-heading > div > span {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+.ap-stage-heading h1 {
+  margin: 7px 0 0;
+  font-size: clamp(26px, 3cqw, 38px);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  color: #2d4365;
+}
+.ap-answer-picker {
+  display: grid;
+  gap: 5px;
+  font-size: 10px;
+  color: #38556b;
+  width: min(44%, 250px);
+}
+.ap-answer-picker select {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid #8aa6b5;
+  border-radius: 6px;
+  color: #2d4365;
+  background: #edf4f5;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+.ap-presenter {
+  position: absolute;
+  top: 0;
+  bottom: 30px;
+  left: 0;
+  width: 72%;
+  transition: width 650ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.is-presenting .ap-presenter {
+  width: 36%;
+}
+.ap-presenter .alya-canvas,
+.ap-presenter .alya-avatar-poster {
+  transform: scale(1.16);
+  transform-origin: center 60%;
+  transition:
+    transform 650ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 450ms;
+}
+.is-presenting .ap-presenter .alya-canvas,
+.is-presenting .ap-presenter .alya-avatar-poster {
+  transform: scale(1);
+}
+.ap-presenter .alya-avatar-stage {
+  height: 100%;
+  background: transparent;
+}
+.ap-presenter .alya-stage-top {
+  display: none;
+}
+.ap-presenter .alya-stage-bottom {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 70px 24px 25px;
+  background: linear-gradient(transparent, #243b53ed);
+}
+.ap-presenter .alya-avatar-name strong {
+  font-size: clamp(29px, 4cqw, 48px);
+  color: #f7fafd;
+}
+.ap-presenter .alya-avatar-name small {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ap-presenter .alya-presence {
+  white-space: normal;
+  font-size: 11px;
+  border: 0;
+  background: none;
+  padding: 0;
+}
+.ap-presenter .alya-model-state {
+  top: 120px;
+  left: 12px;
+  right: 12px;
+}
+.ap-welcome {
+  position: absolute;
+  right: 5%;
+  top: 30%;
+  width: 28%;
+  color: #233d56;
+  z-index: 3;
+}
+.ap-welcome-rule {
+  display: block;
+  width: 38px;
+  height: 3px;
+  background: #256a91;
+  margin-bottom: 23px;
+}
+.ap-welcome h2 {
+  font-size: clamp(24px, 3.5cqw, 43px);
+  letter-spacing: -0.045em;
+  line-height: 1.15;
+  white-space: pre-line;
+}
+.ap-welcome p {
+  margin-top: 20px;
+  font-size: clamp(13px, 1.5cqw, 16px);
+  line-height: 1.85;
+}
+.ap-stage-caption {
+  position: absolute;
+  inset: auto 0 0;
+  height: 30px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #2d4365;
+  color: #e3f3f4;
+  font-size: 10px;
+  z-index: 5;
+}
+.ap-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #79a1b3;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.ap-live-dot.active {
+  background: #256a91;
+  box-shadow: 0 0 0 3px #256a9115;
+}
+.alya-presentation-board {
+  position: absolute;
+  top: 112px;
+  right: 22px;
+  bottom: 52px;
+  width: calc(64% - 28px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #f0f5f6;
+  border: 1px solid #8ba7b5;
+  border-top: 4px solid #256a91;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px #1e38481c;
+  color: #2d4365;
+  padding: 18px 22px 12px;
+  animation: ap-board-enter 500ms ease-out both;
+}
+@keyframes ap-board-enter {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ap-board-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  color: #42657b;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  font-weight: 650;
+}
+.ap-board-heading > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ap-board-heading > span:last-child {
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 11px;
+  font-weight: 500;
+}
+.ap-visual-topic {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0 17px;
+  flex-shrink: 0;
+}
+.ap-visual-topic h2 {
+  font-size: clamp(23px, 3cqw, 32px);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+  margin: 0;
+  color: #2d4365;
+  overflow-wrap: anywhere;
+}
+.ap-topic-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  border: 1px solid #bed0d7;
+  background: #e3edf1;
+  color: #256a91;
+}
+.ap-point-map {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.ap-point-map button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 7px;
+  border: 1px solid #b4c9d3;
+  border-radius: 6px;
+  color: #426079;
+  background: #e6eef1;
+  text-align: left;
+}
+.ap-point-map button > span {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ap-point-map small {
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 550;
+}
+.ap-point-map button[aria-current] {
+  background: #2d4365;
+  border-color: #2d4365;
+  color: #f7fafd;
+}
+.ap-point-map button[aria-current] > span {
+  color: #b8dfe3;
+}
+.ap-point-map.is-compact small {
+  display: none;
+}
+.ap-point-map.is-compact button {
+  justify-content: center;
+}
+.ap-point-panel {
+  display: grid;
+  grid-template-columns: minmax(95px, 0.8fr) minmax(0, 1.6fr);
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+  padding: 22px 0 15px;
+}
+.ap-point-art {
+  display: grid;
+  place-items: center;
+  align-self: center;
+  border-radius: 12px;
+  border: 1px solid #c4d8df;
+  background: #e0edf0;
+  padding: 6px;
+  margin: 0;
+}
+.ap-point-art .av-artwork {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+}
+.ap-point-copy {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.ap-point-kicker {
+  font-size: 9px;
+  letter-spacing: 0.13em;
+  color: #42657b;
+  font-weight: 650;
+  line-height: 1.5;
+  flex-shrink: 0;
+}
+.ap-point-copy h3 {
+  font-size: clamp(18px, 2.3cqw, 24px);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+  margin: 6px 0 13px;
+  color: #2d4365;
+  flex-shrink: 0;
+}
+.has-condition .ap-point-kicker {
+  border-left: 3px solid #256a91;
+  padding-left: 8px;
+}
+.ap-reading {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.ap-reading-text,
+.ap-reading-measure {
+  margin: 0;
+  font-size: clamp(17px, 2cqw, 21px);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #334c62;
+  font-weight: 400;
+}
+.ap-reading-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  visibility: hidden;
+  pointer-events: none;
+  font-weight: 400;
+}
+.ap-guide-navigation {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 9px;
+  border-top: 1px solid #bed0d7;
+  margin-top: 0;
+  padding-top: 10px;
+  flex-shrink: 0;
+}
+.ap-guide-navigation > span {
+  font-size: 11px;
+  color: #49677e;
+  text-align: center;
+}
+.ap-guide-navigation small {
+  font-size: inherit;
+}
+.ap-guide-navigation button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 80px;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid #9cb6c4;
+  border-radius: 5px;
+  color: #256a91;
+  background: #e4eef1;
+  font-size: 12px;
+  font-weight: 600;
+}
+.ap-guide-navigation button:first-child > svg {
+  transform: rotate(180deg);
+}
+.ap-guide-navigation button:last-child {
+  background: #2d4365;
+  border-color: #2d4365;
+  color: #f7fafd;
+}
+.ap-guide-navigation button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.ap-board-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 13px;
+  padding: 10px 0;
+  flex-shrink: 0;
+}
+.ap-board-footer button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  min-height: 30px;
+  color: #256a91;
+}
+.ap-follow {
+  font-weight: 650;
+}
+.ap-reading-note {
+  font-size: 10px;
+  color: #546c7c;
+  margin-left: auto;
+}
+.ap-source {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #536d80;
+  border-top: 1px solid #cbdbe0;
+  padding-top: 10px;
+  margin: 0;
+  flex-shrink: 0;
+}
+.alya-live-page .alya-chat-heading {
+  min-height: 62px;
+  padding: 12px 20px;
+  background: #2d4365;
+}
+.alya-live-page .alya-chat-heading h2 {
+  font-size: 21px;
+}
+.alya-live-page .alya-chat-log {
+  padding: 20px 19px 12px;
+}
+.alya-live-page .alya-message.user {
+  margin-left: 24px;
+}
+.alya-live-page .alya-message.assistant {
+  padding-left: 0;
+}
+.alya-live-page .alya-message p {
+  font-size: 14px;
+  line-height: 1.85;
+}
+.alya-live-page .alya-short-reply {
+  display: block;
+  overflow: visible;
+}
+.alya-live-page .alya-short-reply .alya-answer-lead {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.65;
+  color: #f1f6fa;
+  margin-bottom: 10px;
+}
+.alya-live-page .alya-short-reply p + p {
+  margin-top: 0;
+}
+.alya-live-page .alya-short-steps {
+  margin: 0;
+  padding-left: 23px;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.85;
+}
+.alya-short-steps li + li {
+  margin-top: 9px;
+}
+.alya-short-steps li::marker {
+  color: #b8dfe3;
+  font-weight: 650;
+}
+.alya-full-reply {
+  margin: 12px 0 0;
+}
+.alya-full-reply > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  color: #b8dfe3;
+  font-size: 11px;
+  cursor: pointer;
+  list-style: none;
+}
+.alya-full-reply > summary::-webkit-details-marker {
+  display: none;
+}
+.alya-full-reply[open] > summary {
+  padding-bottom: 9px;
+  border-bottom: 1px solid #637b9460;
+  margin-bottom: 12px;
+}
+.alya-full-reply[open] > summary > svg {
+  transform: rotate(180deg);
+}
+.alya-live-page .alya-composer-area {
+  padding: 12px 16px 10px;
+}
+.alya-live-page .alya-composer textarea {
+  font-size: 13px;
+}
+.alya-live-page .alya-chat-caption {
+  font-size: 9px;
+  line-height: 1.6;
+}
+.alya-live-page .alya-voice-options {
+  max-height: min(420px, 65dvh);
+  overflow-y: auto;
+}
+.alya-presentation-stage button:focus-visible,
+.alya-presentation-stage select:focus-visible,
+.ap-reading:focus-visible {
+  outline: 2px solid #256a91;
+  outline-offset: 3px;
+}
+.alya-presentation-stage button:hover:not(:disabled) {
+  background: #d8e9ed;
+}
+.alya-presentation-stage .ap-point-map button[aria-current]:hover,
+.alya-presentation-stage .ap-guide-navigation button:last-child:hover:not(:disabled) {
+  background: #253b58;
+}
+.alya-presentation-stage.reduce-motion *,
+.alya-presentation-stage.reduce-motion *::after {
+  animation: none !important;
+  transition: none !important;
+}
+@media (max-height: 780px) and (min-width: 981px) {
+  .ap-stage-heading {
+    padding: 18px 22px;
+  }
+  .alya-presentation-board {
+    top: 96px;
+    bottom: 46px;
+    padding: 14px 18px 10px;
+    right: 16px;
+    width: calc(64% - 22px);
+  }
+  .ap-visual-topic {
+    min-height: 0;
+    padding: 10px 0;
+    margin: 0;
+    gap: 12px;
+  }
+  .ap-point-panel {
+    padding: 17px 0 10px;
+    gap: 16px;
+  }
+  .ap-point-art .av-artwork {
+    max-height: 150px;
+  }
+  .ap-point-copy h3 {
+    margin-bottom: 9px;
+  }
+  .ap-board-footer {
+    padding: 6px 0;
+    gap: 6px 10px;
+  }
+  .ap-source {
+    padding-top: 7px;
+  }
+  .ap-guide-navigation {
+    padding-top: 7px;
+  }
+  .ap-reading-note {
+    display: none;
+  }
+}
+@media (max-width: 1100px) and (min-width: 981px) {
+  .alya-live-page .alya-live-shell {
+    grid-template-columns: minmax(0, 7fr) minmax(280px, 3fr);
+    gap: 12px;
+  }
+  .ap-board-heading {
+    font-size: 8px;
+    letter-spacing: 0.06em;
+  }
+  .ap-visual-topic h2 {
+    font-size: 24px;
+  }
+  .ap-point-map button {
+    gap: 5px;
+    padding: 5px;
+  }
+  .ap-point-map small {
+    font-size: 10px;
+  }
+  .ap-point-panel {
+    grid-template-columns: minmax(74px, 0.8fr) minmax(0, 1.8fr);
+    gap: 12px;
+  }
+}
+@media (max-width: 980px) {
+  .alya-live-page .alya-live-shell {
+    grid-template-columns: 1fr;
+    grid-template-areas: 'presentation' 'answers';
+    grid-template-rows: minmax(360px, 1.1fr) minmax(280px, 1fr);
+    gap: 10px;
+  }
+  .ap-stage-heading {
+    padding: 14px 18px;
+  }
+  .ap-stage-heading > div > span {
+    font-size: 8px;
+  }
+  .ap-stage-heading h1 {
+    font-size: 24px;
+    margin-top: 5px;
+  }
+  .ap-presenter {
+    width: 58%;
+    bottom: 24px;
+  }
+  .is-presenting .ap-presenter {
+    width: 29%;
+  }
+  .ap-presenter .alya-stage-bottom {
+    padding: 34px 16px 14px;
+    gap: 8px;
+  }
+  .ap-presenter .alya-avatar-name strong {
+    font-size: 26px;
+  }
+  .ap-presenter .alya-avatar-name small {
+    display: none;
+  }
+  .ap-presenter .alya-presence {
+    font-size: 10px;
+  }
+  .ap-stage-caption {
+    height: 24px;
+    font-size: 9px;
+    padding: 0 15px;
+  }
+  .ap-welcome {
+    top: 31%;
+    width: 36%;
+  }
+  .ap-welcome h2 {
+    font-size: 26px;
+  }
+  .ap-welcome p {
+    margin-top: 12px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .ap-welcome-rule {
+    margin-bottom: 12px;
+  }
+  .alya-presentation-board {
+    top: 64px;
+    bottom: 35px;
+    right: 12px;
+    width: calc(71% - 18px);
+    padding: 10px 14px;
+  }
+  .ap-board-heading {
+    font-size: 8px;
+  }
+  .ap-source,
+  .ap-reading-note {
+    display: none;
+  }
+  .ap-visual-topic {
+    padding: 6px 0 9px;
+  }
+  .ap-visual-topic h2 {
+    font-size: 21px;
+  }
+  .ap-topic-mark {
+    width: 26px;
+    height: 26px;
+  }
+  .ap-board-heading > span:last-child {
+    font-size: 9px;
+  }
+  .ap-point-map button {
+    min-height: 30px;
+    padding: 4px 6px;
+  }
+  .ap-point-map small {
+    font-size: 9px;
+  }
+  .ap-point-panel {
+    grid-template-columns: minmax(55px, 0.65fr) minmax(0, 2fr);
+    padding: 10px 0;
+    gap: 12px;
+  }
+  .ap-point-art .av-artwork {
+    max-height: 100px;
+  }
+  .ap-point-copy h3 {
+    font-size: 16px;
+    margin: 3px 0 6px;
+  }
+  .ap-point-kicker {
+    font-size: 8px;
+  }
+  .ap-reading-text,
+  .ap-reading-measure {
+    font-size: 15px;
+    line-height: 1.65;
+  }
+  .ap-guide-navigation {
+    padding-top: 5px;
+    margin: 0;
+  }
+  .ap-guide-navigation button {
+    min-height: 30px;
+    min-width: 58px;
+    font-size: 10px;
+    padding: 4px 6px;
+  }
+  .ap-guide-navigation > span {
+    font-size: 10px;
+  }
+  .ap-board-footer {
+    padding: 4px 0 0;
+    gap: 8px;
+  }
+  .ap-board-footer button {
+    font-size: 10px;
+    min-height: 28px;
+  }
+  .ap-board-footer .ap-replay {
+    display: none;
+  }
+  .alya-live-page .alya-chat-heading {
+    min-height: 43px;
+    padding: 5px 16px;
+  }
+  .alya-live-page .alya-chat-heading h2 {
+    font-size: 17px;
+  }
+  .alya-live-page .alya-composer-area {
+    padding: 8px 13px 7px;
+  }
+  .alya-live-page .alya-composer textarea {
+    min-height: 44px;
+    height: 44px;
+  }
+  .alya-live-page .alya-chat-caption {
+    display: none;
+  }
+  .alya-live-page .alya-voice-toolbar {
+    margin-top: 5px;
+    min-height: 24px;
+  }
+}
+@media (max-width: 560px) {
+  .ap-stage-heading > div > span {
+    display: none;
+  }
+  .uv-assistant-workspace {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .uv-assistant-workspace > .uv-main {
+    min-height: 0;
+  }
+  .alya-live-page .alya-live-shell {
+    grid-template-rows: minmax(440px, 1fr) minmax(300px, 1fr);
+  }
+  .ap-answer-picker {
+    max-width: 48%;
+  }
+  .ap-presenter {
+    width: 60%;
+  }
+  .is-presenting .ap-presenter {
+    width: 27%;
+  }
+  .ap-welcome {
+    width: 38%;
+  }
+  .ap-welcome h2 {
+    font-size: 21px;
+  }
+  .ap-welcome p {
+    font-size: 11px;
+  }
+  .alya-presentation-board {
+    width: calc(73% - 12px);
+    right: 8px;
+    padding: 10px 11px;
+  }
+  .ap-board-heading {
+    font-size: 7px;
+    letter-spacing: 0.04em;
+  }
+  .ap-visual-topic {
+    gap: 9px;
+  }
+  .ap-visual-topic h2 {
+    font-size: 17px;
+  }
+  .ap-point-map small {
+    display: none;
+  }
+  .ap-point-map button {
+    justify-content: center;
+  }
+  .ap-point-panel {
+    grid-template-columns: minmax(0, 1fr);
+    position: relative;
+  }
+  .ap-point-art {
+    position: absolute;
+    top: 7px;
+    right: 0;
+    width: 42px;
+    padding: 1px;
+    border-radius: 6px;
+  }
+  .ap-point-copy h3 {
+    padding-right: 48px;
+  }
+  .ap-reading-text,
+  .ap-reading-measure {
+    font-size: 14px;
+    line-height: 1.65;
+  }
+  .ap-presenter .alya-stage-bottom {
+    padding: 32px 9px 16px;
+  }
+  .ap-presenter .alya-avatar-name {
+    gap: 5px;
+  }
+  .ap-presenter .alya-avatar-name strong {
+    font-size: 22px;
+  }
+  .ap-presenter .alya-presence {
+    font-size: 9px;
+  }
+  .ap-stage-caption {
+    font-size: 8px;
+  }
+}
+@media (max-width: 560px) and (max-height: 740px) {
+  .uv-assistant-workspace {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  .uv-assistant-workspace > .uv-main {
+    min-height: 780px;
+  }
+  .alya-live-page .alya-live-shell {
+    flex: none;
+    height: 740px;
+    grid-template-rows: 340px 390px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alya-presentation-stage *,
+  .alya-presentation-stage *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* The spoken explanation lives around Alya, as small stage cues rather than
+   a second full-size panel. Only one cue changes at a time, on the audio clock. */
+.scene-presentation.is-presenting .ap-presenter {
+  left: 28%;
+  width: 44%;
+  bottom: 142px;
+}
+.scene-presentation .ap-presenter {
+  transition:
+    left 500ms ease,
+    width 500ms ease;
+}
+.scene-presentation.is-presenting .ap-presenter .alya-stage-bottom {
+  padding: 50px 18px 20px;
+}
+.scene-presentation .ap-scene-guide {
+  position: absolute;
+  inset: 100px 0 30px;
+  pointer-events: none;
+  z-index: 5;
+}
+.ap-scene-topic {
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #2d4365;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #738c9e55;
+}
+.ap-scene-topic h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.015em;
+}
+.ap-scene-cue {
+  position: absolute;
+  top: 58px;
+  bottom: 122px;
+  width: 25%;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  color: #2d4365;
+}
+.ap-scene-cue.cue-left {
+  left: 2.5%;
+}
+.ap-scene-cue.cue-right {
+  right: 2.5%;
+}
+.ap-cue-art {
+  width: 100%;
+  margin: 0 0 12px;
+  height: clamp(85px, 16cqw, 145px);
+  flex-shrink: 0;
+}
+.ap-cue-art .av-artwork {
+  width: 100%;
+  height: 100%;
+  display: block;
+  animation: ap-cue-appear 300ms ease-out both;
+}
+@keyframes ap-cue-appear {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ap-scene-cue h3 {
+  font-size: clamp(17px, 2.2cqw, 23px);
+  font-weight: 650;
+  line-height: 1.3;
+  margin: 5px 0 10px;
+  letter-spacing: -0.025em;
+  flex-shrink: 0;
+}
+.ap-scene-cue .ap-reading {
+  background: #f0f5f6e6;
+  border-left: 2px solid #256a91;
+  border-radius: 0 6px 6px 0;
+  padding: 9px 11px;
+}
+.ap-scene-cue .ap-reading-text,
+.ap-scene-cue .ap-reading-measure {
+  font-size: clamp(14px, 1.8cqw, 17px);
+  line-height: 1.6;
+}
+.ap-scene-cue .ap-reading-measure {
+  top: 9px;
+  left: 11px;
+  width: calc(100% - 22px);
+}
+.ap-scene-dock {
+  position: absolute;
+  bottom: 0;
+  left: 3%;
+  right: 3%;
+  min-height: 112px;
+  padding-top: 10px;
+  background: #e3edf0f5;
+  border-top: 1px solid #8ca6b380;
+  border-radius: 10px 10px 0 0;
+  pointer-events: auto;
+}
+.ap-scene-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+}
+.ap-scene-navigation > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 5px 12px;
+  border: 1px solid #91adbd;
+  border-radius: 6px;
+  color: #2d4365;
+  font-size: 12px;
+}
+.ap-scene-navigation > button:first-child svg {
+  transform: rotate(180deg);
+}
+.ap-scene-navigation > button:disabled {
+  opacity: 0.4;
+}
+.ap-scene-navigation nav {
+  display: flex;
+  gap: 7px;
+}
+.ap-scene-navigation nav button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid #8ca6b3;
+  font-size: 11px;
+  font-weight: 650;
+  color: #2d4365;
+}
+.ap-scene-navigation nav button[aria-current] {
+  background: #2d4365;
+  color: #f7fafd;
+  border-color: #2d4365;
+}
+.ap-scene-position {
+  font-size: 10px;
+  color: #426079;
+  text-align: center;
+  margin: 7px 0 0;
+}
+.ap-scene-dock .ap-board-footer {
+  justify-content: center;
+  padding: 3px 0;
+}
+.scene-presentation .ap-stage-heading {
+  background: linear-gradient(#e3edefee, #e3edef99 75%, transparent);
+}
+.scene-presentation .ap-scene-guide button[aria-current]:hover {
+  background: #253b58;
+}
+.scene-presentation.reduce-motion .ap-cue-art .av-artwork {
+  animation: none;
+}
+@media (max-width: 1100px) and (min-width: 981px) {
+  .ap-scene-cue {
+    width: 26%;
+  }
+  .ap-scene-cue h3 {
+    font-size: 17px;
+  }
+  .ap-cue-art {
+    height: 110px;
+  }
+}
+@media (max-width: 980px) {
+  .scene-presentation .ap-scene-guide {
+    inset: 64px 0 24px;
+  }
+  .ap-scene-topic {
+    padding-bottom: 7px;
+  }
+  .ap-scene-topic h2 {
+    font-size: 13px;
+  }
+  .scene-presentation.is-presenting .ap-presenter {
+    left: 0;
+    width: 44%;
+    bottom: 96px;
+  }
+  .ap-scene-cue {
+    top: 39px;
+    bottom: 99px;
+    width: 52%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    column-gap: 10px;
+  }
+  .ap-scene-cue.cue-left,
+  .ap-scene-cue.cue-right {
+    left: auto;
+    right: 3%;
+  }
+  .ap-cue-art {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 60px;
+    height: 55px;
+    margin: 0;
+  }
+  .ap-scene-cue .ap-point-kicker {
+    width: calc(100% - 70px);
+    font-size: 8px;
+  }
+  .ap-scene-cue h3 {
+    width: calc(100% - 70px);
+    font-size: 17px;
+    min-height: 32px;
+    margin: 3px 0 8px;
+  }
+  .ap-scene-cue .ap-reading {
+    width: 100%;
+    height: calc(100% - 60px);
+    flex: auto;
+  }
+  .ap-scene-cue .ap-reading-text,
+  .ap-scene-cue .ap-reading-measure {
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .ap-scene-dock {
+    min-height: 90px;
+    padding-top: 5px;
+  }
+  .ap-scene-navigation {
+    gap: 12px;
+  }
+  .ap-scene-navigation > button {
+    min-height: 30px;
+    font-size: 10px;
+    padding: 4px 6px;
+  }
+  .ap-scene-navigation nav button {
+    width: 28px;
+    height: 28px;
+  }
+  .ap-scene-dock .ap-board-footer .ap-replay {
+    display: flex;
+  }
+}

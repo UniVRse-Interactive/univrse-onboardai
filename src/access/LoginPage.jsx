@@ -237,7 +237,10 @@ export default function LoginPage({ role = 'employee', signup = false, navigate,
           </div>
           <div className="login-alya-scene">
             <div className="login-avatar-frame">
-              <img src="/avatars/alya/poster.png" alt="Alya, your virtual onboarding companion" />
+              <img
+                src="/avatars/alya/poster.png?v=154d7b59632e"
+                alt="Alya, your virtual onboarding companion"
+              />
             </div>
             <div className="login-alya-copy">
               <span className="login-alya-name">Meet Alya.</span>

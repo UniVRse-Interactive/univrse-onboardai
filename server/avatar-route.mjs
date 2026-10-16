@@ -2,10 +2,11 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-// Lossless compression keeps the original 130 MiB avatar intact while reducing
-// its transfer size. Browsers decode gzip before passing the GLB to Three.js.
+// Lossless compression keeps the supplied model intact while reducing its
+// transfer size. Browsers decode gzip before passing the GLB to Three.js.
 // The file is streamed without Content-Length: Cloud Run caps HTTP/1 responses
-// at 32 MiB unless they use chunked transfer encoding, and this one is ~52 MiB.
+// at 32 MiB unless they use chunked transfer encoding. Keep imports of larger
+// avatar revisions compatible with the same route.
 export function avatarRoute(assetRoot) {
   const file = resolve(assetRoot, 'avatars/alya/alya.glb.gz');
   return async (req, res, next) => {

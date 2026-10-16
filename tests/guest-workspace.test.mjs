@@ -420,6 +420,135 @@ test('the HR summary follows employee question requests automatically with no HR
   }
 });
 
+test('source-search explanation controls preserve feedback and report each explicit request once', async () => {
+  const s = await server(),
+    client = s.client();
+  try {
+    const id = (await client()).body.lastGuestId;
+    await upload(
+      client,
+      'support-guide.txt',
+      'Working Hours\nOffice hours are 10 AM to 6 PM Monday to Friday. For example, a workday starts at 10 AM. Check with HR before changing this schedule.',
+    );
+    const config = (await client('/guests/' + id + '/config')).body;
+    assert.equal(config.adaptiveLearning, true);
+    assert.equal(config.answerFormatsAvailable, true);
+    const chat = (await createChat(client, id)).body;
+    const first = await ask(client, id, chat.id, 'What are the working hours?');
+    const firstMessage = (
+      await client('/guests/' + id + '/conversations/' + chat.id)
+    ).body.messages.at(-1);
+    assert.equal(first.status, 200);
+    await client('/guests/' + id + '/conversations/' + chat.id + '/feedback', {
+      method: 'POST',
+      body: { messageId: firstMessage.id, rating: 'helpful' },
+    });
+    await client('/guests/' + id + '/conversations/' + chat.id + '/human-help', {
+      method: 'POST',
+      body: { messageId: firstMessage.id },
+    });
+    const setting = (format, identity = id) =>
+      client('/guests/' + identity + '/conversations/' + chat.id + '/learning', {
+        method: 'POST',
+        body: { preference: format },
+      });
+    await setting('steps');
+    assert.equal(
+      (await client()).body.guests.find((guest) => guest.id === id).summary.turns,
+      1,
+      'a preference change is not an answered question',
+    );
+    const requestId = randomUUID();
+    const steps = await ask(
+      client,
+      id,
+      chat.id,
+      'Please explain this step by step for this question: What are the working hours?',
+      requestId,
+    );
+    assert.equal(steps.body.learning.format, 'steps');
+    assert.equal(steps.body.searchQuery, 'What are the working hours?');
+    assert.match(steps.body.answer, /10 AM to 6 PM/);
+    await ask(
+      client,
+      id,
+      chat.id,
+      'Please explain this step by step for this question: What are the working hours?',
+      requestId,
+    );
+    await setting('brief');
+    assert.equal(
+      (
+        await ask(
+          client,
+          id,
+          chat.id,
+          'Please keep the answer brief for this question: What are the working hours?',
+        )
+      ).body.learning.format,
+      'brief',
+    );
+    await setting('example');
+    const example = await ask(
+      client,
+      id,
+      chat.id,
+      'Please give me a worked example for this question: What are the working hours?',
+    );
+    assert.equal(example.body.learning.format, 'example');
+    assert.equal(example.body.exampleUnavailable, false);
+    const summary = (await client()).body.guests.find((guest) => guest.id === id).summary;
+    assert.equal(summary.turns, 4);
+    assert.deepEqual(summary.requests, { steps: 1, example: 1, brief: 1 });
+    assert.deepEqual(summary.formats, { standard: 1, steps: 1, example: 1, brief: 1 });
+    assert.equal(summary.feedback.helpful, 1);
+    assert.equal(summary.humanHelpRequests, 1);
+    assert.match(summary.overview.interaction, /smaller steps/);
+    const second = (await client('/guests', { method: 'POST' })).body;
+    assert.equal((await setting('steps', second.id)).status, 404);
+    assert.equal(
+      (
+        await client('/guests/' + id + '/conversations/' + chat.id + '/learning', {
+          method: 'POST',
+          body: { diagnosis: 'invalid' },
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (await client()).body.guests.find((guest) => guest.id === second.id).summary.turns,
+      0,
+    );
+  } finally {
+    await s.close();
+  }
+});
+
+test('a missing sourced example records the request without pretending to deliver one', async () => {
+  const s = await server(),
+    client = s.client();
+  try {
+    const id = (await client()).body.lastGuestId;
+    await upload(client);
+    const chat = (await createChat(client, id)).body;
+    const example = await ask(
+      client,
+      id,
+      chat.id,
+      'Give me a worked example for this question: What are the working hours?',
+    );
+    assert.equal(example.status, 200);
+    assert.equal(example.body.exampleUnavailable, true);
+    assert.equal(example.body.learning.format, 'standard');
+    const summary = (await client()).body.guests[0].summary;
+    assert.equal(summary.requests.example, 1);
+    assert.equal(summary.formats.example, 0);
+    assert.equal(summary.turns, 1);
+  } finally {
+    await s.close();
+  }
+});
+
 test('employee documents and automatic reports survive restart and expire together after inactivity', () => {
   const folder = mkdtempSync(join(tmpdir(), 'onboardai-workspace-')),
     path = join(folder, 'workspace.sqlite');

@@ -47,6 +47,36 @@ test('clothing aliases retrieve quoted dress guidance without inventing an answe
   assert.ok(!result.answer.includes('9:00'));
 });
 
+test('specific permission wording retrieves the item without answering from unrelated rules', () => {
+  const clothes = [
+    {
+      title: 'Synthetic handbook',
+      text: 'Dress Code\nSmart casual clothing is required. Plain T-shirts are permitted on Fridays only. Ripped jeans and slippers are not allowed on weekdays.',
+    },
+  ];
+  for (const question of ['Can I wear a tshirt?', 'Are jeans allowed?', 'Can I wear slippers?']) {
+    const result = searchDocuments(question, clothes);
+    assert.equal(result.matched, true, question);
+    assert.equal(result.passages[0].heading, 'Dress Code');
+    assert.match(result.passages[0].text, /Fridays only/);
+  }
+  assert.equal(searchDocuments('Are spacesuits allowed on Mars?', clothes).matched, false);
+});
+
+test('employee meeting preparation selects participant duties rather than host instructions', () => {
+  const documents = [
+    {
+      title: 'Meeting SOP',
+      text: 'Internal Meeting\nThe meeting is for work updates every Friday.\nHost Responsibilities\nCall each participant in order.\nEach Participant Must:\n● Share their task list.\n● Explain completed work.\n● Show project progress.\nExample:\nProject A – 50%\nQuiz\nThe host should make sure everyone has an opportunity to speak before ending the meeting.',
+    },
+  ];
+  const found = searchDocuments('How should I prepare for the weekly meeting?', documents);
+  assert.equal(found.matched, true);
+  assert.match(found.passages[0].preview, /Share their task list/);
+  assert.ok(!found.passages[0].preview.includes('Call each participant'));
+  assert.ok(!found.passages[0].preview.includes('Project A'));
+});
+
 test('unrelated, empty and partly matching questions decline instead of returning a random policy', () => {
   for (const question of [
     '',

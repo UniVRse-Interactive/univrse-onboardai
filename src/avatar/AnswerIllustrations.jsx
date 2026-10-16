@@ -104,7 +104,7 @@ export default function AnswerIllustrations({ part, small = false }) {
       aria-hidden="true"
       focusable="false"
     >
-      <ellipse cx="162" cy="224" rx="106" ry="12" fill="#ded2c8" />
+      <ellipse cx="162" cy="224" rx="106" ry="12" fill="#c7dce1" />
       {scene === 'document' && (
         <>
           <path d="M77 65h158v142H77Z" fill="#c9d9da" stroke={ink} strokeWidth="2" />
@@ -170,7 +170,7 @@ export default function AnswerIllustrations({ part, small = false }) {
           )}
           <path
             d="M185 96h82q10 0 10 10v39q0 10-10 10h-19v14l-19-14h-44q-10 0-10-10v-39q0-10 10-10Z"
-            fill="#f5dba2"
+            fill="#d9eaf0"
             stroke={ink}
             strokeWidth="2"
           />

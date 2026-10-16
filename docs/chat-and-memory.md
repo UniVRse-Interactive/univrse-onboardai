@@ -1,5 +1,7 @@
 # Alya's chat brain
 
+The active local setting now uses the supplied stateless ALYA brain. Saved transcripts remain available, but previous turns are not supplied to this brain. See [ALYA brain integration](alya-brain-integration.md) for the current workflow, API-key configuration and verification. The conversation/checkpointer workflow below describes the retained legacy `AI_MODE=gemini-chat` option.
+
 ## What changed
 
 Gemini interprets questions and writes answers. LangChain connects the model and retrieves company passages. LangGraph runs the conversation workflow and saves its state with a SQLite checkpointer. These libraries organise the model; they are not language models or a company-trained AI.

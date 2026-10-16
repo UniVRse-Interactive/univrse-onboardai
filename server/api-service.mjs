@@ -9,7 +9,7 @@ loadEnvFile();
 const app = createApp({ trustProxy: parseTrustProxy(process.env.TRUST_PROXY, 2) });
 startService(app, { name: 'OnboardAi API', onClose: () => app.locals.closeChat() });
 if (
-  ['gemini-chat', 'document-search'].includes(process.env.AI_MODE) &&
+  ['alya-brain', 'gemini-chat', 'document-search'].includes(process.env.AI_MODE) &&
   process.env.GOOGLE_DRIVE_FOLDER_ID &&
   process.env.KNOWLEDGE_WARMUP !== 'false'
 ) {

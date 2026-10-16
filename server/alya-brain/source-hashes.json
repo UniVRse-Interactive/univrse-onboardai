@@ -1,0 +1,42 @@
+[
+  {
+    "File": "README.md",
+    "ExactCopy": true,
+    "Sha256": "371A98374950D529B2A2834B811844A92D01C8C91017B85187FB15CC00D03ACB"
+  },
+  {
+    "File": "package.json",
+    "ExactCopy": true,
+    "Sha256": "6FB6953BF9C8589E2951CB47237CE9FF24B1C9DE0243674F08A88707F0F79CAF"
+  },
+  {
+    "File": "server\\brain.mjs",
+    "ExactCopy": true,
+    "Sha256": "8054F4800D986E9BEEE285510B6FE85C155D8A8F74FE127F35D1E7CD7BCDF7A7"
+  },
+  {
+    "File": "server\\company-document-retriever.mjs",
+    "ExactCopy": true,
+    "Sha256": "EF33152B0AD67007762A1D1A0616D9DD454D3FC7DDFEB63A8C242CD4C90669A2"
+  },
+  {
+    "File": "server\\document-search.mjs",
+    "ExactCopy": true,
+    "Sha256": "AF12C5B4973F8EEDF3E5A900828D777993CCC1C1F986E6132149FDC1379EA9F5"
+  },
+  {
+    "File": "server\\answer-style-preferences.mjs",
+    "ExactCopy": true,
+    "Sha256": "4D0258DAAE5635883748964BECD8E20516563CB7A978AA581F2F58FC75001016"
+  },
+  {
+    "File": "shared\\clothing-guide.mjs",
+    "ExactCopy": true,
+    "Sha256": "149F25EA2DF3BFA82EE8B07AEDBD2F859C29E06FAFE8D74B71BA9416CBB9E044"
+  },
+  {
+    "File": "tests\\brain.test.mjs",
+    "ExactCopy": true,
+    "Sha256": "777FF1CA8F82C40F8FFE767EDB7B9551FB61BB38ED9AC4567AF1D74C7AE25178"
+  }
+]

@@ -1,7 +1,7 @@
 // A small lexical search preview. It quotes the source; it does not generate
 // answers, execute document instructions, or decide who may access a document.
 const stopWords = new Set(
-  'a an and are as at be can could do does for from give have how i in is it me my of on our please tell that the their there this to us we what when where which who why with would you your company univrse interactive sdn bhd policy information guide'.split(
+  'a an and are as at be can could do does for from give have how i in is it me my of on our please tell that the their there this to us we what when where which who why with would should you your company univrse interactive sdn bhd policy information guide about allowed permitted permission'.split(
     ' ',
   ),
 );
@@ -18,6 +18,7 @@ function normalize(text) {
 }
 
 function conceptsFor(question) {
+  question = question.replace(/\bt[ -]?shirts?\b/gi, 'T-shirt').replace(/\b(?:hrs)\b/gi, 'hours');
   const tokens = new Set(
     normalize(question)
       .split(' ')
@@ -43,7 +44,38 @@ function conceptsFor(question) {
     for (const word of ['work', 'office', 'operat', 'hour', 'workweek', 'schedule', 'time'])
       tokens.delete(word);
   }
-  if (/\b(?:wear|wearing|dress|attire|clothing|outfit)\b/i.test(question)) {
+  if (/\bmeetings?\b/i.test(question)) {
+    concepts.push(
+      ['meeting', 'meetings', 'progress update', 'work breakdown', 'round table'].map(normalize),
+    );
+    for (const word of ['meeting', 'meet', 'weekly']) tokens.delete(word);
+    if (/\b(prepar(?:e|ing|ation)|bring)\b/i.test(question)) {
+      concepts.push(
+        [
+          'prepare',
+          'each participant',
+          'work breakdown',
+          'task list',
+          'progress update',
+          'work update',
+        ].map(normalize),
+      );
+      for (const word of ['prepare', 'prepar', 'preparation', 'bring']) tokens.delete(word);
+    }
+  }
+  if (/\bleave policy\b/i.test(question)) {
+    concepts.push(
+      ['leave policy', 'leave application', 'applications for leave', 'apply for leave'].map(
+        normalize,
+      ),
+    );
+    tokens.delete('leave');
+  }
+  if (
+    /\b(?:wear|wearing|dress|attire|clothing|outfit|jeans|shirts?|t-shirt|slippers)\b/i.test(
+      question,
+    )
+  ) {
     concepts.push(
       ['dress code', 'attire', 'clothing', 'wear', 'outfit', 'smart casual'].map(normalize),
     );
@@ -109,7 +141,17 @@ function contains(text, term) {
   return (' ' + text + ' ').includes(' ' + term + ' ');
 }
 
-function previewFor(passage, concepts) {
+function previewFor(passage, concepts, question) {
+  if (
+    /\bmeetings?\b/i.test(question) &&
+    /\b(prepar(?:e|ing|ation)|bring)\b/i.test(question) &&
+    !/\b(host|organis[ez]|facilitat)\b/i.test(question)
+  ) {
+    const participant = passage.text.match(
+      /Each Participant Must:\s*([\s\S]+?)(?:\nExample:|\nSession \d|$)/i,
+    );
+    if (participant) return participant[1].trim();
+  }
   // Select a source paragraph rather than generating or rewriting a policy.
   const paragraphs = passage.text
     .split(/\n+/)
@@ -126,7 +168,8 @@ function previewFor(passage, concepts) {
       ),
     }))
     .sort((a, b) => b.score - a.score || a.index - b.index);
-  return ranked[0]?.text || passage.text;
+  // A paragraph introducing a table is not a complete answer by itself.
+  return ranked[0] && !/:\s*$/.test(ranked[0].text) ? ranked[0].text : passage.text;
 }
 
 export function searchDocuments(question, documents) {
@@ -152,7 +195,18 @@ export function searchDocuments(question, documents) {
           score += weight * (inHeading ? 4 : 1);
         }
       }
-      return { ...passage, score, coverage: matched / concepts.length };
+      const participantPreparation =
+        /\bmeetings?\b/i.test(question) &&
+        /\b(prepar(?:e|ing|ation)|bring)\b/i.test(question) &&
+        !/\bhost\b/i.test(question) &&
+        /Each Participant Must:/i.test(passage.text) &&
+        /meeting/i.test(passage.title + ' ' + passage.heading);
+      if (participantPreparation) score += 12;
+      return {
+        ...passage,
+        score,
+        coverage: participantPreparation ? 1 : matched / concepts.length,
+      };
     })
     .filter((passage) => concepts.length && passage.coverage >= 0.7 && passage.score > 0)
     .sort((a, b) => b.score - a.score);
@@ -166,8 +220,15 @@ export function searchDocuments(question, documents) {
       title: passage.title,
       heading: passage.heading,
       text: passage.text,
-      preview: previewFor(passage, concepts),
+      preview: previewFor(passage, concepts, question),
     });
+    if (
+      /\bmeetings?\b/i.test(question) &&
+      /\b(prepar(?:e|ing|ation)|bring)\b/i.test(question) &&
+      !/\bhost\b/i.test(question) &&
+      /Each Participant Must:/i.test(passage.text)
+    )
+      break;
     if (selected.length === 2) break;
   }
   const answer = selected.length

@@ -33,7 +33,11 @@ const secrets = [
   ['Google API key', /AIza[0-9A-Za-z_-]{30,}/],
   ['GitHub token', /(?:ghp_|gho_|github_pat_)[0-9A-Za-z_]{20,}/],
   ['private key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
-  ['assigned Gemini key', /GEMINI_API_KEY\s*[:=]\s*["']?[A-Za-z0-9_.-]{24,}/],
+  // Environment-variable references in the supplied README are not key values.
+  [
+    'assigned Gemini key',
+    /GEMINI_API_KEY\s*[:=]\s*["']?(?!(?:process\.env|env)\.)[A-Za-z0-9_.-]{24,}/,
+  ],
 ];
 let totalBytes = 0;
 for (const file of files) {

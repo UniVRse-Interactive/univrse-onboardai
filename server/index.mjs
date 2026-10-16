@@ -36,7 +36,15 @@ if (process.argv.includes('--production')) {
 } else {
   const { createServer } = await import('vite');
   // Share the HTTP listener for live updates instead of reserving a second port.
-  vite = await createServer({ server: { middlewareMode: true, hmr: { server } }, appType: 'spa' });
+  vite = await createServer({
+    server: {
+      middlewareMode: true,
+      hmr: { server },
+      // Local models, voice caches and SQLite writes are not browser source.
+      watch: { ignored: ['**/.cache/**'] },
+    },
+    appType: 'spa',
+  });
   app.use(vite.middlewares);
 }
 const port = Number(process.env.PORT) || 3000;
@@ -53,7 +61,7 @@ server.listen(port, process.env.HOST || '127.0.0.1', () => {
   // Prepare company text while the page/avatar loads. Every question still
   // checks current Drive revisions and access; startup failure never blocks the website.
   if (
-    ['gemini-chat', 'document-search'].includes(process.env.AI_MODE) &&
+    ['alya-brain', 'gemini-chat', 'document-search'].includes(process.env.AI_MODE) &&
     process.env.GOOGLE_DRIVE_FOLDER_ID &&
     process.env.KNOWLEDGE_WARMUP !== 'false'
   ) {

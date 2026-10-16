@@ -56,7 +56,7 @@ The fix is a follow-up, not part of this change: put IAP in front of web and mak
 
 ## The avatar
 
-`/avatars/alya/alya.glb` is the pre-compressed `alya.glb.gz` (about 55 MB, 52 MiB) sent with `Content-Encoding: gzip`. It is streamed **without** a `Content-Length`. Cloud Run caps HTTP/1 responses that are not chunked at 32 MiB, so an exact length would break the download; without it Node uses chunked transfer. The shared code is `server/avatar-route.mjs`, used by both the web service and `server/index.mjs`.
+`/avatars/alya/alya.glb` is the pre-compressed `alya.glb.gz` (currently about 21.1 MiB) sent with `Content-Encoding: gzip`. It is streamed **without** a `Content-Length`, keeping the route compatible with larger future imports. Cloud Run caps HTTP/1 responses that are not chunked at 32 MiB; without an exact length Node uses chunked transfer. The shared code is `server/avatar-route.mjs`, used by both the web service and `server/index.mjs`. The renderer includes the model hash in its URL so a replaced avatar does not reuse a previously cached model.
 
 ## Conversation storage
 

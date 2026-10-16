@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { paginateVisualText } from './visual-text-pagination.mjs';
 
-export default function useVisualTextPages(text) {
+export default function useVisualTextPages(text, maximumWords = Infinity) {
   const viewport = useRef(null),
     measure = useRef(null);
   const [layout, setLayout] = useState(null);
@@ -14,8 +14,14 @@ export default function useVisualTextPages(text) {
       if (disposed || area.clientWidth < 1 || area.clientHeight < 1) return;
       // The probe uses the paragraph font in bold to allow for emphasized
       // policy words. Leave a few pixels for fractional zoom rounding too.
-      const height = area.clientHeight - 4;
+      const style = getComputedStyle(area);
+      const height =
+        area.clientHeight -
+        parseFloat(style.paddingTop || 0) -
+        parseFloat(style.paddingBottom || 0) -
+        4;
       const pages = paginateVisualText(text, (candidate) => {
+        if ((candidate.match(/\S+/g) || []).length > maximumWords) return false;
         probe.textContent = candidate;
         return probe.getBoundingClientRect().height <= height;
       });
@@ -35,7 +41,7 @@ export default function useVisualTextPages(text) {
       disposed = true;
       observer.disconnect();
     };
-  }, [text]);
+  }, [text, maximumWords]);
   return {
     viewport,
     measure,

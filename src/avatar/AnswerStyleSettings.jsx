@@ -2,19 +2,19 @@ import React, { useState } from 'react';
 import Icon from '../portal/Icon';
 
 export const learningFormats = {
-  standard: 'Short explanation',
+  standard: 'Clear explanation',
   steps: 'Step by step',
   example: 'Worked example',
   brief: 'Brief answer',
 };
 const reasons = {
-  default: 'A short explanation to get started.',
+  default: 'A clear explanation with useful details.',
   'employee-choice': 'Using the explanation format you selected.',
   'explanation-request': 'Showing smaller steps because you asked for another explanation.',
   'example-request': 'Using an example because you asked for one.',
   'brief-request': 'Keeping the answer brief because you requested it.',
   'revisited-topic': 'We revisited this topic, so Alya is showing it in smaller steps.',
-  understood: 'Returning to a short explanation after you said you understood.',
+  understood: 'Returning to the usual explanation after you said you understood.',
 };
 
 export default function AnswerStyleSettings({ learning, disabled, onSettings, onClose }) {

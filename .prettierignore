@@ -6,6 +6,8 @@ artifacts/
 .env
 .env.*
 private/
+# Preserve the supplied brain package byte for byte; hashes are verified in tests.
+server/alya-brain/
 credentials*.json
 service-account*.json
 client_secret*.json

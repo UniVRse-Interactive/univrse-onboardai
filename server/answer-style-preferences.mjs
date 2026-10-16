@@ -58,10 +58,12 @@ export function supportRequest(question) {
   )
     return { format: 'standard', reason: 'understood' };
   if (
-    /\b(?:make (?:it|the answer) (?:brief|shorter)|summari[sz]e|keep it short|answer briefly|short answer|jawapan ringkas|ringkaskan)\b/.test(
+    /\b(?:make (?:it|the answer) (?:brief|shorter)|summari[sz]e|keep (?:it|the answer|your answer) (?:short|brief)|answer briefly|short answer|jawapan ringkas|ringkaskan)\b/.test(
       text,
     ) &&
-    !/\b(?:don't|do not|not) (?:make it |keep it )?(?:brief|shorter|short|ringkas)\b/.test(text)
+    !/\b(?:don't|do not|not) (?:(?:make|keep) (?:it|the answer|your answer) )?(?:brief|shorter|short|ringkas)\b/.test(
+      text,
+    )
   )
     return { format: 'brief', reason: 'brief-request' };
   if (
@@ -109,12 +111,14 @@ export function adaptLearning(value, { question = '', query = '' } = {}) {
 export function learningInstruction(value) {
   const learning = normaliseLearning(value);
   const format = {
-    standard: 'Use 2-3 short sentences with a direct answer.',
+    standard:
+      'Use three clear, complete sentences, usually about 40-65 words. Answer the exact question first, explain one useful detail, then give a relevant condition or next action from the guidance. For permission questions, state the supported permission or restriction directly before background information. Resolve brief follow-ups using the current subject, but follow a new topic immediately. Prefer information the employee can use over general background. Explain unfamiliar terms when the guidance supports that explanation. Use familiar words and one clear idea per sentence. Preserve necessary policy conditions and exceptions; accuracy takes priority over length. Use fewer sentences when the source supports only a short answer. Do not pad the answer with generic filler.',
     steps:
       'Use simple words and at most 3 short numbered steps. Explain unfamiliar terms. Focus on one manageable action; keep necessary policy conditions.',
     example:
       'Give a short explanation and one concrete fictional worked example. Explicitly call the example fictional; do not invent people, company rules or form links.',
-    brief: 'Use 1-2 short sentences. Preserve important conditions and exceptions.',
+    brief:
+      'Use two very short, complete sentences with familiar words: the direct answer and one useful detail. Preserve important conditions and exceptions; accuracy takes priority over length. Do not add generic filler.',
   }[learning.format];
   return `Answer presentation: ${format}\nAnswer the employee's current question about any company information or onboarding task. Follow a new subject immediately; do not continue an old lesson, impose a topic menu, quiz, stage or completion workflow. Apply current settings ahead of older presentation requests in the chat. Fictional examples must not invent company requirements, tools, channels, links or deadlines. If a process is unspecified, say so and suggest confirming with HR/supervisor. Never infer, score or label autism, neurodivergence, disability, intelligence, learning speed or abnormal behaviour from chat. Do not use diagnoses, grammar, spelling, response time or voice to choose content or workplace outcomes. Provide the same company guidance and access to all company and onboarding questions; change only the explanation and examples. Do not describe anyone as a normal/abnormal learner. Health-related disclosure does not establish a diagnosis or change their entitlement. Never include a health/ability assessment in a conversation summary. No sanctions or employment decisions arise from this chat.`;
 }

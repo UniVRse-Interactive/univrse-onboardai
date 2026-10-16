@@ -153,7 +153,7 @@ test('credential lookup failures return a safe error and never leak the token er
     await s.close();
   }
 });
-test('no server or script file reads GEMINI_API_KEY', async () => {
+test('Gemini API-key configuration is confined to the supplied-brain server adapter and diagnostic', async () => {
   const { readdirSync, readFileSync } = await import('node:fs');
   const offenders = [];
   for (const dir of ['server', 'scripts'])
@@ -164,7 +164,21 @@ test('no server or script file reads GEMINI_API_KEY', async () => {
         readFileSync(new URL(`../${dir}/${f}`, import.meta.url), 'utf8').includes('GEMINI_API_KEY')
       )
         offenders.push(`${dir}/${f}`);
-  assert.deepEqual(offenders, []);
+  assert.deepEqual(offenders.sort(), [
+    'scripts/check-gemini-connection.mjs',
+    'server/alya-brain-service.mjs',
+  ]);
+  const { join } = await import('node:path');
+  function checkBrowser(directory) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) checkBrowser(path);
+      else if (/\.(jsx?|mjs|css)$/.test(entry.name))
+        assert.ok(!readFileSync(path, 'utf8').includes('GEMINI_API_KEY'), path);
+    }
+  }
+  const { fileURLToPath } = await import('node:url');
+  checkBrowser(fileURLToPath(new URL('../src/', import.meta.url)));
 });
 test('TTS proxy rejects external audio and oversized SSML before any cloud request', async () => {
   const s = await server({ GOOGLE_CLOUD_PROJECT: 'test-project', GOOGLE_CLOUD_TTS: 'enabled' });

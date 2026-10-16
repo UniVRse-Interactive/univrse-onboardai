@@ -1,23 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
-import AvatarDisplay from './AvatarDisplay';
+import AlyaPresentationStage from './AlyaPresentationStage';
 import Icon from '../portal/Icon';
 import { createServerSpeech } from './answer-audio-player';
+import { answerReply, presentAnswer } from './chat-answer-presentation.mjs';
+import { replySentences } from './short-answer.mjs';
+import { answerPresentation } from './answer-presentation.mjs';
+export { presentAnswer } from './chat-answer-presentation.mjs';
 import AnswerStyleSettings, { learningFormats } from './AnswerStyleSettings';
-import VisualAnswerPanel from './VisualAnswerPanel';
 import './answer-support-controls.css';
 import './alya-chat.css';
 import './alya-workspace.css';
+import './alya-presentation.css';
+import './clothing-presentation.css';
+import './automatic-presentation.css';
 
 const preferenceKey = 'univrse-alya-voice-v1';
 const activeChatKey = 'univrse-alya-active-chat-v1';
-const viewPreferenceKey = 'onboardai-alya-view-v1';
-function readView() {
-  try {
-    return localStorage.getItem(viewPreferenceKey) === 'visual' ? 'visual' : 'chat';
-  } catch {
-    return 'chat';
-  }
-}
 function readPreferences() {
   try {
     const value = JSON.parse(localStorage.getItem(preferenceKey));
@@ -37,23 +35,6 @@ const greeting = {
   text: 'Hi, I’m Alya. Welcome to OnboardAi. Ask me about your company or any onboarding task.',
   intro: true,
 };
-export function presentAnswer(result) {
-  if (typeof result?.answer !== 'string' || !result.answer.trim())
-    throw new Error('The answer was empty. Please try again.');
-  const passages = Array.isArray(result.passages) ? result.passages : [];
-  const text =
-    result.mode === 'document-search' && passages.length
-      ? passages.map((p) => p.preview || p.text).join('\n\n')
-      : result.answer;
-  return {
-    text,
-    spoken: text,
-    mode: result.mode,
-    passages,
-    learning: result.learning,
-    source: typeof result.source === 'string' ? result.source : '',
-  };
-}
 function Message({
   message,
   onRetry,
@@ -74,6 +55,7 @@ function Message({
         <p>{message.text}</p>
       </article>
     );
+  const sentences = message.intro || message.error ? [] : replySentences(answerReply(message));
   return (
     <article className={'alya-message assistant ' + (message.error ? 'error' : '')}>
       <div className="alya-message-author">
@@ -100,42 +82,42 @@ function Message({
           </>
         ) : (
           <>
-            {message.mode !== 'document-search' && <p>{message.text}</p>}
-            {message.passages?.length ? (
-              message.mode === 'document-search' ? (
-                message.passages.map((passage, index) => (
-                  <div className="alya-passage" key={index}>
-                    <p>{passage.preview || passage.text}</p>
-                    <details>
-                      <summary>
-                        <Icon name="book" size={13} />
-                        {passage.heading || passage.title}
-                        <Icon name="down" size={13} />
-                      </summary>
-                      <div>
-                        <span>{passage.title}</span>
-                        <p>{passage.text}</p>
-                      </div>
-                    </details>
-                  </div>
-                ))
-              ) : (
-                <details className="alya-source-group">
-                  <summary>
-                    <Icon name="book" size={13} />
-                    Company sources ({message.passages.length})<Icon name="down" size={13} />
-                  </summary>
-                  {message.passages.map((passage, index) => (
-                    <section key={index}>
-                      <h4>{passage.heading || passage.title}</h4>
-                      <small>{passage.title}</small>
-                      <p>{passage.text}</p>
-                    </section>
-                  ))}
-                </details>
-              )
+            {message.learning?.format === 'steps' && !message.intro ? (
+              <ol className="alya-short-steps" aria-label="Explanation in smaller steps">
+                {replySentences(answerReply(message)).map((sentence, index) => (
+                  <li key={index}>{sentence}</li>
+                ))}
+              </ol>
+            ) : message.intro ? (
+              <p>{message.text}</p>
             ) : (
-              message.mode === 'document-search' && <p>{message.text}</p>
+              <div className="alya-short-reply">
+                <p className="alya-answer-lead">{sentences[0]}</p>
+                {sentences.length > 1 && <p>{sentences.slice(1).join(' ')}</p>}
+              </div>
+            )}
+            {!message.intro && (
+              <details className="alya-full-reply">
+                <summary>
+                  Full answer & conditions <Icon name="down" size={13} />
+                </summary>
+                <p>{message.text}</p>
+                {message.passages?.length > 0 && (
+                  <details className="alya-source-group">
+                    <summary>
+                      <Icon name="book" size={13} />
+                      Company sources ({message.passages.length})<Icon name="down" size={13} />
+                    </summary>
+                    {message.passages.map((passage, index) => (
+                      <section key={index}>
+                        <h4>{passage.heading || passage.title}</h4>
+                        <small>{passage.title}</small>
+                        <p>{passage.text}</p>
+                      </section>
+                    ))}
+                  </details>
+                )}
+              </details>
             )}
             {!message.intro && !message.error && memoryEnabled && (
               <details className="alya-help-controls">
@@ -252,11 +234,7 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
   const [supportBusy, setSupportBusy] = useState(false),
     [supportError, setSupportError] = useState('');
   const [selectedAnswerId, setSelectedAnswerId] = useState('');
-  const [activeView, setActiveView] = useState(readView),
-    [guideReady, setGuideReady] = useState(false);
-  const viewRef = useRef(activeView),
-    tabButtons = useRef([]);
-  viewRef.current = activeView;
+  const [spokenAnswerId, setSpokenAnswerId] = useState('');
   const speechRef = useRef(null),
     preferencesRef = useRef(preferences),
     request = useRef(null),
@@ -295,23 +273,6 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
       localStorage.setItem(preferenceKey, JSON.stringify(preferences));
     } catch {}
   }, [preferences]);
-  function switchView(view) {
-    setActiveView(view);
-    if (view === 'visual') setGuideReady(false);
-    try {
-      localStorage.setItem(viewPreferenceKey, view);
-    } catch {}
-  }
-  function tabKey(event, index) {
-    let next;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') next = 1 - index;
-    if (event.key === 'Home') next = 0;
-    if (event.key === 'End') next = 1;
-    if (next !== undefined) {
-      event.preventDefault();
-      tabButtons.current[next]?.focus();
-    }
-  }
   async function connect() {
     configAbort.current?.abort();
     const abort = new AbortController();
@@ -386,6 +347,14 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
   function stopVoice() {
     speechRef.current?.stop();
   }
+  function speakAnswer(message) {
+    const text = answerReply(message);
+    const presentation = answerPresentation(message, text);
+    speechRef.current?.speak(text, {
+      ...preferencesRef.current,
+      segments: presentation?.scenes.map((scene) => scene.body),
+    });
+  }
   function mute() {
     const enabled = !preferences.enabled;
     setPreferences({ ...preferences, enabled });
@@ -411,7 +380,6 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
     return data;
   }
   function applyChat(chat) {
-    setGuideReady(false);
     setSelectedAnswerId('');
     setConversationId(chat.id);
     setLearning(chat.learning || null);
@@ -423,7 +391,7 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
       greeting,
       ...chat.messages.map((m, i) =>
         m.role === 'assistant'
-          ? { ...m, ...presentAnswer(m.result), referenceQuestion: chat.messages[i - 1]?.text }
+          ? { ...m, ...presentAnswer(m.result, chat.messages[i - 1]?.text) }
           : m,
       ),
     ]);
@@ -469,7 +437,6 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
     cancelRequest();
     setMessages([greeting]);
     setSelectedAnswerId('');
-    setGuideReady(false);
     setQuestion('');
     inputRef.current?.focus();
   }
@@ -546,14 +513,13 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
       const result = await response.json();
       if (!response.ok)
         throw new Error(result.error || 'The assistant could not answer. Please try again.');
-      const answer = presentAnswer(result);
+      const answer = presentAnswer(result, trimmed);
       if (sequence.current !== token) return;
       setMessages((previous) => [
         ...previous,
-        { id: requestId + '-a', role: 'assistant', ...answer, referenceQuestion: trimmed },
+        { id: requestId + '-a', role: 'assistant', ...answer },
       ]);
       setSelectedAnswerId(requestId + '-a');
-      setGuideReady(viewRef.current !== 'visual');
       if (result.learning) setLearning(result.learning);
       if (config.conversationMemory)
         setConversations((previous) => [
@@ -568,8 +534,10 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
           },
           ...previous.filter((c) => c.id !== conversationId),
         ]);
-      if (preferencesRef.current.enabled)
-        speechRef.current?.speak(answer.spoken, preferencesRef.current);
+      if (preferencesRef.current.enabled) {
+        setSpokenAnswerId(requestId + '-a');
+        speakAnswer(answer);
+      }
     } catch (error) {
       if (sequence.current !== token) return;
       if (error.name === 'AbortError' && abort.signal.reason !== 'timeout') return;
@@ -660,73 +628,36 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
   }
   const speaking = speechState.state === 'speaking',
     voicing = speaking || speechState.state === 'starting';
+  function replay(message) {
+    if (busy || !preferencesRef.current.enabled) return;
+    setSpokenAnswerId(message.id);
+    speakAnswer(message);
+  }
   return (
-    <div className="alya-page">
-      <div className="alya-conversation-shell">
-        <aside className="alya-companion-stage" aria-label="Meet Alya">
-          <AvatarDisplay
-            speechRef={speechRef}
-            speaking={speaking}
-            thinking={busy}
-            reducedMotion={preferences.reducedMotion}
-          />
-        </aside>
+    <div className="alya-page alya-live-page">
+      <div className="alya-conversation-shell alya-live-shell">
+        <AlyaPresentationStage
+          messages={messages}
+          selectedAnswerId={selectedAnswerId}
+          onSelectAnswer={(id) => {
+            stopVoice();
+            setSelectedAnswerId(id);
+          }}
+          speechRef={speechRef}
+          speaking={speaking}
+          voicing={voicing}
+          thinking={busy}
+          spokenAnswerId={spokenAnswerId}
+          reducedMotion={preferences.reducedMotion}
+          voiceEnabled={preferences.enabled}
+          onReplay={replay}
+        />
         <div className="alya-answer-space">
-          <header className="alya-view-heading">
-            <div>
-              <span className="alya-chat-eyebrow">YOUR ONBOARDING SPACE</span>
-              <h1>Ask Alya.</h1>
-            </div>
-            <div role="tablist" aria-label="Answer view" className="alya-view-tabs">
-              <button
-                type="button"
-                role="tab"
-                id="alya-tab-chat"
-                aria-controls="alya-chat-view"
-                aria-selected={activeView === 'chat'}
-                tabIndex={activeView === 'chat' ? 0 : -1}
-                ref={(el) => {
-                  tabButtons.current[0] = el;
-                }}
-                onKeyDown={(e) => tabKey(e, 0)}
-                onClick={() => switchView('chat')}
-              >
-                <Icon name="chat" size={16} />
-                Chat
-              </button>
-              <button
-                type="button"
-                role="tab"
-                id="alya-tab-visual"
-                aria-controls="alya-visual-view"
-                aria-selected={activeView === 'visual'}
-                tabIndex={activeView === 'visual' ? 0 : -1}
-                ref={(el) => {
-                  tabButtons.current[1] = el;
-                }}
-                onKeyDown={(e) => tabKey(e, 1)}
-                onClick={() => switchView('visual')}
-              >
-                <Icon name="book" size={16} />
-                Visual guide
-                {guideReady && (
-                  <span className="alya-tab-new" aria-hidden="true">
-                    New
-                  </span>
-                )}
-              </button>
-            </div>
-            <span className="alya-guide-ready" role="status">
-              {guideReady ? 'New guide ready' : ''}
-            </span>
-          </header>
           <div className="alya-view-panels">
             <section
               className="alya-chat-panel"
-              role="tabpanel"
               id="alya-chat-view"
-              aria-labelledby="alya-tab-chat"
-              hidden={activeView !== 'chat'}
+              aria-label="Conversation with Alya"
             >
               <header className="alya-chat-heading">
                 <div>
@@ -895,18 +826,10 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
                 </p>
               )}
             </section>
-            <VisualAnswerPanel
-              messages={messages}
-              selectedId={selectedAnswerId}
-              onSelect={setSelectedAnswerId}
-              busy={busy}
-              hidden={activeView !== 'visual'}
-            />
           </div>
-          <div className={'alya-composer-area' + (activeView === 'visual' ? ' is-visual' : '')}>
+          <div className="alya-composer-area">
             <form
               className="alya-composer"
-              hidden={activeView !== 'chat'}
               onSubmit={(event) => {
                 event.preventDefault();
                 ask(question);
@@ -1014,15 +937,15 @@ export default function AlyaChatPage({ navigate, guestId = null }) {
                       setPreferences({ ...preferences, reducedMotion: e.target.checked })
                     }
                   />
-                  Reduce avatar movement
+                  Reduce movement
                 </label>
                 <p>
-                  Speed applies to the next answer. Reduced movement calms head and body motion;
-                  Alya still moves her mouth when speaking.
+                  Speed applies to the next answer. Reduced movement calms animations while visuals
+                  and Alya’s mouth continue to follow her voice.
                 </p>
               </div>
             )}
-            <p className="alya-chat-caption" hidden={activeView !== 'chat'}>
+            <p className="alya-chat-caption">
               Keep passwords and private employee details out of chat.
               {guestId ? (
                 <> Support requests and feedback update your onboarding summary.</>

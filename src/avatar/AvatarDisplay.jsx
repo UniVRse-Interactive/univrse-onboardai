@@ -1,18 +1,41 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Icon from '../portal/Icon';
 
-export default function AvatarDisplay({ speechRef, speaking, thinking, reducedMotion = false }) {
+export function AvatarOffice() {
+  return (
+    <div className="alya-office" aria-hidden="true">
+      <div className="alya-office-window" />
+      <div className="alya-office-frame frame-one" />
+      <div className="alya-office-frame frame-two" />
+      <div className="alya-office-shelf" />
+      <div className="alya-office-plant" />
+    </div>
+  );
+}
+
+export default function AvatarDisplay({
+  speechRef,
+  speaking,
+  thinking,
+  reducedMotion = false,
+  embedded = false,
+  presenting = false,
+}) {
   const motion = useRef(reducedMotion);
   motion.current = reducedMotion;
+  const presentation = useRef(presenting);
+  presentation.current = presenting;
+  const thinkingState = useRef(thinking);
+  thinkingState.current = thinking;
   const container = useRef(null),
     [phase, setPhase] = useState('loading'),
-    [description, setDescription] = useState('Loading your original avatar…'),
+    [description, setDescription] = useState('Preparing Alya…'),
     [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const abort = new AbortController();
     let controller;
     setPhase('loading');
-    setDescription('Loading your original avatar…');
+    setDescription('Preparing Alya…');
     import('./avatar-renderer')
       .then(({ createAvatarScene }) => {
         if (abort.signal.aborted) return;
@@ -20,6 +43,8 @@ export default function AvatarDisplay({ speechRef, speaking, thinking, reducedMo
           signal: abort.signal,
           getSpeechFrame: (now) => speechRef.current?.getFrame(now),
           getReducedMotion: () => motion.current,
+          getPresenting: () => presentation.current,
+          getThinking: () => thinkingState.current,
           onPhase: (state, text) => {
             if (!abort.signal.aborted) {
               setPhase(state);
@@ -47,18 +72,12 @@ export default function AvatarDisplay({ speechRef, speaking, thinking, reducedMo
       className={'alya-avatar-stage ' + (speaking ? 'speaking' : '')}
       aria-label="Alya avatar"
     >
-      <div className="alya-office" aria-hidden="true">
-        <div className="alya-office-window" />
-        <div className="alya-office-frame frame-one" />
-        <div className="alya-office-frame frame-two" />
-        <div className="alya-office-shelf" />
-        <div className="alya-office-plant" />
-      </div>
+      {!embedded && <AvatarOffice />}
       {phase !== 'ready' && (
         <img
           className="alya-avatar-poster"
-          src="/avatars/alya/poster.png"
-          alt="Your original Alya avatar in a navy suit"
+          src="/avatars/alya/poster.png?v=154d7b59632e"
+          alt="Alya, your virtual onboarding companion"
         />
       )}
       <div className="alya-canvas" ref={container} style={{ opacity: phase === 'ready' ? 1 : 0 }} />

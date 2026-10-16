@@ -1,6 +1,8 @@
 # OnboardAi
 
-An employee onboarding assistant with Alya, the original 3D avatar. Answers can include text, the same server-generated voice for everyone, and a separate illustrated visual panel. Gemini uses approved company documents and saved conversation context.
+An employee onboarding assistant with Alya, an animated 3D avatar. Answers include text, server-generated voice and automatic synchronized illustrations around Alya. The supplied ALYA answering brain uses approved company documents; saved chat transcripts remain available in the app.
+
+The active local configuration uses `AI_MODE=alya-brain` with the existing server-only `GEMINI_API_KEY`. The supplied brain answers each question independently, so ambiguous follow-ups may require clarification. See [ALYA brain integration](docs/alya-brain-integration.md) for the copied package, configuration, preserved chat/voice features and verification. The original Vertex engine remains an explicit legacy mode.
 
 ## Run locally
 
@@ -50,11 +52,11 @@ Start with the [file guide](docs/file-guide.md). The project uses JavaScript, Re
 - [Answer styles](docs/answer-styles.md): automatic support, short explanations, steps, examples and brief answers.
 - [Visual guides and HR summary](docs/visual-guides-and-hr-summary.md): illustrated answers, feedback and HR summary boundaries.
 - [Account interface](docs/account-access.md): login forms, guest views and the current authentication boundary.
-- [Avatar provenance](public/avatars/alya/PROVENANCE.md): original asset and rendering/voice dependencies.
+- [Avatar provenance](public/avatars/alya/PROVENANCE.md): supplied model, source attribution and rendering/voice dependencies.
 
 The current voice is Kokoro Heart (`af_heart`). Its installed model warms at server startup, and a shorter opening segment lets speech begin before the remaining audio is ready. It runs on the Node server. The website does not use device-specific browser voices. Playback and estimated mouth movement start automatically with new answers when voice is on; mute, stop, speed and reduced movement controls remain available.
 
-The original avatar is kept as lossless gzip. Its transfer is about 52.4 MiB; its decoded model is much larger, so loading may take time on slower devices. Chat works independently of the 3D model.
+The current user-supplied ALYA model is kept as lossless gzip: about 21.1 MiB transferred and 27.7 MiB decoded. Its supplied material and animation helpers retain the model's appearance, blinking, gaze and speech controls. Chat works independently of the 3D model. To import another matching package, run `node scripts/import-avatar-model.mjs <path-to-ALYA.glb>` with its `asset-info.json` and `PROVENANCE.md` alongside it; previous assets are saved in the ignored `.cache/avatar-history/` folder.
 
 ## Useful commands
 
@@ -75,7 +77,7 @@ The original avatar is kept as lossless gzip. Its transfer is about 52.4 MiB; it
 
 The existing `.env`, saved chats and voice cache remain local. Git and Docker exclude `.env`, credentials, chat databases, private files, generated builds, dependencies and test artifacts. `check:share` is a helpful pattern check, not a guarantee that every confidential value has been identified.
 
-Company chat reads Google Docs directly inside the configured Drive folder. Enable it with `AI_MODE=gemini-chat` and the server-only settings in `.env`. Gemini uses Vertex AI with Application Default Credentials: set `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`) and run `gcloud auth application-default login`. Never put credentials in browser code or variables beginning with `VITE_`.
+Company chat reads Google Docs directly inside the configured Drive folder. The supplied brain uses `AI_MODE=alya-brain` with `GEMINI_API_KEY`; Drive retains its existing access credentials. The legacy `AI_MODE=gemini-chat` option uses Vertex AI with Application Default Credentials: set `GOOGLE_CLOUD_PROJECT` (and optionally `GOOGLE_CLOUD_LOCATION`, default `global`) and run `gcloud auth application-default login`. Never put credentials in browser code or variables beginning with `VITE_`.
 
 Successful chats are saved in SQLite and belong to an opaque browser-session cookie. The selected chat and voice preferences survive normal refreshes. The editable profile is not employee sign-in. Support summaries describe recorded requests and feedback; they do not diagnose disability or score ability. Employee chat does not display reports or export controls. Employee APIs do not return aggregate summaries. The HR workspace shows live activity for each guest, with individual feedback, support requests, suggested support and check-ins. Guest HR/employee views share an isolated browser workspace; this is not verified HR access. Real employee report access still requires connected authentication and company permissions.
 
@@ -101,4 +103,4 @@ The company assistant currently has no employee sign-in. Its private Drive knowl
 
 ## Verification after cleanup
 
-Automated checks cover document extraction, native Google Docs validation, current linked guidance, browser/guest isolation, live reports, persistence and expiry. Automated Gemini checks use injected model responses; they do not validate live provider availability. The question box appears only in Chat; the visual guide uses Next/Back pages rather than an internal scrollbar. The Docker container has not been verified here.
+Automated checks cover document extraction, native Google Docs validation, current linked guidance, browser/guest isolation, live reports, persistence and expiry. Automated Gemini checks use injected model responses. The supplied brain was also checked with a live Gemini greeting and a company question in the application. Visual scenes and captions advance automatically with Alya's voice. The Docker container has not been verified here.

@@ -3,9 +3,15 @@ import { randomBytes } from 'node:crypto';
 import { createGuestWorkspaceStore, guestWorkspaceLifetime } from './guest-workspace-store.mjs';
 import { sessionHash, ChatError } from './saved-conversations.mjs';
 import { createConversationService, conversationFailure } from './gemini-chat-workflow.mjs';
+import {
+  createAlyaConversationService,
+  usesAlyaBrain,
+  alyaBrainConfigured,
+  alyaBrainInfo,
+} from './alya-brain-service.mjs';
 import { createKnowledgeRetriever } from './company-document-retriever.mjs';
 import { searchDocuments } from './document-search.mjs';
-import { adaptLearning } from './answer-style-preferences.mjs';
+import { sourceQuestion, sourceAnswerSupport } from './source-answer-support.mjs';
 import { createAnswerGuide } from './answer-guide-metadata.mjs';
 import { tasks } from './sample-onboarding-content.mjs';
 import { sharedVoiceName } from './kokoro-voice.mjs';
@@ -28,12 +34,19 @@ export function mountGuestWorkspaceRoutes(
     moveGoogleDoc,
   } = {},
 ) {
+  const suppliedBrain = usesAlyaBrain(env);
   const router = express.Router(),
-    available = !!(vertexConfig(env) || models);
+    available = suppliedBrain
+      ? Boolean(alyaBrainConfigured(env) || models)
+      : !!(vertexConfig(env) || models);
   let saved = providedStore,
     service;
   const store = () => (saved ||= createGuestWorkspaceStore({ geminiAvailable: available }));
-  const answerMode = env.AI_MODE === 'document-search' || !available ? 'search' : 'gemini';
+  const answerMode = suppliedBrain
+    ? 'alya-brain'
+    : env.AI_MODE === 'document-search' || !available
+      ? 'search'
+      : 'gemini';
   const knowledge = createWorkspaceKnowledge({
     folderId: env.GOOGLE_DRIVE_FOLDER_ID,
     loadDrive,
@@ -42,6 +55,22 @@ export function mountGuestWorkspaceRoutes(
   });
   const retrievers = new Map();
   function engine() {
+    if (suppliedBrain)
+      return (service ||= createAlyaConversationService({
+        env,
+        models,
+        memory: store().memory,
+        loadDocumentsForScope: async (owner, id) => {
+          const guest = store().guestForConversation(id);
+          if (!guest || guest.chat_owner !== owner)
+            throw new ChatError(
+              404,
+              'WORKSPACE_GUEST_NOT_FOUND',
+              'This guest chat is unavailable.',
+            );
+          return knowledge.load(guest.workspace_owner);
+        },
+      }));
     return (service ||= createConversationService({
       env,
       models,
@@ -203,11 +232,16 @@ export function mountGuestWorkspaceRoutes(
   router.get('/guests/:guestId/config', (req, res) => {
     const guest = person(req);
     res.json({
-      aiMode: answerMode === 'gemini' ? 'gemini-memory' : 'document-search',
+      aiMode: suppliedBrain
+        ? 'alya-brain'
+        : answerMode === 'gemini'
+          ? 'gemini-memory'
+          : 'document-search',
+      ...(suppliedBrain ? { brain: alyaBrainInfo(env, models), answerContext: 'stateless' } : {}),
       conversationMemory: true,
       memoryRetentionDays: 1,
-      adaptiveLearning: answerMode === 'gemini',
-      answerFormatsAvailable: answerMode === 'gemini',
+      adaptiveLearning: true,
+      answerFormatsAvailable: true,
       supportSummary: false,
       knowledgeMode: env.GOOGLE_DRIVE_FOLDER_ID ? 'company-documents' : 'uploaded-documents',
       guestWorkspace: true,
@@ -232,12 +266,6 @@ export function mountGuestWorkspaceRoutes(
   });
   router.post('/guests/:guestId/conversations/:id/learning', (req, res) => {
     const guest = person(req);
-    if (answerMode !== 'gemini')
-      throw new ChatError(
-        409,
-        'WORKSPACE_FORMATS_UNAVAILABLE',
-        'Conversational answer formats require Gemini. Document search quotes the source text.',
-      );
     res.json({ learning: engine().settings(guest.chat_owner, req.params.id, req.body) });
   });
   router.post('/guests/:guestId/conversations/:id/feedback', (req, res) => {
@@ -269,7 +297,11 @@ export function mountGuestWorkspaceRoutes(
         'WORKSPACE_QUESTION_INVALID',
         'Choose a chat and enter a question of up to 1,600 characters.',
       );
-    if (!env.GOOGLE_DRIVE_FOLDER_ID && !store().documents(req.workspaceOwner).length)
+    if (
+      !suppliedBrain &&
+      !env.GOOGLE_DRIVE_FOLDER_ID &&
+      !store().documents(req.workspaceOwner).length
+    )
       throw new ChatError(
         409,
         'WORKSPACE_KNOWLEDGE_EMPTY',
@@ -283,7 +315,7 @@ export function mountGuestWorkspaceRoutes(
     res.on('close', closed);
     try {
       const result =
-        answerMode === 'gemini'
+        answerMode === 'gemini' || suppliedBrain
           ? await engine().ask(
               guest.chat_owner,
               conversationId,
@@ -331,17 +363,28 @@ export function mountGuestWorkspaceRoutes(
         const failure = driveFailure(error);
         throw new ChatError(503, failure.code, failure.error);
       }
-      const found = searchDocuments(question, documents);
+      const searchQuery = sourceQuestion(question, row.messages);
+      const found = searchDocuments(searchQuery, documents);
       const answer = found.passages?.map((p) => p.preview || p.text).join('\n\n') || found.answer;
-      const learning = { ...adaptLearning(row.learning, { question }), format: 'standard' };
+      const { learning, exampleUnavailable } = sourceAnswerSupport(row.learning, {
+        question,
+        query: searchQuery,
+        answer,
+        matched: found.matched,
+      });
       const result = {
         ...found,
         answer,
         learning,
+        searchQuery,
+        exampleUnavailable,
         conversationId: id,
         source: found.matched ? 'Company documents' : 'No matching company passage',
       };
-      result.card = createAnswerGuide(answer, { hasSources: found.matched });
+      result.card = createAnswerGuide(answer, {
+        format: learning.format,
+        hasSources: found.matched,
+      });
       signal?.throwIfAborted();
       store().memory.save(
         guest.chat_owner,
