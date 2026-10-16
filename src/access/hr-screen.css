@@ -108,7 +108,7 @@
 }
 .hr-screen-totals dt {
   font-size: 11px;
-  color: #526b7d;
+  color: #4a6475;
   white-space: nowrap;
 }
 .hr-screen-totals dd {
@@ -217,7 +217,7 @@
   line-height: 1.4;
 }
 .hr-preview-page.hr-screen .hr-employee-row > button[aria-pressed='true'] small {
-  color: #526b7d;
+  color: #4a6475;
 }
 .hr-preview-page.hr-screen .hr-employee-initial {
   width: 31px;
@@ -294,7 +294,7 @@
   margin-top: 4px;
 }
 .hr-preview-page.hr-screen .hr-report-heading p {
-  color: #526b7d;
+  color: #4a6475;
   font-size: 12px;
   margin-top: 5px;
 }
@@ -361,7 +361,7 @@
 }
 .hr-report-metrics dt {
   font-size: 11px;
-  color: #526b7d;
+  color: #4a6475;
 }
 .hr-report-metrics dd {
   font:
@@ -414,7 +414,7 @@
   align-items: center;
   justify-content: flex-end;
   margin-top: 10px;
-  color: #526b7d;
+  color: #4a6475;
   font-size: 11px;
 }
 .hr-report-pager button {
@@ -428,7 +428,7 @@
   padding-top: 11px;
   border-top: 1px solid #ccd9e2;
   flex-shrink: 0;
-  color: #526b7d;
+  color: #4a6475;
 }
 .hr-report-footnote span {
   font-size: 10px;
@@ -437,7 +437,7 @@
   font-size: 10px;
   margin-top: 4px;
   line-height: 1.5;
-  color: #526b7d;
+  color: #4a6475;
 }
 .hr-preview-page.hr-screen .hr-report-empty {
   display: flex;
@@ -459,7 +459,7 @@
   margin: 0;
 }
 .hr-preview-page.hr-screen .hr-report-empty p {
-  color: #526b7d;
+  color: #4a6475;
   max-width: 450px;
   font-size: 13px;
   margin: 0;
@@ -509,7 +509,7 @@
 }
 .hr-preview-page.hr-screen .hr-report-small {
   font-size: 11px;
-  color: #526b7d;
+  color: #4a6475;
   margin-top: 18px;
   line-height: 1.7;
 }
@@ -536,7 +536,7 @@
 }
 .hr-report-basis {
   font-size: 11px;
-  color: #526b7d;
+  color: #4a6475;
 }
 .hr-preview-page.hr-screen .hr-screen-footer {
   display: flex;
@@ -545,7 +545,7 @@
   gap: 16px;
   font-size: 10px;
   line-height: 1.5;
-  color: #526b7d;
+  color: #4a6475;
   flex-shrink: 0;
   min-height: 25px;
 }
