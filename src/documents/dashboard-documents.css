@@ -1,0 +1,114 @@
+.fp-doc-notice {
+  margin: 0 24px 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.fp-doc-notice p {
+  margin: 8px 0;
+}
+.fp-doc-notice details {
+  margin-top: 12px;
+}
+.fp-document {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: rgba(17, 34, 51, 0.2);
+}
+.fp-document-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.fp-document-header > div:first-child {
+  flex: 1;
+  min-width: 180px;
+  display: grid;
+  gap: 5px;
+}
+.fp-document small {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+.fp-document strong {
+  overflow-wrap: anywhere;
+}
+.fp-document-header span {
+  font-size: 13px;
+}
+.fp-document-remarks {
+  border-left: 3px solid var(--aqua);
+  padding-left: 12px;
+  color: var(--white);
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+.fp-document-drop {
+  border: 1px dashed var(--muted);
+  border-radius: 6px;
+  padding: 18px;
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+.fp-document-drop label {
+  display: grid;
+  gap: 12px;
+  font-weight: 600;
+}
+.fp-document input[type='file'] {
+  max-width: 100%;
+  color: var(--white);
+}
+.fp-document input::file-selector-button {
+  border: 0;
+  border-radius: 4px;
+  padding: 9px;
+  margin-right: 10px;
+  background: var(--aqua);
+  color: #203249;
+  cursor: pointer;
+}
+.fp-selected-file,
+.fp-document-buttons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.fp-selected-file strong {
+  flex-basis: 100%;
+}
+.fp-document-buttons {
+  margin-top: 12px;
+}
+.fp-document-history {
+  margin-top: 12px;
+}
+.fp-document-history summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.fp-document-history button {
+  display: block;
+  margin-top: 8px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+@media (max-width: 600px) {
+  .fp-document {
+    padding: 12px;
+  }
+  .fp-document-header > div:first-child {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+  .fp-doc-notice {
+    margin-inline: 16px;
+  }
+}

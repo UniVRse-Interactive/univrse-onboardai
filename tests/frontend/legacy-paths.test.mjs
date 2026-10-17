@@ -17,3 +17,7 @@ test('current routes are not redirected', () => {
   assert.equal(legacyRedirect('/dashboard'), null);
   assert.equal(legacyRedirect('/miranda'), null);
 });
+
+test('retired submission page redirects to the existing dashboard', () => {
+  assert.equal(legacyRedirect('/documents'), '/dashboard');
+});

@@ -463,3 +463,15 @@
   width: 2px;
   background: #1f3047;
 }
+
+.hrj-records {
+  margin: 12px 0;
+}
+.hrj-records summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.hrj-records ul {
+  margin: 8px 0;
+  padding-left: 18px;
+}

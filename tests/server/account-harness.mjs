@@ -175,6 +175,7 @@ export async function startAccountsApp({
   autofill = undefined,
   companyRetrieve = fakeRetrieve,
   companyDocumentSync = undefined,
+  submissionFiles = undefined,
   fetchImpl: customFetch = undefined,
   models = fakeModels,
   // Optional voice stand-ins (POST /api/voice and /api/tts/local).
@@ -230,6 +231,7 @@ export async function startAccountsApp({
     accountService: enabled ? accounts : null,
     conversationService,
     companyDocuments,
+    submissionFiles,
     companyRetrieve,
     getAccessToken,
     fetchImpl,

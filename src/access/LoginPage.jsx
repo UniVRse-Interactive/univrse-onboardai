@@ -58,7 +58,7 @@ export function PasswordField({
   );
 }
 
-function AccountForm({ role, onSignIn, sessionNotice }) {
+function AccountForm({ role, onSignIn, sessionNotice, accounts }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [notice, setNotice] = useState(sessionNotice || '');
@@ -81,7 +81,7 @@ function AccountForm({ role, onSignIn, sessionNotice }) {
   }
   async function signIn(event) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || !accounts) return;
     const submitted = password;
     // The password never stays in the form after a submit, whatever the result.
     setPassword('');
@@ -151,11 +151,22 @@ function AccountForm({ role, onSignIn, sessionNotice }) {
         >
           Forgot password?
         </button>
-        <button className="access-submit" type="submit" disabled={busy}>
+        <button
+          className="access-submit"
+          type="submit"
+          disabled={busy || !accounts}
+          aria-describedby={!accounts ? 'access-unavailable' : undefined}
+        >
           <span>{busy ? 'Signing in…' : 'Sign in as ' + (role === 'hr' ? 'HR' : 'employee')}</span>
           <Icon name="arrow" size={21} />
         </button>
       </form>
+      {!accounts && (
+        <div className="access-notice" id="access-unavailable" role="status">
+          <Icon name="info" size={18} />
+          <p>Sign-in is unavailable until the account service is configured.</p>
+        </div>
+      )}
       <div
         className={'access-notice' + (isError ? ' is-error' : '')}
         id="access-notice"
@@ -260,14 +271,13 @@ export default function LoginPage({ navigate, accounts = false, onSignIn, sessio
               </label>
             ))}
           </fieldset>
-          {accounts ? (
-            <AccountForm key={role} role={role} onSignIn={onSignIn} sessionNotice={sessionNotice} />
-          ) : (
-            <div className="access-notice is-error" role="status">
-              <Icon name="info" size={18} />
-              <p>Sign-in isn’t available right now. Please contact HR.</p>
-            </div>
-          )}
+          <AccountForm
+            key={role}
+            role={role}
+            onSignIn={onSignIn}
+            sessionNotice={sessionNotice}
+            accounts={accounts}
+          />
         </div>
         <p className="access-form-footer">A space to ask. A way to move forward.</p>
       </section>

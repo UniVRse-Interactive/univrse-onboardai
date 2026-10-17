@@ -652,7 +652,8 @@ test('AI proficiency self-assessment: deterministic path mapping, step status sy
   assert.equal(learningPathFor('not_sure', null), 'beginner');
   assert.equal(learningPathFor('skipped', null), 'beginner');
 
-  // 3. Selecting a rating or skipping NEVER marks the step done until trainingCompleted === true
+  // 3. A submitted rating completes the step (it is a training-needs survey, not an exam);
+  // skipping (not_sure) does not, and the practice exercise stays separately recorded.
   const assessedL5 = applyAiAssessment(
     null,
     validateAiAssessmentInput({ status: 'assessed', level: 5 }),
@@ -667,7 +668,17 @@ test('AI proficiency self-assessment: deterministic path mapping, step status sy
       [AI_READINESS_STEP_ID]: { status: 'done', updatedAt: '2026-10-17T01:00:00.000Z' },
     },
   });
-  assert.equal(aiStep(viewAfterRating).status, 'todo');
+  assert.equal(aiStep(viewAfterRating).status, 'done');
+  const skipped = buildOnboarding(template, {
+    accountId: 'synthetic',
+    aiProficiency: applyAiAssessment(
+      null,
+      validateAiAssessmentInput({ status: 'not_sure' }),
+      '2026-10-17T01:00:00.000Z',
+    ),
+    steps: {},
+  });
+  assert.equal(aiStep(skipped).status, 'todo');
 
   // 4. Completing training sets trainingCompleted = true and transitions step to 'done'
   const trained = applyAiTrainingCompleted(assessedL5, '2026-10-17T02:00:00.000Z');

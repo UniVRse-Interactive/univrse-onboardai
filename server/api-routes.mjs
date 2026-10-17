@@ -1,4 +1,6 @@
 import express from 'express';
+import { createDocumentSubmissions } from './document-submissions.mjs';
+import { createSubmissionFiles } from './submission-files.mjs';
 import { GoogleAuth } from 'google-auth-library';
 
 import { tasks, demoAnswer, systemPrompt } from './sample-onboarding-content.mjs';
@@ -97,6 +99,7 @@ export function createApp({
   // uploads and deletes to GCS + Vertex AI Search when DOCS_BUCKET and
   // VERTEX_SEARCH_DATA_STORE_ID are set.
   companyDocuments = undefined,
+  submissionFiles = undefined,
   // The company search (Vertex AI Search, or the sample guide); tests replace it.
   companyRetrieve = undefined,
   // The onboarding journey's Firestore (issues #47-#50): { firestore, now?,
@@ -314,6 +317,17 @@ export function createApp({
     chatMemory: () => chatService().memory,
     companyKnowledge: knowledge,
     journey,
+    submissions: journeyStore
+      ? createDocumentSubmissions({
+          firestore: journeyStore.firestore,
+          accounts,
+          onboarding: journey.onboarding,
+          files:
+            submissionFiles === undefined
+              ? createSubmissionFiles({ env, fetchImpl, getAccessToken: vertexToken })
+              : submissionFiles,
+        })
+      : null,
   });
   // Both stores close asynchronously (Firestore client or SQLite file), as do
   // the account database pool and the profile and library clients.

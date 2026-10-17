@@ -1,4 +1,5 @@
 import express from 'express';
+import { mountDocumentSubmissionRoutes } from './document-submission-routes.mjs';
 import { ChatError } from './chat-errors.mjs';
 import { accountErrors, autofillErrors } from './account-errors.mjs';
 import { companyKnowledgeRequestErrors } from './company-knowledge.mjs';
@@ -72,6 +73,7 @@ export function mountAccountRoutes(
     chatMemory = null,
     companyKnowledge = null,
     journey = null,
+    submissions = null,
   },
 ) {
   const setSession = (req, res, result) =>
@@ -175,6 +177,8 @@ export function mountAccountRoutes(
   });
   // Deletes the employee's Firestore data, then the account. Safe to retry.
   employees.delete('/employees/:id', hr, async (req, res) => {
+    await accounts.getEmployee(req.params.id);
+    await submissions?.eraseEmployee(req.params.id);
     await accounts.deleteEmployee(req.accountSession, req.params.id, {
       eraseChats: (owner) => chatMemory().eraseOwner(owner),
       // The checklist agent's sessions (#51); never fails the deletion.
@@ -267,6 +271,13 @@ export function mountAccountRoutes(
       actions: journey.actions ?? null,
     });
 
+  mountDocumentSubmissionRoutes({
+    me,
+    hr: employees,
+    employeeOnly: employee,
+    hrOnly: hr,
+    submissions,
+  });
   for (const [path, router] of [
     ['/api/auth', auth],
     ['/api/me', me],

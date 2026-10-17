@@ -7,6 +7,8 @@ import HrWorkspace from '../access/HrWorkspace';
 import ChangePasswordPage from '../access/ChangePasswordPage';
 import MyProfilePage from '../access/MyProfilePage';
 import EmployeeFootprint from './EmployeeFootprint';
+import ActivityPage from './ActivityPage';
+import { activityIdFromPath } from './activity-model.mjs';
 import useAccountSession from '../access/use-account-session';
 import { landingPath, routeDecision } from '../access/account-routing.mjs';
 import { readNotes, writeNotes } from './support-notes.mjs';
@@ -382,8 +384,11 @@ export default function OnboardingWebsite() {
     path,
   });
   const assistantPath = path === '/alya';
+  const activityId = activityIdFromPath(path);
   const chatPath = '/alya';
-  const active = navItems.find((item) => item.path === (assistantPath ? '/alya' : path));
+  const active = navItems.find(
+    (item) => item.path === (assistantPath ? '/alya' : activityId ? '/onboarding' : path),
+  );
   useEffect(() => {
     const pop = () => {
       let next = window.location.pathname;
@@ -587,6 +592,8 @@ export default function OnboardingWebsite() {
             account={account}
             expanded={path === '/onboarding'}
           />
+        ) : activityId ? (
+          <ActivityPage key={activityId} activityId={activityId} navigate={navigate} />
         ) : path === '/support' ? (
           <Support
             notes={notes}

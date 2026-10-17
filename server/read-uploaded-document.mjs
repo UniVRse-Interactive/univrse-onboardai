@@ -10,7 +10,7 @@ let activeReaders = 0;
 export async function readUploadedDocument(
   name,
   buffer,
-  { truncate = false, timeoutMs = 20000 } = {},
+  { truncate = false, timeoutMs = 20000, validateOnly = false } = {},
 ) {
   if (
     typeof name !== 'string' ||
@@ -58,6 +58,7 @@ export async function readUploadedDocument(
           buffer,
           maxCharacters: workspaceLimits.characters,
           truncate: truncate === true,
+          validateOnly: validateOnly === true,
         },
         // The reader must not inherit the development server's --watch flags.
         execArgv: [],
