@@ -30,13 +30,14 @@ async function withEmployee(options, check) {
 test('the Onboarding steps carry briefing, briefingRequired and briefed', async () => {
   await withEmployee({}, async ({ browser }) => {
     const view = (await browser.get('/api/me/onboarding')).body;
-    const buddy = stepOf(view, 'team-support.meet-buddy');
-    const expected = findStep(builtInTemplate('employee'), 'team-support.meet-buddy').step.briefing;
+    const chatGroup = stepOf(view, 'team-support.company-chat-groups');
+    const expected = findStep(builtInTemplate('employee'), 'team-support.company-chat-groups').step
+      .briefing;
     assert.deepEqual(
-      [buddy.briefing, buddy.briefingRequired, buddy.briefed],
+      [chatGroup.briefing, chatGroup.briefingRequired, chatGroup.briefed],
       [expected, true, false],
     );
-    assert.equal(buddy.briefing.sourceTitle, 'UniVRse - Orientation & Office Tour Guide');
+    assert.equal(chatGroup.briefing.sourceTitle, '08 People & Workplace Support');
     const optional = stepOf(view, 'team-support.working-preferences');
     assert.deepEqual(
       [optional.briefing, optional.briefingRequired, optional.briefed],
@@ -51,24 +52,27 @@ test('the Onboarding steps carry briefing, briefingRequired and briefed', async 
 
 test('POST .../briefing records the first completion once; unknown and optional steps are 404, bad bodies 400', async () => {
   await withEmployee({}, async ({ app, hr, browser, id }) => {
-    const first = await browser.post(briefingPath('team-support.meet-buddy'), {
+    const first = await browser.post(briefingPath('team-support.company-chat-groups'), {
       completion: 'listened',
     });
     assert.equal(first.status, 200);
-    assert.equal(stepOf(first.body, 'team-support.meet-buddy').briefed, true);
-    assert.equal(stepOf(first.body, 'team-support.meet-buddy').status, 'todo');
+    assert.equal(stepOf(first.body, 'team-support.company-chat-groups').briefed, true);
+    assert.equal(stepOf(first.body, 'team-support.company-chat-groups').status, 'todo');
     const stored = () => app.firestore.read(`onboardingProgress/${id}`).steps;
     assert.deepEqual(stored(), {
-      'team-support.meet-buddy': { briefedAt: '2026-10-15T01:00:00.000Z', briefedBy: 'listened' },
+      'team-support.company-chat-groups': {
+        briefedAt: '2026-10-15T01:00:00.000Z',
+        briefedBy: 'listened',
+      },
     });
     // Idempotent: a later "read" keeps the first time and completion.
     app.clock.advance(60_000);
-    const again = await browser.post(briefingPath('team-support.meet-buddy'), {
+    const again = await browser.post(briefingPath('team-support.company-chat-groups'), {
       completion: 'read',
     });
     assert.equal(again.status, 200);
     assert.deepEqual(again.body, first.body);
-    assert.deepEqual(stored()['team-support.meet-buddy'], {
+    assert.deepEqual(stored()['team-support.company-chat-groups'], {
       briefedAt: '2026-10-15T01:00:00.000Z',
       briefedBy: 'listened',
     });
@@ -80,7 +84,7 @@ test('POST .../briefing records the first completion once; unknown and optional 
     });
     assert.deepEqual([optional.status, optional.body.code], [404, 'BRIEFING_NOT_FOUND']);
     for (const body of [{}, { completion: 'skimmed' }, { completion: 'read', extra: 1 }, []]) {
-      const invalid = await browser.post(briefingPath('team-support.meet-teammates'), body);
+      const invalid = await browser.post(briefingPath('team-support.department-chat-group'), body);
       assert.deepEqual(
         [invalid.status, invalid.body.code],
         [400, 'BRIEFING_COMPLETION_INVALID'],
@@ -88,13 +92,15 @@ test('POST .../briefing records the first completion once; unknown and optional 
       );
     }
     // Employee only; signed in only.
-    const asHr = await hr.post(briefingPath('team-support.meet-buddy'), { completion: 'read' });
+    const asHr = await hr.post(briefingPath('team-support.company-chat-groups'), {
+      completion: 'read',
+    });
     assert.deepEqual([asHr.status, asHr.body.code], [403, 'EMPLOYEE_ROLE_REQUIRED']);
     const anonymous = await app
       .browser()
-      .post(briefingPath('team-support.meet-buddy'), { completion: 'read' });
+      .post(briefingPath('team-support.company-chat-groups'), { completion: 'read' });
     assert.equal(anonymous.status, 401);
-    assert.deepEqual(Object.keys(stored()), ['team-support.meet-buddy']);
+    assert.deepEqual(Object.keys(stored()), ['team-support.company-chat-groups']);
   });
 });
 
@@ -104,7 +110,7 @@ test('every gate: complete (self and hr_verify) and the check need the briefing;
       const response = await browser[method](path, body);
       assert.deepEqual([response.status, response.body.code], [409, 'BRIEFING_REQUIRED'], path);
     };
-    await gated('post', '/api/me/onboarding/steps/team-support.meet-buddy/complete');
+    await gated('post', '/api/me/onboarding/steps/team-support.company-chat-groups/complete');
     await gated('post', '/api/me/onboarding/steps/documentation.contract/complete');
     await gated('get', '/api/me/onboarding/steps/policies.employee-handbook/check');
     await gated('post', '/api/me/onboarding/steps/policies.employee-handbook/check', {
@@ -144,13 +150,15 @@ test('every gate: complete (self and hr_verify) and the check need the briefing;
 
     // After the briefing each one works.
     for (const stepId of [
-      'team-support.meet-buddy',
+      'team-support.company-chat-groups',
       'documentation.personal-bank-details',
       'policies.employee-handbook',
     ])
       assert.equal((await browser.post(briefingPath(stepId), { completion: 'read' })).status, 200);
-    const done = await browser.post('/api/me/onboarding/steps/team-support.meet-buddy/complete');
-    assert.equal(stepOf(done.body, 'team-support.meet-buddy').status, 'done');
+    const done = await browser.post(
+      '/api/me/onboarding/steps/team-support.company-chat-groups/complete',
+    );
+    assert.equal(stepOf(done.body, 'team-support.company-chat-groups').status, 'done');
     const submitted = await browser.post(
       '/api/me/onboarding/steps/documentation.personal-bank-details/complete',
     );
@@ -164,7 +172,7 @@ test('every gate: complete (self and hr_verify) and the check need the briefing;
 
 test('reopening keeps the briefing: a self step and a submission go back to todo, still briefed', async () => {
   await withEmployee({}, async ({ app, browser, id }) => {
-    for (const stepId of ['team-support.meet-buddy', 'documentation.contract']) {
+    for (const stepId of ['team-support.company-chat-groups', 'documentation.contract']) {
       await browser.post(briefingPath(stepId), { completion: 'listened' });
       await browser.post(`/api/me/onboarding/steps/${stepId}/complete`);
       const reopened = await browser.post(`/api/me/onboarding/steps/${stepId}/reopen`);
@@ -194,13 +202,13 @@ function fakeAgent(app, { ignoreBriefing = false } = {}) {
     async start({ accountId, text }) {
       calls.push(['start', text]);
       const sessionId = `checklist-${randomUUID()}`;
-      const stepId = /buddy/i.test(text) ? 'team-support.meet-buddy' : null;
+      const stepId = /buddy|chat/i.test(text) ? 'team-support.company-chat-groups' : null;
       if (!stepId) return { sessionId, text: 'Which step did you finish?', confirmation: null };
       const record = app.firestore.read(`onboardingProgress/${accountId}`)?.steps?.[stepId];
       if (!ignoreBriefing && !record?.briefedAt)
         return {
           sessionId,
-          text: "Before I mark it, please listen to Alya's briefing for Meet your buddy on your dashboard.",
+          text: "Before I mark it, please listen to Alya's briefing for Join company chat groups on your dashboard.",
           confirmation: null,
         };
       const callId = `adk-${randomUUID()}`;
@@ -228,7 +236,7 @@ function fakeAgent(app, { ignoreBriefing = false } = {}) {
           },
         },
       });
-      return { text: 'Done! Your buddy step is marked.', confirmation: null };
+      return { text: 'Done! Your company chat groups step is marked.', confirmation: null };
     },
     async remove({ sessionId }) {
       sessions.delete(sessionId);
@@ -245,17 +253,17 @@ const planningModels = () => ({
       /^i('ve| have)/i.test(String(messages.at(-1).content))
         ? {
             kind: 'checklist',
-            query: 'I have met my buddy',
+            query: 'I have joined the company chat groups',
             clarification: '',
             category: 'onboarding',
             topic: 'checklist',
           }
         : {
             kind: 'company',
-            query: 'buddy',
+            query: 'chat groups',
             clarification: '',
             category: 'onboarding',
-            topic: 'buddy',
+            topic: 'chat groups',
           },
   },
   answer: {
@@ -293,23 +301,28 @@ const ask = (browser, conversationId, question) =>
   });
 
 test('the agent: "I\'ve met my buddy" before the briefing points to it and proposes nothing', async () => {
-  await withAgent({}, async ({ app, browser, id }) => {
+  await withAgent({}, async ({ app, browser }) => {
     const chat = (await browser.post('/api/conversations')).body;
     const before = await ask(browser, chat.id, "I've met my buddy");
     assert.equal(before.status, 200);
     assert.equal(before.body.proposedAction, null);
-    assert.match(before.body.answer, /listen to Alya's briefing for Meet your buddy/);
+    assert.match(before.body.answer, /listen to Alya's briefing for Join company chat groups/);
     assert.deepEqual(app.firestore.paths('agentActions/'), []);
     assert.deepEqual(app.firestore.paths('onboardingProgress/'), []);
     // After the briefing the same message is a proposal.
-    await browser.post(briefingPath('team-support.meet-buddy'), { completion: 'listened' });
+    await browser.post(briefingPath('team-support.company-chat-groups'), {
+      completion: 'listened',
+    });
     const after = await ask(browser, chat.id, "I've met my buddy");
-    assert.equal(after.body.proposedAction.stepId, 'team-support.meet-buddy');
+    assert.equal(after.body.proposedAction.stepId, 'team-support.company-chat-groups');
     const approved = await browser.post(`/api/me/agent-actions/${after.body.proposedAction.id}`, {
       decision: 'approve',
     });
     assert.equal(approved.status, 200);
-    assert.equal(stepOf(approved.body.onboarding, 'team-support.meet-buddy').status, 'done');
+    assert.equal(
+      stepOf(approved.body.onboarding, 'team-support.company-chat-groups').status,
+      'done',
+    );
   });
 });
 
@@ -318,7 +331,7 @@ test('the backstop: an agent that proposes an unbriefed step anyway is answered 
     const chat = (await browser.post('/api/conversations')).body;
     const proposed = await ask(browser, chat.id, "I've met my buddy");
     assert.equal(proposed.body.proposedAction, null);
-    assert.equal(proposed.body.answer, briefingFirstText('Meet your buddy'));
+    assert.equal(proposed.body.answer, briefingFirstText('Join company chat groups'));
     assert.deepEqual(agent.calls.at(-1), ['resume', false]);
     assert.deepEqual(app.firestore.paths('agentActions/'), []);
 
@@ -330,7 +343,7 @@ test('the backstop: an agent that proposes an unbriefed step anyway is answered 
       accountId: id,
       conversationId: chat.id,
       messageId: 'synthetic-message',
-      stepId: 'team-support.meet-buddy',
+      stepId: 'team-support.company-chat-groups',
       newStatus: 'done',
       status: 'pending',
       agentSessionId: 'checklist-synthetic',
@@ -345,7 +358,7 @@ test('the backstop: an agent that proposes an unbriefed step anyway is answered 
     });
     assert.deepEqual([refused.status, refused.body.code], [409, 'BRIEFING_REQUIRED']);
     assert.equal(app.firestore.read(`agentActions/${action.id}`).status, 'pending');
-    await browser.post(briefingPath('team-support.meet-buddy'), { completion: 'read' });
+    await browser.post(briefingPath('team-support.company-chat-groups'), { completion: 'read' });
     const approved = await browser.post(`/api/me/agent-actions/${action.id}`, {
       decision: 'approve',
     });
@@ -357,13 +370,14 @@ test('the backstop: an agent that proposes an unbriefed step anyway is answered 
 test('Helpful: marking a briefing or a step’s chat answer (or re-explanation) helpful unlocks the quick check and step completion', async () => {
   await withEmployee({}, async ({ app, browser, id }) => {
     // 1. Direct briefing route with completion: 'helpful'.
-    const direct = await browser.post(briefingPath('team-support.meet-buddy'), {
+    const direct = await browser.post(briefingPath('team-support.company-chat-groups'), {
       completion: 'helpful',
     });
     assert.equal(direct.status, 200);
-    assert.equal(stepOf(direct.body, 'team-support.meet-buddy').briefed, true);
+    assert.equal(stepOf(direct.body, 'team-support.company-chat-groups').briefed, true);
     assert.equal(
-      app.firestore.read(`onboardingProgress/${id}`).steps['team-support.meet-buddy'].briefedBy,
+      app.firestore.read(`onboardingProgress/${id}`).steps['team-support.company-chat-groups']
+        .briefedBy,
       'helpful',
     );
 

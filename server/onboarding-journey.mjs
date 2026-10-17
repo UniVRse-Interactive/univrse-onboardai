@@ -10,6 +10,18 @@ import {
   trackOf,
 } from './onboarding-content.mjs';
 import {
+  AI_READINESS_STEP_ID,
+  aiLearningPaths,
+  aiLevelsList,
+  applyAiAssessment,
+  applyAiTrainingCompleted,
+  applyAiTrainingReopened,
+  assertAiProficiencyAccess,
+  normalizeAiProficiency,
+  presentAiProficiency,
+  validateAiAssessmentInput,
+} from './ai-proficiency.mjs';
+import {
   StepRuleError,
   briefedAt,
   briefingCompletions,
@@ -281,7 +293,20 @@ export function createOnboardingJourney({
           steps[stepId] = { status: next.status, updatedAt: at, source, actorId, ...briefing };
         else if (briefing.briefedAt) steps[stepId] = briefing;
         else delete steps[stepId];
-        const updated = { accountId, updatedAt: at, steps };
+        let aiProficiency = current.aiProficiency;
+        if (stepId === AI_READINESS_STEP_ID) {
+          const base = normalizeAiProficiency(current.aiProficiency, record);
+          aiProficiency =
+            next?.status === 'done'
+              ? applyAiTrainingCompleted(base, at)
+              : applyAiTrainingReopened(base, at);
+        }
+        const updated = {
+          accountId,
+          updatedAt: at,
+          steps,
+          ...(aiProficiency !== undefined ? { aiProficiency } : {}),
+        };
         tx.set(ref, updated);
         return updated;
       });
@@ -307,6 +332,129 @@ export function createOnboardingJourney({
       source: 'employee',
       actorId: account.id,
     });
+  }
+  async function myAiProficiency(account, query = {}) {
+    assertAiProficiencyAccess(account, query);
+    const progress = await readProgress(account.id);
+    return {
+      aiProficiency: presentAiProficiency(
+        progress?.aiProficiency,
+        stepRecord(progress, AI_READINESS_STEP_ID),
+      ),
+      levels: aiLevelsList,
+      learningPaths: aiLearningPaths,
+    };
+  }
+  async function saveAiProficiency(account, body, query = {}) {
+    assertAiProficiencyAccess(account, query);
+    const validated = validateAiAssessmentInput(body, account);
+    const { track } = await employeeFacts(account);
+    const chosen = await template(track);
+    const progress = await guarded('save ai proficiency', async () => {
+      const db = await database(),
+        ref = progressRef(db, account.id);
+      return db.runTransaction(async (tx) => {
+        const snapshot = await tx.get(ref);
+        const current = snapshot.exists ? snapshot.data() : { accountId: account.id, steps: {} };
+        const at = now().toISOString();
+        const record = stepRecord(current, AI_READINESS_STEP_ID);
+        const base = normalizeAiProficiency(current.aiProficiency, record);
+        const aiProficiency = applyAiAssessment(base, validated, at);
+        const steps = { ...(current.steps || {}) };
+        if (aiProficiency.trainingCompleted) {
+          steps[AI_READINESS_STEP_ID] = {
+            ...(record || {}),
+            status: 'done',
+            updatedAt: record?.updatedAt || aiProficiency.trainingCompletedAt || at,
+            source: record?.source || 'employee',
+            actorId: record?.actorId || account.id,
+          };
+        } else if (record?.briefedAt) {
+          steps[AI_READINESS_STEP_ID] = {
+            briefedAt: record.briefedAt,
+            briefedBy: record.briefedBy ?? null,
+          };
+        } else {
+          delete steps[AI_READINESS_STEP_ID];
+        }
+        const updated = {
+          accountId: account.id,
+          updatedAt: at,
+          steps,
+          aiProficiency,
+        };
+        tx.set(ref, updated);
+        return updated;
+      });
+    });
+    const onboarding = buildOnboarding(chosen, progress);
+    return {
+      aiProficiency: onboarding.aiProficiency,
+      levels: aiLevelsList,
+      learningPaths: aiLearningPaths,
+      onboarding,
+    };
+  }
+  async function completeAiTraining(account, body = {}, query = {}) {
+    assertAiProficiencyAccess(account, query);
+    if (isPlainObject(body)) {
+      assertAiProficiencyAccess(account, body);
+      const allowedKeys = new Set(['userId', 'accountId', 'companyId', 'practiceNote']);
+      for (const key of Object.keys(body)) {
+        if (!allowedKeys.has(key)) throw journeyErrors.aiProficiencyInvalid();
+      }
+      if (
+        body.practiceNote !== undefined &&
+        body.practiceNote !== null &&
+        (typeof body.practiceNote !== 'string' || body.practiceNote.length > 2000)
+      ) {
+        throw journeyErrors.aiProficiencyInvalid();
+      }
+    } else if (body !== undefined && body !== null) {
+      throw journeyErrors.aiProficiencyInvalid();
+    }
+    const { track } = await employeeFacts(account);
+    const chosen = await template(track);
+    const progress = await guarded('complete ai training', async () => {
+      const db = await database(),
+        ref = progressRef(db, account.id);
+      return db.runTransaction(async (tx) => {
+        const snapshot = await tx.get(ref);
+        const current = snapshot.exists ? snapshot.data() : { accountId: account.id, steps: {} };
+        const at = now().toISOString();
+        const record = stepRecord(current, AI_READINESS_STEP_ID);
+        const base = normalizeAiProficiency(current.aiProficiency, record);
+        const aiProficiency = applyAiTrainingCompleted(base, at);
+        const briefing = briefedAt(record)
+          ? { briefedAt: record.briefedAt, briefedBy: record.briefedBy ?? null }
+          : { briefedAt: at, briefedBy: 'read' };
+        const steps = {
+          ...(current.steps || {}),
+          [AI_READINESS_STEP_ID]: {
+            ...briefing,
+            status: 'done',
+            updatedAt: aiProficiency.trainingCompletedAt || at,
+            source: record?.source || 'employee',
+            actorId: account.id,
+          },
+        };
+        const updated = {
+          accountId: account.id,
+          updatedAt: at,
+          steps,
+          aiProficiency,
+        };
+        tx.set(ref, updated);
+        return updated;
+      });
+    });
+    const onboarding = buildOnboarding(chosen, progress);
+    return {
+      aiProficiency: onboarding.aiProficiency,
+      levels: aiLevelsList,
+      learningPaths: aiLearningPaths,
+      onboarding,
+    };
   }
   // The step's check, with the briefing gate: a required step with a
   // briefing needs it before its check is shown or answered, unless the
@@ -428,6 +576,7 @@ export function createOnboardingJourney({
             ...(current.steps || {}),
             [stepId]: { ...(record || {}), briefedAt: at, briefedBy: completion },
           },
+          ...(current.aiProficiency !== undefined ? { aiProficiency: current.aiProficiency } : {}),
         };
         tx.set(ref, updated);
         return updated;
@@ -503,6 +652,22 @@ export function createOnboardingJourney({
     const { track } = await employeeTrack(id);
     return (await onboardingOf(id, track)).onboarding;
   }
+  async function employeeAiProficiency(id, actor = null, query = {}) {
+    const actorCompany = actor?.account?.companyId || 'univrse';
+    if (query?.companyId && String(query.companyId) !== actorCompany) {
+      throw journeyErrors.aiProficiencyForbidden();
+    }
+    await accounts.getEmployee(id);
+    const progress = await readProgress(id);
+    return {
+      aiProficiency: presentAiProficiency(
+        progress?.aiProficiency,
+        stepRecord(progress, AI_READINESS_STEP_ID),
+      ),
+      levels: aiLevelsList,
+      learningPaths: aiLearningPaths,
+    };
+  }
   // PATCH .../onboarding/steps/:stepId { status: "done" | "todo" }.
   async function setEmployeeStep(actor, id, stepId, body) {
     const status = isPlainObject(body) ? body.status : undefined;
@@ -577,6 +742,9 @@ export function createOnboardingJourney({
     myOnboarding,
     completeStep,
     reopenStep,
+    myAiProficiency,
+    saveAiProficiency,
+    completeAiTraining,
     checkQuestion,
     answerCheck,
     recordBriefing,
@@ -589,6 +757,7 @@ export function createOnboardingJourney({
     personalAnswer,
     trackFor,
     employeeOnboarding,
+    employeeAiProficiency,
     setEmployeeStep,
     employeeFirstDay,
     putEmployeeFirstDay,

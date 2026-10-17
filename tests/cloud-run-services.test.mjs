@@ -301,11 +301,11 @@ test('rate limit is keyed by the end user IP behind the proxy, not the proxy IP'
   const post = (url, client) =>
     json(url, '/api/voice', { text: '' }, { 'X-Forwarded-For': `${client}, 10.9.9.9` });
   try {
-    for (let i = 0; i < 30; i++) assert.equal((await post(behind.url, '203.0.113.1')).status, 400);
+    for (let i = 0; i < 60; i++) assert.equal((await post(behind.url, '203.0.113.1')).status, 400);
     assert.equal((await post(behind.url, '203.0.113.1')).status, 429);
     assert.equal((await post(behind.url, '203.0.113.2')).status, 400, 'another user is unaffected');
     // Without the setting every caller shares the proxy's bucket (the bug being fixed).
-    for (let i = 0; i < 30; i++) await post(noTrust.url, `198.51.100.${i}`);
+    for (let i = 0; i < 60; i++) await post(noTrust.url, `198.51.100.${i}`);
     assert.equal((await post(noTrust.url, '198.51.100.200')).status, 429);
   } finally {
     await behind.close();

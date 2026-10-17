@@ -48,22 +48,28 @@ test('through the web proxy: journey, briefing, check, agent-action, HR and voic
 
     const onboarding = await me.get('/api/me/onboarding');
     assert.equal(onboarding.status, 200);
-    const buddy = onboarding.body.areas
+    const chatGroups = onboarding.body.areas
       .flatMap((a) => a.steps)
-      .find((s) => s.id === 'team-support.meet-buddy');
-    assert.deepEqual([buddy.briefingRequired, buddy.briefed], [true, false]);
-    const gated = await me.post('/api/me/onboarding/steps/team-support.meet-buddy/complete');
+      .find((s) => s.id === 'team-support.company-chat-groups');
+    assert.deepEqual([chatGroups.briefingRequired, chatGroups.briefed], [true, false]);
+    const gated = await me.post(
+      '/api/me/onboarding/steps/team-support.company-chat-groups/complete',
+    );
     assert.deepEqual([gated.status, gated.body.code], [409, 'BRIEFING_REQUIRED']);
-    const briefed = await me.post('/api/me/onboarding/steps/team-support.meet-buddy/briefing', {
-      completion: 'listened',
-    });
+    const briefed = await me.post(
+      '/api/me/onboarding/steps/team-support.company-chat-groups/briefing',
+      {
+        completion: 'listened',
+      },
+    );
     assert.equal(briefed.status, 200);
     assert.equal(
-      (await me.post('/api/me/onboarding/steps/team-support.meet-buddy/complete')).status,
+      (await me.post('/api/me/onboarding/steps/team-support.company-chat-groups/complete')).status,
       200,
     );
     const check = await me.get('/api/me/onboarding/steps/policies.employee-handbook/check');
     assert.deepEqual([check.status, check.body.code], [409, 'BRIEFING_REQUIRED']);
+    assert.equal((await me.get('/api/me/ai-proficiency')).status, 200);
     assert.equal((await me.get('/api/me/quick-questions')).status, 200);
     assert.equal((await me.get('/api/me/first-day')).status, 200);
     assert.equal((await me.get('/api/me/support-requests')).status, 200);
@@ -77,6 +83,7 @@ test('through the web proxy: journey, briefing, check, agent-action, HR and voic
       '/api/hr/knowledge-gaps',
       '/api/hr/team-insights',
       `/api/hr/employees/${employee.account.id}/onboarding`,
+      `/api/hr/employees/${employee.account.id}/ai-proficiency`,
       `/api/hr/employees/${employee.account.id}/first-day`,
     ])
       assert.equal((await hrWeb.get(path)).status, 200, path);

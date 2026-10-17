@@ -128,7 +128,6 @@ test('HR uploads PDF, DOCX, text and Markdown files; only text and metadata are 
         category: 'policies',
         title: 'handbook',
         fileName: 'handbook.docx',
-        text: handbook,
         characters: handbook.length,
         bytes: files[1][2].length,
         fingerprint: 'sha',
@@ -136,10 +135,12 @@ test('HR uploads PDF, DOCX, text and Markdown files; only text and metadata are 
         connectedAt: 'iso',
       },
     );
+    assert.equal('text' in stored, false);
     assert.equal(stored.fingerprint, sha(handbook));
     assert.match(stored.connectedAt, /^\d{4}-\d{2}-\d{2}T/);
-    // The file's bytes are nowhere in what is stored.
+    // Neither the file's bytes nor its extracted text are stored in Firestore.
     assert.ok(!JSON.stringify(stored).includes('PK'));
+    assert.ok(!JSON.stringify(stored).includes('smart casual'));
 
     const listed = (await hr.get('/api/hr/company-knowledge')).body;
     assert.deepEqual(Object.keys(listed), ['topics', 'documents', 'limits']);
@@ -186,8 +187,11 @@ test('uploads add: two documents in one area, duplicates by text, and delete rem
     assert.equal(added.status, 201);
     assert.deepEqual({ ...added.body, id: 'x' }, { id: 'x', duplicate: false });
     assert.notEqual(added.body.id, id);
-    assert.equal(app.firestore.read(`companyDocuments/${id}`).text, handbook);
-    assert.equal(app.firestore.read(`companyDocuments/${added.body.id}`).text, handbook2);
+    assert.equal(app.firestore.read(`companyDocuments/${id}`).fingerprint, sha(handbook));
+    assert.equal(
+      app.firestore.read(`companyDocuments/${added.body.id}`).fingerprint,
+      sha(handbook2),
+    );
     assert.equal(app.firestore.paths('companyDocuments/').length, 2);
 
     // The same text in another area is a 409.
@@ -418,7 +422,7 @@ test('the file limit and the shared text limit apply to uploads', async () => {
       'policies',
       'additional',
     ];
-    // Stored directly: the API rate limit allows 30 uploads a minute.
+    // Stored directly: the API rate limit allows 60 uploads a minute.
     const seed = async (count, text, characters = text.length) => {
       for (let i = 0; i < count; i++) {
         const body = `${text}${i}`;
@@ -623,4 +627,174 @@ test('passages from two ranked sources alternate, keep their own order and stop 
   assert.deepEqual(interleavePassages([], ['a', 'b', 'c'], 2), ['a', 'b']);
   assert.deepEqual(interleavePassages([1], [], 6), [1]);
   assert.deepEqual(interleavePassages([], [], 6), []);
+});
+
+test('HR uploads and deletes sync directly to GCS and trigger Vertex AI Search data store import', async () => {
+  const calls = [];
+  let failNextSync = false;
+  await withApp(
+    {
+      env: {
+        GOOGLE_CLOUD_PROJECT: 'demo-test',
+        DOCS_BUCKET: 'demo-test-onboardai-docs',
+        VERTEX_SEARCH_DATA_STORE_ID: 'onboardai-docs',
+      },
+      fetchImpl: async (url, init = {}) => {
+        calls.push({
+          method: init.method || 'GET',
+          url: String(url),
+          headers: init.headers || {},
+          body: init.body,
+        });
+        if (failNextSync) {
+          return new Response('upstream failure', { status: 500 });
+        }
+        return Response.json({ name: 'operations/import-1', done: false });
+      },
+    },
+    async (app) => {
+      const hr = await app.hrBrowser();
+      const up = await hr.upload(
+        `${path}?category=policies`,
+        Buffer.from(handbook),
+        'Employee Handbook.txt',
+      );
+      assert.equal(up.status, 201, up.text);
+      const id = up.body.id;
+
+      // 1. Uploaded raw buffer to GCS, then triggered INCREMENTAL import into Vertex AI Search.
+      assert.equal(calls.length, 2);
+      assert.equal(calls[0].method, 'POST');
+      assert.equal(
+        calls[0].url,
+        `https://storage.googleapis.com/upload/storage/v1/b/demo-test-onboardai-docs/o?uploadType=media&name=${encodeURIComponent(`${id}/Employee Handbook.txt`)}`,
+      );
+      assert.equal(Buffer.from(calls[0].body).toString('utf8'), handbook);
+
+      assert.equal(calls[1].method, 'POST');
+      assert.equal(
+        calls[1].url,
+        'https://discoveryengine.googleapis.com/v1/projects/demo-test/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents:import',
+      );
+      assert.deepEqual(JSON.parse(calls[1].body), {
+        gcsSource: {
+          inputUris: [`gs://demo-test-onboardai-docs/${id}/Employee Handbook.txt`],
+          dataSchema: 'content',
+        },
+        reconciliationMode: 'INCREMENTAL',
+      });
+
+      // Duplicate upload does not re-upload to GCS or re-trigger import.
+      calls.length = 0;
+      const dup = await hr.upload(
+        `${path}?category=policies`,
+        Buffer.from(handbook),
+        'Employee Handbook.txt',
+      );
+      assert.deepEqual([dup.status, dup.body], [200, { id, duplicate: true }]);
+      assert.equal(calls.length, 0);
+
+      // Failed GCS/Vertex sync rolls back the Firestore metadata entry.
+      failNextSync = true;
+      const failedUp = await hr.upload(
+        `${path}?category=policies`,
+        Buffer.from(handbook2),
+        'Friday Policy.txt',
+      );
+      assert.deepEqual(
+        [failedUp.status, failedUp.body.code],
+        [503, 'COMPANY_KNOWLEDGE_UNAVAILABLE'],
+      );
+      assert.deepEqual(app.firestore.paths('companyDocuments/'), [`companyDocuments/${id}`]);
+      failNextSync = false;
+
+      // 2. Deleting the document deletes the GCS object, then that one document
+      // from Vertex AI Search (by id, then any other document with its URI). It
+      // never re-imports the bucket: a FULL reconciliation would also drop
+      // indexed documents whose objects are no longer in the bucket.
+      calls.length = 0;
+      const del = await hr.delete(`${path}/${id}`);
+      assert.equal(del.status, 204);
+      const documents =
+        'https://discoveryengine.googleapis.com/v1/projects/demo-test/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents';
+      assert.deepEqual(
+        calls.map((c) => [c.method, c.url]),
+        [
+          [
+            'DELETE',
+            `https://storage.googleapis.com/storage/v1/b/demo-test-onboardai-docs/o/${encodeURIComponent(`${id}/Employee Handbook.txt`)}`,
+          ],
+          ['DELETE', `${documents}/${id}`],
+          ['GET', `${documents}?pageSize=1000`],
+        ],
+      );
+      assert.ok(calls.every((c) => !c.url.endsWith(':import')));
+      assert.deepEqual(app.firestore.paths('companyDocuments/'), []);
+    },
+  );
+});
+
+test('a delete whose GCS or Vertex AI Search sync fails keeps the document listed, and a retry finishes it', async () => {
+  const calls = [];
+  // The status each Vertex AI Search document DELETE answers, in order.
+  const vertexDeletes = [500, 200];
+  let gcsGone = false;
+  await withApp(
+    {
+      env: {
+        GOOGLE_CLOUD_PROJECT: 'demo-test',
+        DOCS_BUCKET: 'demo-test-onboardai-docs',
+        VERTEX_SEARCH_DATA_STORE_ID: 'onboardai-docs',
+      },
+      fetchImpl: async (url, init = {}) => {
+        const method = init.method || 'GET';
+        calls.push([method, String(url)]);
+        if (method === 'DELETE' && String(url).includes('storage.googleapis.com')) {
+          // The first attempt deleted the object, so the retry sees a 404.
+          const status = gcsGone ? 404 : 200;
+          gcsGone = true;
+          return new Response('{}', { status });
+        }
+        if (method === 'DELETE') return new Response('{}', { status: vertexDeletes.shift() });
+        return Response.json({ name: 'operations/import-1', done: false });
+      },
+    },
+    async (app) => {
+      const hr = await app.hrBrowser();
+      const up = await hr.upload(
+        `${path}?category=policies`,
+        Buffer.from(handbook),
+        'Employee Handbook.txt',
+      );
+      assert.equal(up.status, 201, up.text);
+      const id = up.body.id;
+
+      // An unknown id is a 404 before anything reaches GCS or Vertex AI Search.
+      calls.length = 0;
+      const unknown = await hr.delete(`${path}/${randomUUID()}`);
+      assert.deepEqual([unknown.status, unknown.body.code], [404, 'WORKSPACE_DOCUMENT_NOT_FOUND']);
+      assert.deepEqual(calls, []);
+
+      // The GCS object is deleted but the Vertex AI Search delete fails: 503,
+      // and the document stays in the library so HR can try again.
+      const failed = await hr.delete(`${path}/${id}`);
+      assert.deepEqual([failed.status, failed.body.code], [503, 'COMPANY_KNOWLEDGE_UNAVAILABLE']);
+      assert.deepEqual(app.firestore.paths('companyDocuments/'), [`companyDocuments/${id}`]);
+      assert.deepEqual(
+        (await hr.get('/api/hr/company-knowledge')).body.documents.map((d) => d.id),
+        [id],
+      );
+
+      // The retry tolerates the GCS 404, deletes from Vertex AI Search, then
+      // removes the metadata.
+      calls.length = 0;
+      const retried = await hr.delete(`${path}/${id}`);
+      assert.equal(retried.status, 204, retried.text);
+      assert.deepEqual(
+        calls.map(([method]) => method),
+        ['DELETE', 'DELETE', 'GET'],
+      );
+      assert.deepEqual(app.firestore.paths('companyDocuments/'), []);
+    },
+  );
 });

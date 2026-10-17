@@ -174,6 +174,8 @@ export async function startAccountsApp({
   chatStorageTimeoutMs = undefined,
   autofill = undefined,
   companyRetrieve = fakeRetrieve,
+  companyDocumentSync = undefined,
+  fetchImpl: customFetch = undefined,
   models = fakeModels,
   // Optional voice stand-ins (POST /api/voice and /api/tts/local).
   sharedVoice = undefined,
@@ -202,19 +204,27 @@ export async function startAccountsApp({
     timeoutMs: chatStorageTimeoutMs,
     sweepIntervalMs: Infinity,
   });
+  // The app passes in its Vertex AI Search retriever.
+  const conversationService = ({ retrieve }) =>
+    createConversationService({ env, memory, models: models(), retrieve });
+  const getAccessToken = async () => 'synthetic-token';
+  const fetchImpl =
+    customFetch ||
+    (async () => {
+      throw new Error('No Google request is expected in account tests.');
+    });
+  // As in createApp: the store syncs uploads and deletes to GCS + Vertex AI
+  // Search when env has DOCS_BUCKET and VERTEX_SEARCH_DATA_STORE_ID, through
+  // fetchImpl; `companyDocumentSync` replaces that sync.
   const companyDocuments = createCompanyDocumentStore({
     firestore,
     log,
     timeoutMs: storageTimeoutMs,
+    documentSync: companyDocumentSync,
+    env,
+    fetchImpl,
+    getAccessToken,
   });
-  // The app passes in its retriever, which adds the company library for
-  // account-owned chats.
-  const conversationService = ({ retrieve }) =>
-    createConversationService({ env, memory, models: models(), retrieve });
-  const getAccessToken = async () => 'synthetic-token';
-  const fetchImpl = async () => {
-    throw new Error('No Google request is expected in account tests.');
-  };
   const app = createApp({
     env,
     accountService: enabled ? accounts : null,

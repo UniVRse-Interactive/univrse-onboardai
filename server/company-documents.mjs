@@ -10,23 +10,30 @@ import { createStorageCall } from './firestore-client.mjs';
 import { createAccessTokenProvider } from './vertex-ai.mjs';
 import { workspaceLimits } from './workspace-limits.mjs';
 
-// The company-wide knowledge library that signed-in HR builds by uploading
-// files, one Firestore document per file: companyDocuments/{id}
+// The company-wide knowledge library metadata that signed-in HR builds by
+// uploading files, one Firestore document per file: companyDocuments/{id}
 //
 //   category      one of the five onboarding area IDs, or 'additional'
 //   title         the document's own title: HR's name for it, or the file name
 //                 without its extension (never the area's title)
 //   fileName      the uploaded file's name (absent on documents connected from
-//                 Google Docs before issue #35, which still list and retrieve)
-//   text          the file's extracted plain text (at most 250,000 characters)
-//   characters, bytes (the file's size), fingerprint (SHA-256 of text)
+//                 Google Docs before issue #35, which still list)
+//   characters, bytes (the file's size), fingerprint (SHA-256 of extracted text)
 //   connectedBy   the HR account ID; connectedAt: ISO 8601
+//
+// Firestore holds metadata only, for the HR dashboard list, duplicate detection
+// and the library limits: never the extracted text or the file's bytes.
+// Documents stored before that change may still carry a `text` field, which is
+// no longer read. Runtime retrieval never reads this collection.
 //
 // When DOCS_BUCKET and VERTEX_SEARCH_DATA_STORE_ID are configured, each upload
 // also writes the document to the GCS bucket and triggers a Vertex AI Search
-// documents:import job, and each delete removes the object from GCS and deletes
-// the document from Vertex AI Search. Every call is bounded by the deadline;
-// log lines name the operation and status only, never file names, titles or text.
+// documents:import job for that one object (INCREMENTAL); a failed sync removes
+// the new metadata again. Each delete removes the object from GCS and deletes
+// the document from Vertex AI Search first, then the metadata, so a failed
+// sync leaves the document listed for HR to retry. Every call is bounded by
+// the deadline; log lines name the operation and status only, never file
+// names, titles or text.
 export const companyDocumentCollection = 'companyDocuments';
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fingerprintOf = (text) => createHash('sha256').update(text).digest('hex');
@@ -266,7 +273,6 @@ const stored = (doc) => {
     title: String(data.title || ''),
     category: String(data.category || ''),
     fileName: String(data.fileName || ''),
-    text: String(data.text || ''),
     characters: Number(data.characters) || 0,
     bytes: Number(data.bytes) || 0,
     fingerprint: String(data.fingerprint || ''),
@@ -307,14 +313,16 @@ export function createCompanyDocumentStore({
   const collection = (db) => db.collection(companyDocumentCollection);
 
   return {
-    // Every stored document with its text, oldest first.
+    // Every stored document metadata entry, oldest first.
     list: () =>
       guarded('list company documents', async () => {
         const found = await collection(await database()).get();
         return found.docs.map(stored).sort(byConnection);
       }),
     // upload: { category, title, fileName, text, bytes, content? }. Checks and
-    // writes in one transaction, then syncs new documents to GCS + Vertex AI Search.
+    // writes metadata only (never the text) in one transaction, so two HR
+    // browsers cannot both take the last place, then syncs new documents to
+    // GCS + Vertex AI Search.
     add: (upload, connectedBy, at) =>
       guarded('add company document', async () => {
         const db = await database();
@@ -336,7 +344,6 @@ export function createCompanyDocumentStore({
             category,
             title,
             fileName,
-            text,
             characters: text.length,
             bytes,
             fingerprint: fingerprintOf(text),
@@ -364,7 +371,7 @@ export function createCompanyDocumentStore({
         }
         return plan;
       }),
-    // One stored document with its text, or the 404.
+    // One stored document metadata entry, or the 404.
     get: (id) =>
       guarded('read company document', async () => {
         if (typeof id !== 'string' || !idPattern.test(id)) throw companyDocumentErrors.notFound();
@@ -376,7 +383,7 @@ export function createCompanyDocumentStore({
       }),
     // Moves one document to another category (checked and written in one
     // transaction): 404 for an unknown id, 409 when another document already
-    // holds the same text. Resolves to the stored document.
+    // holds the same text. Resolves to the stored document metadata.
     move: (id, category) =>
       guarded('move company document', async () => {
         if (typeof id !== 'string' || !idPattern.test(id)) throw companyDocumentErrors.notFound();
@@ -399,19 +406,18 @@ export function createCompanyDocumentStore({
         if (typeof id !== 'string' || !idPattern.test(id)) throw companyDocumentErrors.notFound();
         const db = await database();
         const ref = collection(db).doc(id);
-        const removed = await db.runTransaction(async (tx) => {
-          const snap = await tx.get(ref);
-          if (!snap.exists) throw companyDocumentErrors.notFound();
-          const data = stored(snap);
-          tx.delete(ref);
-          return data;
-        });
+        // GCS and Vertex AI Search first: if either fails, the metadata stays
+        // and HR can retry (a retry tolerates the 404s of what is already gone).
         if (sync) {
-          await sync.deleteDocument({
-            id: removed.id,
-            fileName: removed.fileName,
-          });
+          const found = await ref.get();
+          if (!found.exists) throw companyDocumentErrors.notFound();
+          const existing = stored(found);
+          await sync.deleteDocument({ id: existing.id, fileName: existing.fileName });
         }
+        await db.runTransaction(async (tx) => {
+          if (!(await tx.get(ref)).exists) throw companyDocumentErrors.notFound();
+          tx.delete(ref);
+        });
       }),
     close: async () => {
       const open = client;

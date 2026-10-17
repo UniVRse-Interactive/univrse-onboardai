@@ -273,3 +273,56 @@ def test_rules_match_the_api():
     # Every area at the threshold: the first required todo step anywhere.
     view = rules.summary(TEMPLATE, done(three))
     assert view["next_step"]["step_id"] == "documentation.emergency-contact"
+
+
+def test_ai_readiness_training_step_syncs_with_ai_proficiency():
+    # Status of role-tools.ai-readiness-training is done iff aiProficiency.trainingCompleted is True.
+    assert (
+        rules.status_of(
+            {
+                "steps": {"role-tools.ai-readiness-training": {"status": "done"}},
+                "aiProficiency": {"status": "assessed", "level": 4, "trainingCompleted": False},
+            },
+            rules.AI_READINESS_STEP_ID,
+        )
+        == "todo"
+    )
+    assert (
+        rules.status_of(
+            {
+                "steps": {},
+                "aiProficiency": {"status": "assessed", "level": 4, "trainingCompleted": True},
+            },
+            rules.AI_READINESS_STEP_ID,
+        )
+        == "done"
+    )
+    db, store = make_store(
+        {
+            f"onboardingProgress/{ACCOUNT}": {
+                "accountId": ACCOUNT,
+                "steps": {
+                    rules.AI_READINESS_STEP_ID: {"briefedAt": BRIEFED_AT, "briefedBy": "read"}
+                },
+                "aiProficiency": {
+                    "status": "assessed",
+                    "level": 5,
+                    "learningPathId": "intermediate",
+                    "assessedAt": BRIEFED_AT,
+                    "updatedAt": BRIEFED_AT,
+                    "trainingCompleted": False,
+                    "trainingCompletedAt": None,
+                },
+            }
+        }
+    )
+    outcome, progress = store.mark(
+        ACCOUNT, rules.AI_READINESS_STEP_ID, "done", require_briefing=True
+    )
+    assert outcome == "marked"
+    assert progress["steps"][rules.AI_READINESS_STEP_ID]["status"] == "done"
+    assert progress["aiProficiency"]["trainingCompleted"] is True
+    assert progress["aiProficiency"]["trainingCompletedAt"] == NOW
+    assert progress["aiProficiency"]["learningPathId"] == "intermediate"
+    assert progress["aiProficiency"]["level"] == 5
+

@@ -25,6 +25,7 @@ import { vertexConfig, vertexGenerateContentUrl, createAccessTokenProvider } fro
 import { createProfileAutofill } from './profile-autofill.mjs';
 import { ChatError, answerNotFound } from './chat-errors.mjs';
 import { createOnboardingJourney, personalSource } from './onboarding-journey.mjs';
+import { alyaAssessmentReply, parseChatAiAssessment } from './ai-proficiency.mjs';
 import { createSupportRequests } from './support-requests.mjs';
 import { createKnowledgeGaps } from './knowledge-gaps.mjs';
 import { checklistAgentSettings, createChecklistAgent } from './checklist-agent-client.mjs';
@@ -91,8 +92,10 @@ export function createApp({
   // Profile autofill service (profile-autofill.mjs). By default it uses Vertex
   // AI through fetchImpl and getAccessToken; pass null to turn it off.
   profileAutofill = undefined,
-  // The HR company knowledge library (company-documents.mjs). By default it
-  // is stored in Firestore whenever accounts are on.
+  // The HR company knowledge library metadata store (company-documents.mjs). By
+  // default it is stored in Firestore whenever accounts are on, and syncs
+  // uploads and deletes to GCS + Vertex AI Search when DOCS_BUCKET and
+  // VERTEX_SEARCH_DATA_STORE_ID are set.
   companyDocuments = undefined,
   // The company search (Vertex AI Search, or the sample guide); tests replace it.
   companyRetrieve = undefined,
@@ -292,7 +295,7 @@ export function createApp({
     entry.count++;
     requests.set(req.ip, entry);
 
-    if (entry.count > 30) {
+    if (entry.count > 60) {
       return res.status(429).json({
         error: 'Please wait a moment before asking again.',
       });
@@ -632,6 +635,48 @@ export function createApp({
     try {
       const turn = await journeyTurn(req);
       const personal = turn.chip?.kind === 'personal';
+      const aiAssessment =
+        journey && req.chatAccount?.role === 'employee' && !turn.chip
+          ? parseChatAiAssessment(question)
+          : null;
+      if (aiAssessment) {
+        const result = await saveTurn(
+          req.chatOwner,
+          conversationId,
+          question.trim(),
+          requestId,
+          abort.signal,
+          async (row) => {
+            const saved = await journey.onboarding.saveAiProficiency(req.chatAccount, aiAssessment);
+            return {
+              answer: alyaAssessmentReply(saved.aiProficiency),
+              mode: memoryChat
+                ? 'gemini-memory'
+                : documentSearch
+                  ? 'document-search'
+                  : vertexConfig(env)
+                    ? 'gemini'
+                    : 'demo',
+              ...(documentSearch ? { matched: true } : {}),
+              passages: [],
+              source: checklistSource,
+              card: null,
+              ...(memoryChat ? { learning: row.learning } : { taskId }),
+              coverage: 'full',
+              category: 'onboarding',
+              quickQuestionId: null,
+              reexplainOf: turn.reexplainOf,
+              proposedAction: null,
+            };
+          },
+          turn,
+        );
+        if (!res.destroyed) {
+          if (memoryChat) res.json(result);
+          else await deliver(result);
+        }
+        return;
+      }
       if (memoryChat) {
         const result = personal
           ? await saveTurn(

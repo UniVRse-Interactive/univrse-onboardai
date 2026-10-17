@@ -54,7 +54,7 @@ const progress = (accountId) => ({
       source: 'employee',
       actorId: accountId,
     },
-    'team-support.meet-buddy': {
+    'team-support.company-chat-groups': {
       status: 'done',
       updatedAt: 'x',
       source: 'alya-agent',
@@ -63,9 +63,10 @@ const progress = (accountId) => ({
   },
 });
 
-test('migration 003 upgrades version-1 templates, is idempotent and never touches progress', async () => {
-  assert.equal(templateVersion, 2);
+test('migration 003 and 005 upgrade older templates, are idempotent and never touch progress', async () => {
+  assert.equal(templateVersion, 3);
   assert.ok(firestoreMigrationFiles().includes('003_onboarding_templates_v2.mjs'));
+  assert.ok(firestoreMigrationFiles().includes('005_onboarding_templates_v3.mjs'));
   const firestore = new FakeFirestore();
   for (const track of tracks) {
     // A version-1 template is still a valid (legacy) template.
@@ -80,7 +81,9 @@ test('migration 003 upgrades version-1 templates, is idempotent and never touche
 
   const lines = [];
   await upgradeTemplates({ firestore, log: (line) => lines.push(line) });
-  assert.deepEqual(lines, ['onboarding templates v2: 3 upgraded, 0 created, 0 already current']);
+  assert.deepEqual(lines, [
+    `onboarding templates v${templateVersion}: 3 upgraded, 0 created, 0 already current`,
+  ]);
   for (const track of tracks)
     assert.deepEqual(firestore.read(`onboardingTemplates/${track}`), builtInTemplate(track));
   // Step ids are stable: the old progress still names steps of the new template.
@@ -95,34 +98,44 @@ test('migration 003 upgrades version-1 templates, is idempotent and never touche
 
   // Re-running changes nothing.
   await upgradeTemplates({ firestore, log: (line) => lines.push(line) });
-  assert.equal(lines[1], 'onboarding templates v2: 0 upgraded, 0 created, 3 already current');
+  assert.equal(
+    lines[1],
+    `onboarding templates v${templateVersion}: 0 upgraded, 0 created, 3 already current`,
+  );
   for (const track of tracks)
     assert.deepEqual(firestore.read(`onboardingTemplates/${track}`), builtInTemplate(track));
 
   // A missing template is created; a newer one (a later migration) is kept.
-  const newer = { ...builtInTemplate('intern'), version: 3 };
+  const newer = { ...builtInTemplate('intern'), version: templateVersion + 1 };
   firestore.write('onboardingTemplates/intern', newer);
   await firestore.collection('onboardingTemplates').doc('contractor').delete();
   await upgradeTemplates({ firestore, log: (line) => lines.push(line) });
-  assert.equal(lines[2], 'onboarding templates v2: 0 upgraded, 1 created, 2 already current');
+  assert.equal(
+    lines[2],
+    `onboarding templates v${templateVersion}: 0 upgraded, 1 created, 2 already current`,
+  );
   assert.deepEqual(firestore.read('onboardingTemplates/intern'), newer);
   assert.deepEqual(firestore.read('onboardingTemplates/contractor'), builtInTemplate('contractor'));
   // Log lines carry counts only.
   assert.ok(lines.every((line) => !line.includes('contract ') && !line.includes('briefing')));
 });
 
-test('a stack where 001 and 002 already ran gets 003 only, which upgrades its templates', async () => {
+test('a stack where 001 and 002 already ran gets 003, 004 and 005, which upgrade its templates', async () => {
   const firestore = new FakeFirestore();
   for (const track of tracks) firestore.write(`onboardingTemplates/${track}`, versionOne(track));
   for (const name of ['001_onboarding_templates.mjs', '002_quick_questions.mjs'])
     firestore.write(`${MARKER_COLLECTION}/${name}`, { appliedAt: '2026-10-14T01:00:00.000Z' });
   const { applied } = await migrateFirestore(firestore, { log: () => {} });
-  assert.deepEqual(applied, ['003_onboarding_templates_v2.mjs', '004_company_documents_areas.mjs']);
-  assert.equal(firestore.read('onboardingTemplates/employee').version, 2);
+  assert.deepEqual(applied, [
+    '003_onboarding_templates_v2.mjs',
+    '004_company_documents_areas.mjs',
+    '005_onboarding_templates_v3.mjs',
+  ]);
+  assert.equal(firestore.read('onboardingTemplates/employee').version, templateVersion);
   assert.deepEqual((await migrateFirestore(firestore, { log: () => {} })).applied, []);
 });
 
-test('the server serves the built-in version 2 over a stored version 1, and the same after 003', async () => {
+test('the server serves the built-in template version over a stored version 1, and the same after upgrade', async () => {
   const app = await startAccountsApp();
   try {
     for (const track of tracks)
@@ -135,7 +148,9 @@ test('the server serves the built-in version 2 over a stored version 1, and the 
     assert.ok(handbook.briefing.text);
     assert.ok(
       app.logs.some((line) =>
-        /template employee is version 1; the built-in version 2 is used/.test(line),
+        new RegExp(
+          `template employee is version 1; the built-in version ${templateVersion} is used`,
+        ).test(line),
       ),
     );
     app.briefAll((await browser.get('/api/auth/session')).body.account.id);

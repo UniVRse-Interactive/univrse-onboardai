@@ -186,3 +186,73 @@ test('two documents in one area are both listed under their own titles while run
     await app.close();
   }
 });
+
+test('two documents in one area both sync to Vertex AI Search and are retrieved under their own titles', async () => {
+  const indexed = new Map();
+  const app = await startAccountsApp({
+    mode: 'document-search',
+    companyDocumentSync: {
+      uploadDocument: async ({ id, title, text }) => {
+        indexed.set(id, { title, text });
+      },
+      deleteDocument: async ({ id }) => {
+        indexed.delete(id);
+      },
+    },
+    companyRetrieve: async (query) => {
+      const q = query.toLowerCase();
+      return [...indexed.values()]
+        .filter((doc) =>
+          q.includes('leave') ? doc.title.includes('Leave') : doc.title.includes('Privacy'),
+        )
+        .map((doc) => ({ title: doc.title, heading: '', text: doc.text }));
+    },
+  });
+  try {
+    const hr = await app.hrBrowser();
+    const { browser } = await app.readyEmployee(hr);
+    const upload = (name, text) =>
+      hr.upload('/api/hr/company-knowledge/documents?category=policies', Buffer.from(text), name);
+    const leave = await upload(
+      'Leave Policy.txt',
+      'Annual Leave\nStaff request annual leave through the synthetic portal two weeks ahead.',
+    );
+    const privacy = await upload(
+      'Privacy Guide.txt',
+      'Customer Privacy\nStaff never copy customer records to personal synthetic drives.',
+    );
+    assert.deepEqual([leave.status, privacy.status], [201, 201]);
+    const chat = (await browser.post('/api/conversations')).body;
+    const ask = async (question) =>
+      (
+        await browser.post('/api/chat', {
+          question,
+          taskId: 'quiz-part-1',
+          conversationId: chat.id,
+          requestId: randomUUID(),
+        })
+      ).body;
+    const leaveAnswer = await ask('How do I request annual leave?');
+    assert.equal(leaveAnswer.passages[0].title, 'Leave Policy');
+    const privacyAnswer = await ask('Can I copy customer records to a personal drive?');
+    assert.equal(privacyAnswer.passages[0].title, 'Privacy Guide');
+    // Both stay in one area, and neither title is the area's.
+    const listed = (await hr.get('/api/hr/company-knowledge')).body.documents;
+    assert.deepEqual(
+      listed.map((d) => [d.title, d.category]),
+      [
+        ['Leave Policy', 'policies'],
+        ['Privacy Guide', 'policies'],
+      ],
+    );
+    // Moving one keeps it searchable in Vertex AI Search.
+    const moved = await hr.patch(`/api/hr/company-knowledge/documents/${leave.body.id}`, {
+      category: 'additional',
+    });
+    assert.equal(moved.status, 200);
+    const again = await ask('How do I request annual leave?');
+    assert.equal(again.passages[0].title, 'Leave Policy');
+  } finally {
+    await app.close();
+  }
+});

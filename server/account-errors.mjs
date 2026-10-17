@@ -198,6 +198,18 @@ export const journeyErrors = {
       'BRIEFING_TIME_REQUIRED',
       'Choose a briefing date and time before scheduling a briefing.',
     ),
+  aiProficiencyInvalid: () =>
+    new AccountError(
+      400,
+      'AI_PROFICIENCY_INVALID',
+      'Choose an AI proficiency level from 1 to 10, not_sure, or skipped.',
+    ),
+  aiProficiencyForbidden: () =>
+    new AccountError(
+      403,
+      'FORBIDDEN',
+      'You do not have permission to access or update this AI proficiency record.',
+    ),
 };
 
 // POST /api/hr/employees/autofill. Fixed messages only: provider text, file

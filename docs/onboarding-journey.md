@@ -71,21 +71,23 @@ step). This page describes how the server implements it.
 
 ## The footprint
 
-Five areas, in this order, each with exactly four **required** steps on every track. Interns and
-contractors substitute steps rather than dropping them, so the rule below means 3 of 4 everywhere.
+Five areas, in this order. Since template version 3 (Firestore migration
+`005_onboarding_templates_v3`), Role, Tools & AI Readiness has eleven **required** steps and every
+other area exactly four, on every track. Interns and contractors substitute steps rather than
+dropping them, so the rule below means 3 of 4 in four areas and 8 of 11 in `role-tools`.
 
-| Area            | Icon, title                    | Steps (completion)                                                                                                                            |
-| --------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `documentation` | 📄 Documentation               | contract, personal & bank details, tax/ID documents, emergency contact (all `hr_verify`)                                                      |
-| `policies`      | 🛡️ Policies & Safe Practices   | company rules (Employee Handbook), workplace conduct & safe practices, privacy & data handling (PDPA), responsible AI use (all `check`)       |
-| `alignment`     | 🎯 Company Purpose & Alignment | what the company does, mission/values/goals, how teams fit together, how your role contributes (all `self`)                                   |
-| `role-tools`    | 🛠️ Role, Tools & AI Readiness  | laptop & accounts, email/chat/work tools, responsibilities with your manager (`hr_verify`), identify suitable AI training                     |
-| `team-support`  | 🤝 People & Workplace Support  | meet your manager, teammates, buddy, know who to ask for help; plus the optional "Share your working preferences or support needs (optional)" |
+| Area            | Icon, title                    | Steps (completion)                                                                                                                                                                                                                                                                                                                                |
+| --------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `documentation` | 📄 Documentation               | contract, personal & bank details, tax/ID documents, emergency contact (all `hr_verify`)                                                                                                                                                                                                                                                          |
+| `policies`      | 🛡️ Policies & Safe Practices   | company rules (Employee Handbook), workplace conduct & safe practices, privacy & data handling (PDPA), responsible AI use (all `check`)                                                                                                                                                                                                           |
+| `alignment`     | 🎯 Company Purpose & Alignment | what the company does, mission/values/goals, how teams fit together, how your role contributes (all `self`)                                                                                                                                                                                                                                       |
+| `role-tools`    | 🛠️ Role, Tools & AI Readiness  | GSheet account, Individual GSheet, GSheet training & SOP (`check`), shared Drive folders, Gmail & Google Chat, Gmail profile picture, professional email, official email linked to Gmail, email signature, daily GSheet updates (`check`), AI Readiness training ([AI proficiency](#ai-proficiency-self-assessment-template-v3)); the rest `self` |
+| `team-support`  | 🤝 People & Workplace Support  | company chat groups, department chat group, Talent Personality Test, MBTI Personality Test (all `self`); plus the optional "Share your working preferences or support needs (optional)"                                                                                                                                                           |
 
-Track differences: interns sign an internship agreement, show ID and placement documents and
-agree goals with a supervisor; contractors sign a service agreement, give billing details, show
-an ID document, sign a confidentiality agreement (NDA, instead of the emergency contact form),
-agree a scope of work, and meet a project lead and a day-to-day contact (instead of a buddy).
+Track differences: interns sign an internship agreement and show ID and placement documents;
+contractors sign a service agreement, give billing details, show an ID document and sign a
+confidentiality agreement (NDA, instead of the emergency contact form). Since version 3, Role,
+Tools & AI Readiness and People & Workplace Support are the same on every track.
 Step ids (`<areaId>.<slug>`) are shared across tracks for the same structural step, so changing
 an employee's track keeps the progress that still applies.
 
@@ -188,6 +190,36 @@ modelAnswer, explanation, sourceTitle, maxLength: 600 }`, with 2 key points and 
 - **Privacy.** The written answer is never stored and never logged, right or wrong. Only the
   step's status changes, and only on a pass. A grader failure logs its error code and HTTP status
   only.
+
+## AI proficiency self-assessment (template v3)
+
+The `role-tools.ai-readiness-training` step (`server/ai-proficiency.mjs`). The employee rates their
+AI use from 1 to 10, or answers `not_sure`, or skips; that picks a learning path and a practice
+task. The step is done only when the employee completes the practice task. The record is
+`onboardingProgress/{accountId}.aiProficiency`:
+`{ status: "unanswered" | "assessed" | "not_sure" | "skipped", level: 1-10 | null, learningPathId: "beginner" | "intermediate" | "advanced", assessedAt, updatedAt, trainingCompleted, trainingCompletedAt }`.
+
+- **Paths.** Levels 1-3, `not_sure`, `skipped` and unanswered are `beginner`; 4-6 `intermediate`;
+  7-10 `advanced`.
+- **A rating never completes the step**, and a new rating keeps a completed practice task.
+  Completing or reopening the step through the normal step route sets or clears
+  `trainingCompleted` and keeps the rating.
+- `GET /api/me/ai-proficiency` (employee): `{ aiProficiency, levels, learningPaths }`, where
+  `aiProficiency` adds `levelDescription`, `learningPath` and `practiceTask`.
+- `PUT /api/me/ai-proficiency` (employee) with `{ status: "assessed", level }`, `{ level }`,
+  `{ status: "not_sure" }` or `{ status: "skipped" }`: the `GET` answer plus `onboarding` (the
+  updated Onboarding view). Any other key or value is `400 AI_PROFICIENCY_INVALID`.
+- `POST /api/me/ai-proficiency/complete-training` (employee), optionally `{ practiceNote }` (a
+  string of at most 2,000 characters, checked but not stored): the same response, with the step
+  done. A step without a briefing gets one recorded as read.
+- `GET /api/hr/employees/:id/ai-proficiency` (HR): `{ aiProficiency, levels, learningPaths }`.
+- A `userId`, `accountId` or `companyId` (query or body) that is not the caller's own is
+  `403 FORBIDDEN`.
+- **In chat**, an employee's statement (not a question) such as "I rated my AI proficiency 5" or
+  "I want to skip the AI assessment" is saved the same way, and Alya answers with the path and
+  practice task (`parseChatAiAssessment`, `alyaAssessmentReply`). It is never read as a finished
+  step, and the checklist agent marks the step only when the employee says they finished the
+  practice task.
 
 ## Briefings (v1.5)
 

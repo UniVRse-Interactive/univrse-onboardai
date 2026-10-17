@@ -35,7 +35,7 @@ export const areaOrder = Object.freeze([
 ]);
 export const completionTypes = Object.freeze(['self', 'hr_verify', 'check']);
 export const checkTypes = Object.freeze(['choice', 'written']);
-export const templateVersion = 2;
+export const templateVersion = 3;
 // Every area must reach this percent of its required steps (contract v1.2).
 export const completionThreshold = 70;
 export const briefingMaxLength = 400;
@@ -44,6 +44,8 @@ export const handbookTitle = 'UniVRse - Employee Handbook';
 export const checklistTitle = 'UniVRse - New Staff Checklist';
 export const orientationTitle = 'UniVRse - Orientation & Office Tour Guide';
 export const contractTitle = 'UniVRse - Signing Your Employment Contract';
+export const roleToolsTitle = '07 Role, Tools & AI Readiness';
+export const peopleSupportTitle = '08 People & Workplace Support';
 
 // A profile's job.track as a track: '' (or anything unknown) means employee.
 export const trackOf = (profile) =>
@@ -76,18 +78,17 @@ const checked = (slug, title, description, askAlya, brief, check) => ({
   completion: 'check',
   askAlya,
   briefing: brief,
-  check: { ...check, sourceTitle: handbookTitle },
+  check: { ...check, sourceTitle: check.sourceTitle || handbookTitle },
 });
 
 // The four Policies & Safe Practices checks, one per policy step, grounded in
-// the Employee Handbook (contract v1.4):
-// - choice checks (dress code, workplace conduct): option ids are opaque and
-//   stable, so an id says nothing about its position, and GET .../check
-//   shuffles the options on every request;
-// - written checks (personal data, responsible AI): the employee writes an
-//   answer that Alya grades against keyPoints and mustNot; the server decides
-//   the pass (check-grader.mjs). The modelAnswer and the rubric are never sent
-//   to the browser.
+// the Employee Handbook (contract v1.4), plus the two Role, Tools & AI Readiness
+// checks grounded in 07 Role, Tools & AI Readiness:
+// - choice checks: option ids are opaque and stable, so an id says nothing
+//   about its position, and GET .../check shuffles the options on every request;
+// - written checks: the employee writes an answer that Alya grades against
+//   keyPoints and mustNot; the server decides the pass (check-grader.mjs). The
+//   modelAnswer and the rubric are never sent to the browser.
 const checks = {
   handbook: {
     type: 'choice',
@@ -173,6 +174,60 @@ const checks = {
       'I would not paste the code into the free chatbot, because source code must never go into an AI tool that IT has not approved. Instead I would ask Alya or Gemini in my UniVRse account, or check with IT first if I need a different tool.',
     explanation:
       'Use only approved AI tools, such as Alya and Gemini in your UniVRse account. Never paste customer data, payslips or source code into an AI tool that IT has not approved.',
+    maxLength: writtenAnswerMaxLength,
+  },
+  gsheetSop: {
+    type: 'choice',
+    sourceTitle: roleToolsTitle,
+    scenario:
+      'You are starting your basic GSheet training, but you are unsure how to update a task status and cannot open one of your assigned sheets. What should you do?',
+    options: [
+      {
+        id: 'm4p8',
+        text: 'Follow the GSheet SOP instructions and report the access issue to the onboarding coordinator',
+      },
+      {
+        id: 'v7r2',
+        text: 'Create a personal spreadsheet on your private account and track your daily tasks there instead',
+      },
+      {
+        id: 'k3n6',
+        text: 'Ask a colleague to share their password so you can update your status from their account',
+      },
+    ],
+    correctOptionId: 'm4p8',
+    explanation:
+      'Study the GSheet SOP to learn where to find tasks and how to update their status. Keep your account passwords private and report any access or setup problems to the onboarding coordinator.',
+  },
+  gsheetDailyUpdates: {
+    type: 'written',
+    sourceTitle: roleToolsTitle,
+    scenario:
+      'At the end of the day, you have finished one task in your Individual GSheet, made partial progress on a second task, and hit a blocker on a third. How should you update your GSheet? Answer in two or three sentences.',
+    keyPoints: [
+      {
+        id: 'kp-honest-progress',
+        text: 'Says they will update their tasks honestly and clearly with their current progress and completed work.',
+      },
+      {
+        id: 'kp-report-issue',
+        text: 'Says they will record or note the blocker or issue that needs help.',
+      },
+    ],
+    mustNot: [
+      {
+        id: 'mn-hide-issue',
+        text: 'Suggests hiding the blocker, marking incomplete work as finished, or skipping the daily update.',
+      },
+      {
+        id: 'mn-unapproved-ai',
+        text: 'Suggests pasting confidential company or personal data into an unapproved AI tool.',
+      },
+    ],
+    modelAnswer:
+      'I would update my Individual GSheet honestly and clearly by recording the completed task and the current progress on the second task. I would also note the blocker on the third task as an issue that needs help so the team can support me.',
+    explanation:
+      'Update your tasks in GSheet honestly and clearly each day, including your progress, completed work, and any issue that needs help.',
     maxLength: writtenAnswerMaxLength,
   },
 };
@@ -299,36 +354,6 @@ const alignment = [
     ),
   ),
 ];
-const aiTrainingStep = (brief) =>
-  self(
-    'ai-training',
-    'Identify suitable AI training',
-    'Find an AI training that suits your role and note it for your learning plan.',
-    'Which AI training suits my role?',
-    brief,
-  );
-const aiTraining = aiTrainingStep(
-  briefing(
-    handbookTitle,
-    'After confirmation, you have a learning budget of up to 2,000 ringgit a year for courses, books and exams related to your role. Ask your manager which AI training suits your work, and note it for your learning plan. At work, use only approved AI tools, such as Alya and Gemini.',
-  ),
-);
-const aiTrainingWithoutBudget = aiTrainingStep(
-  briefing(
-    handbookTitle,
-    'Ask the person you report to which AI training suits your work, and note it for your learning plan. At work, use only approved AI tools, such as Alya and Gemini in your UniVRse account.',
-  ),
-);
-const helpContacts = self(
-  'help-contacts',
-  'Know who to ask for help',
-  'Know how to reach People & Culture (HR) and IT Support.',
-  'Who do I contact for HR and IT help?',
-  briefing(
-    handbookTitle,
-    'If you are not sure who to ask, ask Alya first. For leave, benefits, your contract or onboarding, contact People and Culture. For your laptop, accounts, passwords or the VPN, contact IT Support.',
-  ),
-);
 const workingPreferences = {
   ...self(
     'working-preferences',
@@ -339,26 +364,163 @@ const workingPreferences = {
   ),
   required: false,
 };
-const meetTeammates = self(
-  'meet-teammates',
-  'Meet your teammates',
-  'Get to know the people you work with every day.',
-  'How will I meet my teammates?',
-  briefing(
-    orientationTitle,
-    'On your first day, you have a team lunch with your manager and buddy, and later you meet your team and set up your desk. During your first week, you shadow a teammate for half a day, and on Friday there is a team lunch.',
+const roleTools = [
+  self(
+    'gsheet-account',
+    'Set up an account in GSheet',
+    'Use the Google account provided or approved for work to access the assigned Google Sheet (GSheet).',
+    'How do I set up my account in GSheet?',
+    briefing(
+      roleToolsTitle,
+      'Use the Google account provided or approved for work to access your assigned Google Sheet. Make sure you are signed in with your work account before opening the sheet.',
+    ),
   ),
-);
-const workTools = self(
-  'work-tools',
-  'Email, chat and work tools access',
-  'Check that your email, Google Chat and role tools work, and join your team’s spaces.',
-  'How do I get access to email, chat and my work tools?',
-  briefing(
-    handbookTitle,
-    'Sign in to email and Google Chat with your UniVRse account, and join your team’s Google Chat spaces and recurring meetings. Install software only from the UniVRse Software Centre unless IT approves it. On public or hotel Wi-Fi, turn on the company VPN first.',
+  self(
+    'individual-gsheet',
+    'Accept the invitation to open your Individual GSheet',
+    'Open the invitation from the onboarding coordinator and check that you can access your individual sheet.',
+    'How do I open my Individual GSheet invitation?',
+    briefing(
+      roleToolsTitle,
+      'Check your inbox for the invitation from the onboarding coordinator to open your Individual GSheet. Open the sheet and confirm that you can view and edit your assigned rows.',
+    ),
   ),
-);
+  checked(
+    'gsheet-training-sop',
+    'Complete basic GSheet training and study the GSheet SOP',
+    'Learn where to find tasks, how to update their status, and how to follow the instructions provided in the GSheet SOP.',
+    'What should I learn in the GSheet training and GSheet SOP?',
+    briefing(
+      roleToolsTitle,
+      'Complete the basic GSheet training and study the GSheet Standard Operating Procedure. Learn where your tasks are listed, how to update their status, and how to follow the instructions in the SOP.',
+    ),
+    checks.gsheetSop,
+  ),
+  self(
+    'drive-shared-folders',
+    'Share relevant documents and folders in Drive',
+    'Check that you can access the Google Drive folders needed for your role and follow the access instructions given.',
+    'How do I access and share relevant folders in Google Drive?',
+    briefing(
+      roleToolsTitle,
+      'Check that you can access the Google Drive folders needed for your role. Use those shared folders for your work files and follow the access instructions given by your team.',
+    ),
+  ),
+  self(
+    'gmail-google-chat',
+    'Create a Gmail account / use Google Chat',
+    'Use the work account or communication method provided for onboarding. Google Chat is used to communicate with the relevant team.',
+    'How do I set up Gmail and Google Chat for onboarding?',
+    briefing(
+      roleToolsTitle,
+      'Use the work account or communication method provided for onboarding to sign in to Gmail and Google Chat. Google Chat is used to communicate with your team throughout the day.',
+    ),
+  ),
+  self(
+    'gmail-profile-picture',
+    'Add a proper picture to your Gmail profile',
+    'Use a clear and professional profile picture that is suitable for a workplace account.',
+    'What kind of picture should I use for my Gmail profile?',
+    briefing(
+      roleToolsTitle,
+      'Add a clear and professional profile picture to your Gmail account. Choose a photo that is suitable for a workplace account so colleagues can recognise you easily.',
+    ),
+  ),
+  self(
+    'professional-email',
+    'Create a professional email for the new employee',
+    'Use the company email address or account assigned to you for work-related communication.',
+    'Which email account should I use for work communication?',
+    briefing(
+      roleToolsTitle,
+      'Use the company email address or account assigned to you for all work-related communication. Check that you can send and receive messages from your assigned address.',
+    ),
+  ),
+  self(
+    'link-official-email',
+    'Link the official email to Gmail',
+    'If instructed, connect or add the official work email to Gmail and check that it is working.',
+    'How do I link my official work email to Gmail?',
+    briefing(
+      roleToolsTitle,
+      'If instructed during onboarding, connect or add your official work email to Gmail. Send a quick test message to confirm that your linked address is working properly.',
+    ),
+  ),
+  self(
+    'email-signature',
+    'Add a professional email signature',
+    'Add a simple signature with your name, job title, company name and approved contact details.',
+    'What should I include in my professional email signature?',
+    briefing(
+      roleToolsTitle,
+      'Set up a simple email signature in Gmail with your full name, job title, company name and approved contact details. Keep the formatting clean so it appears on every work email you send.',
+    ),
+  ),
+  checked(
+    'gsheet-daily-updates',
+    'Understand how to do daily updates in GSheet',
+    'Update your tasks honestly and clearly, including progress, completed work and any issue that needs help.',
+    'How should I record my daily updates in GSheet?',
+    briefing(
+      roleToolsTitle,
+      'Record your daily updates in GSheet honestly and clearly. Include your current progress, any completed work, and any issue or blocker where you need help from your team.',
+    ),
+    checks.gsheetDailyUpdates,
+  ),
+  self(
+    'ai-readiness-training',
+    'Complete your AI Readiness self-assessment and practice task',
+    'Rate your AI experience from 1 to 10 (or skip the rating) to get a tailored learning path and complete a quick practice task.',
+    'How does the AI proficiency self-assessment work, and what training should I complete?',
+    briefing(
+      roleToolsTitle,
+      'Rate your AI experience from 1 to 10, or skip the rating if you are not sure yet. Alya will give you a tailored beginner, intermediate, or advanced learning path with a short practice exercise. Complete that practice exercise to finish this step.',
+    ),
+  ),
+];
+const teamSupport = [
+  self(
+    'company-chat-groups',
+    'Join company chat groups',
+    'Join the company-wide chat groups shared by the onboarding coordinator for work announcements and communication.',
+    'How do I join the company-wide chat groups?',
+    briefing(
+      peopleSupportTitle,
+      'Join the company-wide chat groups shared by your onboarding coordinator. Use these groups to stay updated on company announcements and general work communication.',
+    ),
+  ),
+  self(
+    'department-chat-group',
+    'Join the respective department’s chat group',
+    'Join the chat group for your department so you can receive team updates and communicate with colleagues about work.',
+    'How do I join my department’s chat group?',
+    briefing(
+      peopleSupportTitle,
+      'Join the chat group for your department so you can receive team updates and coordinate daily work with your colleagues. Ask your onboarding coordinator if you have not received the invite link yet.',
+    ),
+  ),
+  self(
+    'talent-personality-test',
+    'Complete the Talent Personality Test',
+    'Complete the Talent Personality Test (https://www.personalityhub.net/enneagram-test) if assigned and share the result with your onboarding contact if requested.',
+    'How do I complete the Talent Personality Test?',
+    briefing(
+      peopleSupportTitle,
+      'Complete the Talent Personality Test on the Personality Hub Enneagram page if it has been assigned to you. Follow the instructions provided and share your result with the designated onboarding contact if requested.',
+    ),
+  ),
+  self(
+    'mbti-personality-test',
+    'Complete the MBTI Personality Test',
+    'Complete the MBTI Personality Test (https://www.16personalities.com/free-personality-test) if assigned as a conversation starter for working preferences.',
+    'How do I complete the MBTI Personality Test, and how is the result used?',
+    briefing(
+      peopleSupportTitle,
+      'Complete the free MBTI Personality Test on 16Personalities if it has been assigned to you. The result is used as a friendly conversation starter to understand working preferences and is never treated as a test of ability.',
+    ),
+  ),
+  workingPreferences,
+];
 const emergencyContact = hrVerify(
   'emergency-contact',
   'Submit your emergency contact form',
@@ -406,59 +568,12 @@ const stepsByTrack = {
     ],
     policies,
     alignment,
-    'role-tools': [
-      self(
-        'laptop-accounts',
-        'Set up your laptop and accounts',
-        'Collect your laptop and sign in to your company account with 2-step verification.',
-        'How do I set up my laptop and company account?',
-        briefing(
-          handbookTitle,
-          'On your first day, you collect your laptop, headset and access card. Your UniVRse Google account is your single sign-in for email, chat, UniVRse HR and internal tools, and it must use 2-step verification from day 1. Keep your laptop locked whenever you step away.',
-        ),
-      ),
-      workTools,
-      hrVerify(
-        'role-responsibilities',
-        'Agree your responsibilities with your manager',
-        'Agree your responsibilities and 30-day goals with your manager. HR verifies it.',
-        'When do I agree my responsibilities and 30-day goals with my manager?',
-        briefing(
-          checklistTitle,
-          'In your first week, you have a one-to-one with your manager to agree your 30-day goals. It is also a good time to say how you prefer to receive instructions, for example written steps, a short call or a checklist. Once you have agreed them, HR verifies it.',
-        ),
-      ),
-      aiTraining,
-    ],
-    'team-support': [
-      self(
-        'meet-manager',
-        'Meet your manager',
-        'Have your first conversation with your manager.',
-        'When will I meet my manager?',
-        briefing(
-          orientationTitle,
-          'On your first day, your manager joins the team lunch, and at 3:45 in the afternoon they help you meet your team and set up your desk. Later in your first week, you have a one-to-one with them to agree your 30-day goals.',
-        ),
-      ),
-      meetTeammates,
-      self(
-        'meet-buddy',
-        'Meet your buddy',
-        'Meet the buddy who helps you through your first weeks.',
-        'What does my onboarding buddy do?',
-        briefing(
-          orientationTitle,
-          'Your manager assigns you a buddy from your team before your first day. Your buddy stays with you from lunch on day 1, gives you the office tour and helps you with your first small task. At the end of your first week, you have a check-in with your buddy.',
-        ),
-      ),
-      helpContacts,
-      workingPreferences,
-    ],
+    'role-tools': roleTools,
+    'team-support': teamSupport,
   },
 };
 
-// Interns: the same steps, with intern wording.
+// Interns: the same steps, with intern wording in documentation.
 stepsByTrack.intern = {
   ...stepsByTrack.employee,
   documentation: [
@@ -494,39 +609,11 @@ stepsByTrack.intern = {
     ),
     emergencyContact,
   ],
-  'role-tools': [
-    ...stepsByTrack.employee['role-tools'].slice(0, 2),
-    hrVerify(
-      'role-responsibilities',
-      'Agree internship goals with your supervisor',
-      'Agree your internship goals and how you like to receive instructions with your supervisor. HR verifies it.',
-      'When do I agree my internship goals with my supervisor?',
-      briefing(
-        checklistTitle,
-        'In your first week, you meet your supervisor one-to-one to agree your internship goals. Tell them how you prefer to receive instructions, for example written steps, a short call or a checklist. Once you have agreed them, HR verifies it.',
-      ),
-    ),
-    aiTrainingWithoutBudget,
-  ],
-  'team-support': [
-    self(
-      'meet-manager',
-      'Meet your supervisor',
-      'Have your first conversation with your internship supervisor.',
-      'When will I meet my internship supervisor?',
-      briefing(
-        orientationTitle,
-        'Your internship supervisor guides your work. On your first day, they help you meet your team and set up your desk, and in your first week you agree your internship goals together.',
-      ),
-    ),
-    ...stepsByTrack.employee['team-support'].slice(1),
-  ],
 };
 
-// Contractors: substitutes for the steps that do not apply (an employment
-// contract, payroll forms, a buddy), still four required steps per area. The
-// company documents do not describe contractor agreements, so those briefings
-// have no source and state no company facts.
+// Contractors: substitutes for the documentation steps that do not apply (an
+// employment contract, payroll forms), while sharing the standard policies,
+// alignment, role-tools, and team-support steps.
 stepsByTrack.contractor = {
   documentation: [
     hrVerify(
@@ -572,61 +659,8 @@ stepsByTrack.contractor = {
   ],
   policies,
   alignment,
-  'role-tools': [
-    self(
-      'laptop-accounts',
-      'Set up the accounts you were given',
-      'Sign in to the company account you were given, with 2-step verification.',
-      'How do I set up my company account?',
-      briefing(
-        handbookTitle,
-        'Sign in to the UniVRse Google account you were given. It is your single sign-in for email, chat and internal tools, and it must use 2-step verification from day 1. Never share your password, not even with IT.',
-      ),
-    ),
-    workTools,
-    hrVerify(
-      'role-responsibilities',
-      'Agree your scope of work',
-      'Agree the scope, deliverables and contacts of your engagement. HR verifies it.',
-      'Who do I agree my scope of work with?',
-      briefing(
-        null,
-        'Agree the scope, deliverables and contacts of your engagement with your project lead. Write down what you agreed, so that you both have the same picture. HR then verifies it.',
-      ),
-    ),
-    aiTrainingWithoutBudget,
-  ],
-  'team-support': [
-    self(
-      'meet-manager',
-      'Meet your project lead',
-      'Have your first conversation with the person you report to.',
-      'Who is my main contact for my work?',
-      briefing(
-        null,
-        'Your project lead is the person you report to for your engagement. Have a first conversation with them about your scope, and tell them how you prefer to receive instructions.',
-      ),
-    ),
-    {
-      ...meetTeammates,
-      briefing: briefing(
-        checklistTitle,
-        'Get to know the people you work with every day. Join your team’s Google Chat spaces and recurring meetings, and ask your project lead to introduce you to the team.',
-      ),
-    },
-    self(
-      'day-to-day-contact',
-      'Meet your day-to-day contact',
-      'Meet the colleague you go to with everyday questions about your engagement.',
-      'Who can I ask everyday questions about my work?',
-      briefing(
-        handbookTitle,
-        'Your day-to-day contact is the colleague you go to with everyday questions about your engagement. If you are not sure who to ask, ask Alya first, and then People and Culture.',
-      ),
-    ),
-    helpContacts,
-    workingPreferences,
-  ],
+  'role-tools': roleTools,
+  'team-support': teamSupport,
 };
 
 // The template document for a track, as stored in onboardingTemplates/{track}.

@@ -142,7 +142,7 @@ Successful chats are saved locally in SQLite, or in Firestore when `FIRESTORE_DA
 
 ## Company documents
 
-Signed-in HR uploads PDF, DOCX, TXT or Markdown company documents on the HR page (5 MB each, twelve files). Only the extracted text is stored, company-wide in Firestore. Every employee's Alya searches them, together with Vertex AI Search when `VERTEX_SEARCH_ENGINE_ID` is set (or the built-in sample guide without it). See [Company Documentation](docs/account-access.md#company-documentation). Gemini uses Vertex AI with Application Default Credentials and the configured project's quota; relevant passages are sent to Google. There is no model selector in the website.
+Signed-in HR uploads PDF, DOCX, TXT or Markdown company documents on the HR page (5 MB each, forty documents). Firestore keeps only their metadata; with `DOCS_BUCKET` and `VERTEX_SEARCH_DATA_STORE_ID` set, each file goes to the documents bucket and is imported into Vertex AI Search, and a delete removes it from both. Alya answers from Vertex AI Search only when `VERTEX_SEARCH_ENGINE_ID` is set (or from the built-in sample guide without it), never from Firestore. See [Company Documentation](docs/account-access.md#company-documentation). Gemini uses Vertex AI with Application Default Credentials and the configured project's quota; relevant passages are sent to Google. There is no model selector in the website.
 
 ## GitHub and hosting later
 
