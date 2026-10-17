@@ -8,7 +8,12 @@ import { searchFailure } from './vertex-ai-search.mjs';
 import { quoteSearchResults } from './document-search.mjs';
 import { createSharedVoice, sharedVoiceName } from './kokoro-voice.mjs';
 import { createRemoteVoice } from './remote-voice.mjs';
-import { serviceIdTokenProvider } from './service-auth.mjs';
+import {
+  logIdTokenFailure,
+  serverlessAuthorization,
+  serverlessAuthorizationHeader,
+  serviceIdTokenProvider,
+} from './service-auth.mjs';
 import { parseVoiceRequest, voiceRequestError, voiceFailure } from './voice-request.mjs';
 import {
   createConversationService,
@@ -63,13 +68,16 @@ export function createApp({
   // Signs the calls to the TTS service (service-auth.mjs). By default it follows
   // SERVICE_AUTH and Cloud Run; pass a provider to force ID tokens on, null for off.
   idTokenProvider = undefined,
+  // The provider for api -> tts, shared by the voice client and GET /api/health/tts.
+  ttsIdTokenProvider = env.TTS_SERVICE_URL
+    ? idTokenProvider !== undefined
+      ? idTokenProvider
+      : serviceIdTokenProvider({ env, url: env.TTS_SERVICE_URL })
+    : null,
   sharedVoice = env.TTS_SERVICE_URL
     ? createRemoteVoice({
         url: env.TTS_SERVICE_URL,
-        idTokenProvider:
-          idTokenProvider !== undefined
-            ? idTokenProvider
-            : serviceIdTokenProvider({ env, url: env.TTS_SERVICE_URL }),
+        idTokenProvider: ttsIdTokenProvider,
       })
     : createSharedVoice(),
   trustProxy = false,
@@ -362,6 +370,37 @@ export function createApp({
 
   app.get('/api/health', (req, res) => {
     res.json({ ok: true });
+  });
+
+  // Deploy smoke test for the api -> tts hop (issue #67). No sign-in: it makes one
+  // signed request to the tts /health and never renders speech or reads user data.
+  app.get('/api/health/tts', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!env.TTS_SERVICE_URL) return res.json({ ok: true, tts: 'local' });
+    const unavailable = () => res.status(503).json({ ok: false, tts: 'unavailable' });
+    try {
+      const endpoint = new URL('/health', env.TTS_SERVICE_URL);
+      const headers = {};
+      if (ttsIdTokenProvider) {
+        try {
+          headers[serverlessAuthorizationHeader] = await serverlessAuthorization(
+            ttsIdTokenProvider,
+            endpoint.origin,
+          );
+        } catch (error) {
+          logIdTokenFailure('api -> tts health', error);
+          return unavailable();
+        }
+      }
+      const response = await fetchImpl(endpoint, {
+        headers,
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) return unavailable();
+      return res.json({ ok: true, tts: 'ok' });
+    } catch {
+      return unavailable();
+    }
   });
 
   // Chat, saved conversations, voice and tts need a signed-in account (an

@@ -51,6 +51,7 @@ saved preferences survive the branding change.
 | `server/chat-store.mjs`                 | Chooses Firestore or SQLite for saved chats                     |
 | `server/firestore-chat-memory.mjs`      | Firestore saved chats, support data, turn leases and expiry     |
 | `server/firestore-checkpointer.mjs`     | LangGraph checkpoints in Firestore                              |
+| `server/checkpoint-writes.mjs`          | A failed background checkpoint save fails its turn, not the app |
 | `server/firestore-client.mjs`           | Firestore client, time limit and safe storage errors            |
 | `server/chat-errors.mjs`                | Chat and storage error messages shared by both stores           |
 | `server/saved-conversations.mjs`        | SQLite history, ownership checks, expiry and deletion (local)   |

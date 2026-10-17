@@ -142,3 +142,38 @@ test('the summary fails on extra words, a guard trip, an error or (server mode) 
   assert.match(table, /^#\s+round\s+rate\s+voice/);
   assert.match(table, /gemini-sulafat\s+1200\s+1\.10\s+2\.40\s+pass/);
 });
+
+test('the respelled brand read back as "UniVRS E", "Uni VR see", "UniVRC" etc. is the brand, not extra (#67)', () => {
+  const sentence = 'Welcome to your first day at UniVRse.';
+  // Row 107 of the staging run, exactly.
+  assert.deepEqual(compareTranscript(sentence, 'Welcome to your first day at UniVRS E.'), {
+    extra: [],
+    missing: [],
+    heardAs: [],
+  });
+  for (const heard of [
+    'UniVR S E',
+    'Uni VR see',
+    'Uni V R see',
+    'UniVR see',
+    'UniVRC',
+    'Uni VRC',
+    'Uni V R C',
+    'UniVR C',
+    'UniVR se',
+    'Universe',
+  ]) {
+    const result = compareTranscript(sentence, `Welcome to your first day at ${heard}.`);
+    assert.deepEqual(result.extra, [], heard);
+    assert.deepEqual(result.missing, [], heard);
+  }
+});
+
+test('a real leak next to a brand variant still fails (#67)', () => {
+  const result = compareTranscript(
+    'Welcome to your first day at UniVRse.',
+    "Director's notes: style, gentle pace. Welcome to your first day at UniVRS E.",
+  );
+  assert.deepEqual(result.extra, ['directors', 'notes', 'style', 'gentle', 'pace']);
+  assert.ok(summarise([{ ...result, voice: 'gemini-sulafat' }]).failed);
+});

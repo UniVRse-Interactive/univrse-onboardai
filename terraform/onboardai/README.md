@@ -150,8 +150,10 @@ The workflow runs CI on the commit, builds and pushes the three images tagged
 with the commit SHA, migrates the databases with the new api image (see
 [Database migrations](#database-migrations)), deploys tts, then api, then web,
 and smoke-tests through web, the way a browser reaches the stack:
-`/web-health`, `/`, `/api/health` (web to api), a short `POST /api/voice` (web
-to api to tts) and that `GET /api/config` reports `accounts: true`. It only
+`/web-health`, `/`, `/api/health` (web to api), a signed-out `POST /api/voice`
+(the api's own `401 AUTH_REQUIRED`, so web's ID token reached the api),
+`GET /api/health/tts` (`tts: "ok"`, so the api reached tts with its ID token;
+`local` fails on Cloud Run) and that `GET /api/config` reports `accounts: true`. It only
 reports whether the api's and tts's own URLs answer without credentials (see
 [Private api and tts](#private-api-and-tts)).
 

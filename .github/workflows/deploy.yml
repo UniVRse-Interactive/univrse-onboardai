@@ -695,15 +695,12 @@ jobs:
         run: |
           set -euo pipefail
           # probe LABEL URL ATTEMPTS RETRY_CODES [CURL_ARGS...]: wants HTTP 200;
-          # retries 10 s apart while the answer matches RETRY_CODES. Leaves the
-          # last answer's Content-Type in PROBE_TYPE.
-          PROBE_TYPE=""
+          # retries 10 s apart while the answer matches RETRY_CODES.
           probe() {
-            local label=$1 url=$2 attempts=$3 retry=$4 code=000 answer i
+            local label=$1 url=$2 attempts=$3 retry=$4 code=000 i
             shift 4
             for ((i = 1; i <= attempts; i++)); do
-              answer=$(curl -sS -o /dev/null -w '%{http_code} %{content_type}' --max-time 30 "$@" "$url") || answer=000
-              read -r code PROBE_TYPE <<< "$answer"
+              code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$@" "$url") || code=000
               if [[ "$code" == 200 ]]; then
                 echo "ok   $label -> 200"
                 return 0
@@ -713,6 +710,28 @@ jobs:
               sleep 10
             done
             echo "::error::$label -> HTTP $code ($url)"
+            return 1
+          }
+          # probe_json LABEL URL ATTEMPTS RETRY_CODES WANT_CODE JQ_TEST [CURL_ARGS...]:
+          # like probe, but wants HTTP WANT_CODE and a JSON body for which the jq
+          # test is true. A Cloud Run page (HTML 401 or 403) fails the jq test, so
+          # only an answer from the api itself passes.
+          probe_json() {
+            local label=$1 url=$2 attempts=$3 retry=$4 want=$5 test=$6 code=000 body i
+            shift 6
+            body="$RUNNER_TEMP/probe-json.out"
+            for ((i = 1; i <= attempts; i++)); do
+              : > "$body"
+              code=$(curl -sS -o "$body" -w '%{http_code}' --max-time 30 "$@" "$url") || code=000
+              if [[ "$code" == "$want" ]] && jq -e "$test" > /dev/null 2>&1 < "$body"; then
+                echo "ok   $label -> $code"
+                return 0
+              fi
+              [[ "$code" =~ ^($retry)$ ]] || break
+              echo "wait $label -> $code (attempt $i of $attempts)"
+              sleep 10
+            done
+            echo "::error::$label -> HTTP $code, expected HTTP $want with a JSON body matching: $test ($url)"
             return 1
           }
           # reach NAME URL: reports whether URL answers without an ID token, and
@@ -738,17 +757,16 @@ jobs:
           probe "web GET / (frontend)" "$WEB_URL/" 6 '5[0-9][0-9]|000' || failed=1
           # web -> api, with web's ID token for the api.
           probe "web GET /api/health (proxied to api)" "$WEB_URL/api/health" 6 '5[0-9][0-9]|000' || failed=1
-          # web -> api -> tts, with both ID tokens: one short word, rendered by
-          # Kokoro. A cold tts loads the model first (up to 240 s; the api waits
-          # 120 s for tts, then answers 503), so 5xx is retried.
-          if probe "web POST /api/voice (api -> tts)" "$WEB_URL/api/voice" 6 '5[0-9][0-9]|000' --max-time 150 -X POST -H 'Content-Type: application/json' --data '{"text":"Hello.","rate":1}'; then
-            if [[ "$PROBE_TYPE" != audio/wav* ]]; then
-              echo "::error::web POST /api/voice answered 200 with ${PROBE_TYPE:-no Content-Type}, not audio/wav."
-              failed=1
-            fi
-          else
-            failed=1
-          fi
+          # web -> api, signed out: /api/voice needs an account (#55), so the api
+          # answers its own 401 AUTH_REQUIRED. Cloud Run's HTML 401 or 403 means
+          # the ID token web sent was refused; that fails here.
+          probe_json "web POST /api/voice signed out (api's own 401)" "$WEB_URL/api/voice" 6 '5[0-9][0-9]|000' 401 '.code == "AUTH_REQUIRED"' -X POST -H 'Content-Type: application/json' --data '{"text":"Hello.","rate":1}' || failed=1
+          # web -> api -> tts, with both ID tokens, no sign-in (#67): the api makes
+          # one ID-token call to tts. "local" (no remote tts) would hide a missing
+          # TTS_SERVICE_URL on Cloud Run, so only "ok" passes. A cold tts loads
+          # the model first (up to 240 s; the api waits 120 s, then answers 503),
+          # so 5xx is retried.
+          probe_json "web GET /api/health/tts (api -> tts)" "$WEB_URL/api/health/tts" 6 '5[0-9][0-9]|000' 200 '.ok == true and .tts == "ok"' --max-time 150 || failed=1
           reach "onboardai-api$NAME_SUFFIX" "$API_URL/api/health"
           reach "onboardai-tts$NAME_SUFFIX" "$TTS_URL/health"
           exit "$failed"

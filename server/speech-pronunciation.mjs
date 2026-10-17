@@ -9,13 +9,17 @@
 // Raise pronunciationVersion whenever an entry changes: it is part of the
 // Gemini voice cache key, so a clip spoken the old way is never served again.
 export const pronunciationVersion = 1;
+// (Only the `heard` read-back patterns changed in #67; the spoken text did not, so the version stays.)
 
 export const pronunciations = Object.freeze([
   {
     word: 'UniVRse',
     // The VR is heard: "Uni V R se".
     spoken: 'Uni V R se',
-    heard: [/\buni[\s-]*v[\s.-]*r[\s.-]*(?:se|seh|suh|sey|see|s)\b/gi, /\buni\s*vr\s*se\b/gi],
+    heard: [
+      /\buni[\s-]*v[\s.-]*r[\s.-]*(?:se|seh|suh|sey|see|s[\s.-]*e|s|c)\b/gi,
+      /\buni\s*vr\s*se\b/gi,
+    ],
   },
   {
     word: 'Alya',

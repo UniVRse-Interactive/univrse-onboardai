@@ -619,19 +619,22 @@ run "migrations_run_everywhere_and_the_agent_only_on_staging" {
 
   # #57: the api and tts may be private, so every api check goes through web
   # (no GCP credentials needed, and it passes before and after the IAM apply),
-  # and voice exercises web -> api -> tts with both ID tokens. The api and tts
+  # the signed-out voice call proves web -> api (the api's own 401), and GET /api/health/tts proves web -> api -> tts with both ID tokens (#67). The api and tts
   # URLs are only reported, never failed.
   assert {
     condition = (
       strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "probe \"web GET /api/health (proxied to api)\" \"$WEB_URL/api/health\" ") &&
       strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "probe \"web GET /web-health\" \"$WEB_URL/web-health\" ") &&
-      can(regex("if probe \"web POST /api/voice \\(api -> tts\\)\" \"\\$WEB_URL/api/voice\" [0-9]+ '5\\[0-9\\]\\[0-9\\]\\|000' --max-time [0-9]+ -X POST -H 'Content-Type: application/json' --data '[^']+'; then\\n  if \\[\\[ \"\\$PROBE_TYPE\" != audio/wav\\* \\]\\]; then", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run)) &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "probe_json \"web POST /api/voice signed out (api's own 401)\" \"$WEB_URL/api/voice\" 6 '5[0-9][0-9]|000' 401 '.code == \"AUTH_REQUIRED\"' -X POST ") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "probe_json \"web GET /api/health/tts (api -> tts)\" \"$WEB_URL/api/health/tts\" 6 '5[0-9][0-9]|000' 200 '.ok == true and .tts == \"ok\"' ") &&
+      !strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "audio/wav") &&
+      !strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "PROBE_TYPE") &&
       strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[2].run, "config=$(curl -sS --fail --max-time 30 \"$WEB_URL/api/config\")") &&
       [for m in regexall("\\$(API_URL|TTS_URL)/[^\" ]*", join("\n", [for st in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps : try(st.run, "")])) : m[0]] == ["API_URL", "TTS_URL", "API_URL"] &&
       strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "reach \"onboardai-api$NAME_SUFFIX\" \"$API_URL/api/health\"\nreach \"onboardai-tts$NAME_SUFFIX\" \"$TTS_URL/health\"\n") &&
       !can(regex("(?s)reach\\(\\) \\{\\n(?:[^}]|\\}[^\\n])*(failed|exit|return 1)", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run))
     )
-    error_message = "The smoke test must check /web-health, /api/health, POST /api/voice (audio/wav) and /api/config through web, call the api URL directly only for POST /mcp, and only report (never fail on) the api's and tts's own URLs."
+    error_message = "The smoke test must check /web-health, /api/health, POST /api/voice signed out (the api's own 401 AUTH_REQUIRED), GET /api/health/tts (tts == ok) and /api/config through web, call the api URL directly only for POST /mcp, and only report (never fail on) the api's and tts's own URLs."
   }
 
   # The voice check sends a valid voice request (server/voice-request.mjs: text
