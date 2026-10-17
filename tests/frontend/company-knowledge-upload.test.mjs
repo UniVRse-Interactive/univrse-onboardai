@@ -4,9 +4,11 @@ import { readFileSync } from 'node:fs';
 import {
   acceptAttribute,
   buildUploadRequest,
+  documentSyncState,
   knowledgeText,
   moveSuccessMessage,
   removeSuccessMessage,
+  uploadProgressMessage,
   uploadSuccessMessage,
   validateDocumentName,
   validateUploadFile,
@@ -82,6 +84,19 @@ test('success messages: an upload adds or is already there, never replaced', () 
     'Moved “Leave policy” to Policies & Safe Practices.',
   );
   assert.match(removeSuccessMessage('Leave policy'), /^Removed “Leave policy”\./);
+});
+
+test('real-time AI index syncing states and messages', () => {
+  assert.equal(knowledgeText.syncingStatus, 'Real-time AI Index Syncing…');
+  assert.equal(knowledgeText.syncCompletedStatus, 'Real-time AI Index Syncing: Completed');
+  assert.equal(
+    uploadProgressMessage('Handbook.pdf'),
+    'Uploading Handbook.pdf — Real-time AI Index Syncing…',
+  );
+  assert.equal(documentSyncState({ d1: 'syncing', d2: 'completed' }, 'd1'), 'syncing');
+  assert.equal(documentSyncState({ d1: 'syncing', d2: 'completed' }, 'd2'), 'completed');
+  assert.equal(documentSyncState({ d1: 'syncing' }, 'd3'), '');
+  assert.equal(documentSyncState(null, 'd1'), '');
 });
 
 const source = (file) => readFileSync(new URL('../../src/access/' + file, import.meta.url), 'utf8');

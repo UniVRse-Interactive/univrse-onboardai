@@ -78,6 +78,14 @@ resource "google_storage_bucket_iam_member" "discovery_engine_reads_docs" {
   depends_on = [google_project_service_identity.discovery_engine]
 }
 
+# Write/delete access on this environment's documents bucket so onboardai-api
+# can upload and remove HR company documents before syncing Vertex AI Search.
+resource "google_storage_bucket_iam_member" "api_manages_docs" {
+  bucket = google_storage_bucket.docs.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.runtime["api"].email}"
+}
+
 # --- Data store and engine ---------------------------------------------------
 
 # The provider always creates data stores in collections/default_collection.

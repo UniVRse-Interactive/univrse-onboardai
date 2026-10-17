@@ -9,12 +9,14 @@ import {
 } from './onboarding-document-status.mjs';
 import {
   acceptAttribute,
+  documentSyncState,
   errorNeedsRefresh,
   formatCharacters,
   knowledgeErrorMessage,
   knowledgeText as text,
   moveSuccessMessage,
   removeSuccessMessage,
+  uploadProgressMessage,
   uploadSuccessMessage,
   validateDocumentName,
   validateUploadFile,
@@ -35,9 +37,14 @@ function Feedback({ item }) {
             {item.text}
           </p>
         ) : (
-          <p>
+          <p className={item.tone === 'progress' ? 'gd-syncing' : undefined}>
             <Icon name={item.tone === 'progress' ? 'clock' : 'check'} size={15} />
-            {item.text}
+            <span>
+              {item.text}
+              {item.syncCompleted && (
+                <strong className="gd-feedback-sync"> · {text.syncCompletedStatus}</strong>
+              )}
+            </span>
           </p>
         ))}
     </div>
@@ -48,21 +55,30 @@ function Feedback({ item }) {
 // knowledge endpoints; `workspace` is its snapshot { topics, documents, limits }.
 export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
   const view = useMemo(() => areaListView(workspace), [workspace]);
-  // { kind: 'upload' | 'move' | 'remove', area?, id? } while a request runs.
+  // { kind: 'upload' | 'move' | 'remove', area?, id?, fileName?, title? } while a request runs.
   const [busy, setBusy] = useState(null);
   // The one document with an open Move or Remove step: { id, action }.
   const [pending, setPending] = useState(null);
   const [moveTarget, setMoveTarget] = useState('');
-  // { area, tone: 'progress' | 'status' | 'error', text }
+  // { area, tone: 'progress' | 'status' | 'error', text, syncCompleted? }
   const [feedback, setFeedback] = useState(null);
+  // Per-document AI index sync state for newly uploaded documents: { [id]: 'syncing' | 'completed' }
+  const [syncStates, setSyncStates] = useState({});
   const [extraName, setExtraName] = useState('');
   const [nameError, setNameError] = useState('');
   const rootRef = useRef(null);
   const fileRef = useRef(null);
   const uploadAreaRef = useRef('');
   const abortRef = useRef(null);
+  const syncTimersRef = useRef({});
   const focusRef = useRef('');
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      Object.values(syncTimersRef.current).forEach((timer) => clearTimeout(timer));
+    },
+    [],
+  );
   // Moves focus once a request has finished and the list has re-rendered.
   useEffect(() => {
     if (busy || !focusRef.current) return;
@@ -118,20 +134,46 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
     }
     const abort = new AbortController();
     abortRef.current = abort;
-    setPending(null);
-    setBusy({ kind: 'upload', area: areaId });
-    setFeedback({ area: areaId, tone: 'progress', text: `Uploading ${file.name}…` });
     const name = areaId === additionalArea.id ? extraName : '';
+    const pendingTitle =
+      String(name || '').trim() ||
+      String(file.name || '').replace(/\.[A-Za-z0-9]{1,5}$/, '') ||
+      file.name;
+    setPending(null);
+    setBusy({ kind: 'upload', area: areaId, fileName: file.name, title: pendingTitle });
+    setFeedback({ area: areaId, tone: 'progress', text: uploadProgressMessage(file.name) });
     try {
       const result = await api.upload(file, { category: areaId, name }, abort.signal);
+      if (result?.id && !result.duplicate) {
+        setSyncStates((prev) => ({ ...prev, [result.id]: 'syncing' }));
+      }
       await onRefresh();
       if (abort.signal.aborted) return;
       if (areaId === additionalArea.id) setExtraName('');
-      setFeedback({
-        area: areaId,
-        tone: 'status',
-        text: uploadSuccessMessage(result, file.name, title),
-      });
+      if (result?.id && !result.duplicate) {
+        clearTimeout(syncTimersRef.current[result.id]);
+        syncTimersRef.current[result.id] = setTimeout(() => {
+          delete syncTimersRef.current[result.id];
+          setSyncStates((prev) => ({ ...prev, [result.id]: 'completed' }));
+          setFeedback((current) =>
+            current?.area === areaId && current?.tone === 'progress'
+              ? {
+                  area: areaId,
+                  tone: 'status',
+                  text: uploadSuccessMessage(result, file.name, title),
+                  syncCompleted: true,
+                }
+              : current,
+          );
+        }, 1200);
+      } else {
+        setFeedback({
+          area: areaId,
+          tone: 'status',
+          text: uploadSuccessMessage(result, file.name, title),
+          syncCompleted: Boolean(result?.id),
+        });
+      }
     } catch (err) {
       if (err.name === 'AbortError' || abort.signal.aborted) return;
       if (errorNeedsRefresh(err)) await onRefresh();
@@ -199,17 +241,37 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
     const step = pending?.id === document.id ? pending.action : '';
     const options = moveOptions(view.areas, area.id);
     const meta = [document.fileName, formatCharacters(document.characters)].filter(Boolean);
+    const syncState = documentSyncState(syncStates, document.id);
+    const docClass =
+      'gd-doc' +
+      (syncState === 'syncing'
+        ? ' is-syncing'
+        : syncState === 'completed'
+          ? ' is-sync-completed'
+          : '');
     return (
       <li
-        className="gd-doc"
+        className={docClass}
         key={document.id}
         tabIndex={-1}
         data-focus={'doc-' + document.id}
         data-document-id={document.id}
+        data-sync-state={syncState || undefined}
       >
         <div className="gd-doc-text">
           <strong id={titleId}>{documentLabel(document)}</strong>
           <small>{meta.join(' · ')}</small>
+          {syncState && (
+            <span
+              className={
+                'gd-sync-badge ' + (syncState === 'syncing' ? 'is-syncing' : 'is-completed')
+              }
+              role="status"
+            >
+              <Icon name={syncState === 'syncing' ? 'clock' : 'check'} size={13} />
+              {syncState === 'syncing' ? text.syncingStatus : text.syncCompletedStatus}
+            </span>
+          )}
         </div>
         {step === 'move' ? (
           <div
@@ -340,9 +402,21 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
           <Icon name={area.empty ? 'book' : 'check'} size={14} />
           {area.empty ? text.emptyArea : plural(area.documents.length)}
         </div>
-        {!area.empty && (
+        {(!area.empty || uploading) && (
           <ul className="gd-docs" aria-label={'Documents in ' + area.title}>
             {area.documents.map((document) => documentRow(document, area))}
+            {uploading && (
+              <li className="gd-doc is-syncing" data-sync-state="syncing">
+                <div className="gd-doc-text">
+                  <strong>{busy.title || busy.fileName}</strong>
+                  <small>{busy.fileName}</small>
+                  <span className="gd-sync-badge is-syncing" role="status">
+                    <Icon name="clock" size={13} />
+                    {text.syncingStatus}
+                  </span>
+                </div>
+              </li>
+            )}
           </ul>
         )}
         <div className="gd-area-foot">

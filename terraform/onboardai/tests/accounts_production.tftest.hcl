@@ -181,13 +181,14 @@ run "production_accounts_secrets_and_grants" {
   # unconditioned.
   assert {
     condition = (
-      toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user", "roles/cloudsql.client"]) &&
+      toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user", "roles/cloudsql.client", "roles/discoveryengine.editor"]) &&
       google_project_iam_member.api_runtime["roles/cloudsql.client"].condition[0].expression == "resource.name == \"projects/onboardai-test-123/instances/onboardai-db\" && resource.type == \"sqladmin.googleapis.com/Instance\"" &&
       google_project_iam_member.api_runtime["roles/cloudsql.client"].member == "serviceAccount:onboardai-api-run@onboardai-test-123.iam.gserviceaccount.com" &&
       length(google_project_iam_member.api_runtime["roles/datastore.user"].condition) == 1 &&
-      length(google_project_iam_member.api_runtime["roles/aiplatform.user"].condition) == 0
+      length(google_project_iam_member.api_runtime["roles/aiplatform.user"].condition) == 0 &&
+      length(google_project_iam_member.api_runtime["roles/discoveryengine.editor"].condition) == 0
     )
-    error_message = "Production's api holds roles/cloudsql.client on onboardai-db only, roles/datastore.user with its database condition, and roles/aiplatform.user unconditioned."
+    error_message = "Production's api holds roles/cloudsql.client on onboardai-db only, roles/datastore.user with its database condition, and roles/aiplatform.user and roles/discoveryengine.editor unconditioned."
   }
 
   assert {

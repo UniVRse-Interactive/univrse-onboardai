@@ -595,11 +595,10 @@ KnowledgeSnapshot {
 
 ### Account chats and the company library
 
-Chats owned by an account (`account:<id>`, employee or HR) search the company library as well as
-the company search (Vertex AI Search, or the sample guide without `VERTEX_SEARCH_ENGINE_ID`):
+Chats owned by an account (`account:<id>`, employee or HR) query Vertex AI Search (`companyRetrieve`, or the sample guide without `VERTEX_SEARCH_ENGINE_ID`) exclusively at runtime and never search or fall back to in-memory Firestore `companyDocuments`:
 
-- `AI_MODE=gemini-chat`: up to six passages, alternating library and company search, library first.
-- `AI_MODE=document-search`: the two best quotes, alternating the same way.
+- `AI_MODE=gemini-chat`: up to six ranked passages from Vertex AI Search (`companyRetrieve`).
+- `AI_MODE=document-search`: the two best quotes from Vertex AI Search (`companyRetrieve`).
 - Single-turn Gemini and sample answers do not search documents, as before.
 
 The library is the uploaded documents, using the text saved at upload. Every chat belongs to an

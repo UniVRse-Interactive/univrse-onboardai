@@ -138,14 +138,20 @@ export function createApp({
   // the sample guide when VERTEX_SEARCH_ENGINE_ID is unset.
   const retrieve =
     companyRetrieve || createCompanyRetriever({ env, fetchImpl, getAccessToken: vertexToken });
-  // With accounts on, HR's uploaded company knowledge library is searched too, for chats owned by an
-  // account (every chat, since issue #55).
+  // With accounts on, Firestore companyDocuments is kept strictly for HR UI
+  // management (`list`, `add`, `move`, `remove`, `describe`), while runtime
+  // retrieval (`retrieve`, `quote`) exclusively queries Vertex AI Search.
   const library = !accounts
     ? null
     : companyDocuments !== undefined
       ? companyDocuments
       : settings
-        ? createCompanyDocumentStore({ firestore: createFirestoreClient(settings.firestore) })
+        ? createCompanyDocumentStore({
+            firestore: createFirestoreClient(settings.firestore),
+            env,
+            fetchImpl,
+            getAccessToken: vertexToken,
+          })
         : null;
   const knowledge = library
     ? createCompanyKnowledge({
@@ -153,7 +159,8 @@ export function createApp({
         companyRetrieve: retrieve,
       })
     : null;
-  // retrieve(query, options, owner): `owner` is the chat's owner, when known.
+  // retrieve(query, options, owner): runtime retrieval for gemini-chat and
+  // document-search always and only queries Vertex AI Search (`retrieve`).
   const chatRetrieve = (query, options, owner) =>
     knowledge && isAccountOwner(owner)
       ? knowledge.retrieve(query, { signal: options?.signal })
