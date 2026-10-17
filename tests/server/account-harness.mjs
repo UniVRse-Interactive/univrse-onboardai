@@ -170,6 +170,8 @@ export async function startAccountsApp({
   env: extraEnv = {},
   accounts: enabled = true,
   storageTimeoutMs = 300,
+  // The saved-chat store's Firestore limit; undefined keeps the 10-second default.
+  chatStorageTimeoutMs = undefined,
   autofill = undefined,
   companyRetrieve = fakeRetrieve,
   models = fakeModels,
@@ -194,7 +196,12 @@ export async function startAccountsApp({
   const profiles = createProfileStore({ firestore, log, timeoutMs: storageTimeoutMs });
   const accounts = createAccountService({ store, profiles, now: clock.now, hashing, log });
   const env = { AI_MODE: mode, ...(enabled ? accountEnv : {}), ...extraEnv };
-  const memory = createFirestoreChatMemory({ firestore, log, sweepIntervalMs: Infinity });
+  const memory = createFirestoreChatMemory({
+    firestore,
+    log,
+    timeoutMs: chatStorageTimeoutMs,
+    sweepIntervalMs: Infinity,
+  });
   const companyDocuments = createCompanyDocumentStore({
     firestore,
     log,

@@ -3,6 +3,7 @@ import { HumanMessage, AIMessage, SystemMessage } from '@langchain/core/messages
 import { ChatGoogle } from '@langchain/google/node';
 import { createCompanyRetriever } from './company-document-retriever.mjs';
 import { ChatError, answerNotFound } from './chat-errors.mjs';
+import { containCheckpointWrites } from './checkpoint-writes.mjs';
 import { createChatStore } from './chat-store.mjs';
 import { CompanySearchError, searchFailure } from './vertex-ai-search.mjs';
 import { adaptLearning, learningInstruction, updateLearning } from './answer-style-preferences.mjs';
@@ -353,7 +354,10 @@ export function createConversationService({
     .addEdge('adapt', 'retrieve')
     .addEdge('retrieve', 'answer')
     .addEdge('answer', END);
-  const graph = builder.compile({ checkpointer: memory.checkpointer });
+  // A checkpoint save that fails in the background fails its turn instead of
+  // the process (issue #70, checkpoint-writes.mjs).
+  const checkpoints = containCheckpointWrites(memory.checkpointer);
+  const graph = builder.compile({ checkpointer: checkpoints.saver });
   // `turn` (account and saved-chat turns from api-routes, issues #48-#51):
   // { quickQuestionId, reexplainOf, checklist? }. checklist({ query, question,
   // signal }) -> { answer, proposedAction } handles a plan of kind checklist
@@ -412,7 +416,8 @@ export function createConversationService({
       ];
       turnOwners.set(id, owner);
       if (turn?.checklist) turnHooks.set(id, turn.checklist);
-      let result;
+      const saving = checkpoints.begin(id);
+      let result, unsaved;
       try {
         result = await graph.invoke(
           {
@@ -428,7 +433,11 @@ export function createConversationService({
       } finally {
         turnOwners.delete(id);
         turnHooks.delete(id);
+        unsaved = saving.end();
       }
+      // When invoke() returns, every checkpoint save of the run has settled. A
+      // failed one fails the turn with its storage error; the answer is not saved.
+      if (unsaved) throw unsaved;
       signal?.throwIfAborted();
       const delivered = {
         ...result.result,

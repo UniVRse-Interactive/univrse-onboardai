@@ -78,6 +78,10 @@ Firestore errors reach the browser only as fixed messages. Every Firestore call 
 
 The 10-second limit stops the request waiting; it does not cancel the Firestore call. A saved answer that misses the limit can still commit, and its commit also ends the turn's lease. The browser then sees `STORAGE_TIMEOUT`, and retrying the question with the same request ID returns the saved answer without another Gemini request. A start-of-answer lease that commits after its limit holds the chat for up to two minutes.
 
+**Failures while an answer runs (issue #70).** LangGraph saves the graph's checkpoints in the background while later steps run, and before the fix a save that failed mid-answer (for example a Firestore timeout during a slow Gemini reply) became an unhandled promise rejection that ended the whole server process. The graph now uses `server/checkpoint-writes.mjs`, whose saves never reject. The first failed save of a turn is kept, later saves of that turn are skipped, and the turn fails with that error once the graph finishes: with Firestore, one of the storage codes above; with the local SQLite file, the general answer error. The question and answer are not saved, the chat's lease is released, the server keeps serving, and the next question works once storage recovers. A save that fails after its answer was cut off (the 60-second limit, or the browser closing the request) is logged as `Chat checkpoint save dropped after its answer ended` with the error name and code only.
+
+There is deliberately no process-wide `unhandledRejection` handler. A handler cannot tell which request an escaped rejection belonged to, so keeping the process alive would hide lost work instead of failing loudly; Cloud Run restarts a crashed instance and the crash is logged. It would also not work everywhere: once the Kokoro voice is loaded (the local all-in-one server and the tts service), its `phonemizer` dependency registers its own handler that rethrows every unhandled rejection.
+
 ## Configure Gemini
 
 Use `AI_MODE=gemini-chat` in the server `.env` for the connected company assistant. The existing local `.env` is preserved. The shareable `.env.example` has blank credentials and starts with sample answers. Keep the key server-side, without a `VITE_` prefix.
@@ -179,6 +183,7 @@ The dependency audit currently reports seven advisory entries in the existing Ko
 | `server/firestore-chat-memory.mjs`      | Firestore chats, messages, support data, turn leases, expiry and deletion        |
 | `server/firestore-checkpointer.mjs`     | LangGraph checkpoints in Firestore, split into chunks above 900 KiB              |
 | `server/firestore-client.mjs`           | Lazy Firestore client, 10-second limit and safe storage error codes              |
+| `server/checkpoint-writes.mjs`          | Background checkpoint saves that fail their turn instead of the server process   |
 | `server/chat-errors.mjs`                | Chat and storage error messages shared by both stores                            |
 | `server/saved-conversations.mjs`        | SQLite history, ownership checks, retention and deletion (local default)         |
 | `server/api-routes.mjs`                 | Saved-chat endpoints, browser-session cookie and account-owned chats             |
