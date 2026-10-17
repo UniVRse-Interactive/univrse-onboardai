@@ -1,5 +1,9 @@
 import { createApp } from './api-routes.mjs';
-import { describeKnowledgeSource } from './company-document-retriever.mjs';
+import {
+  checkKnowledgeConfig,
+  describeKnowledgeSource,
+  KnowledgeConfigError,
+} from './company-document-retriever.mjs';
 import { describeChatStorage } from './chat-store.mjs';
 import { loadEnvFile, parseTrustProxy, startService } from './service-runtime.mjs';
 import { AccountsConfigError, describeAccounts } from './account-settings.mjs';
@@ -16,8 +20,14 @@ try {
   accountsLine = describeAccounts(process.env);
   // SERVICE_AUTH=id-token with an http TTS_SERVICE_URL stops here (see service-auth.mjs).
   serviceAuth = resolveServiceAuth(process.env, process.env.TTS_SERVICE_URL);
+  // Vertex AI Search without DOCS_BUCKET stops here (the retrieval allowlist).
+  checkKnowledgeConfig(process.env);
 } catch (error) {
-  if (!(error instanceof AccountsConfigError || error instanceof ServiceAuthConfigError))
+  if (!(
+    error instanceof AccountsConfigError ||
+    error instanceof ServiceAuthConfigError ||
+    error instanceof KnowledgeConfigError
+  ))
     throw error;
   console.error(`OnboardAi API cannot start: ${error.message}`);
   process.exit(1);

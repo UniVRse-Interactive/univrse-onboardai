@@ -47,6 +47,8 @@ saved preferences survive the branding change.
 | `server/gemini-chat-workflow.mjs`       | LangGraph conversation steps and Gemini prompts/answers         |
 | `server/vertex-ai-search.mjs`           | Vertex AI Search chunk search, passages, file names and errors  |
 | `server/company-document-retriever.mjs` | Chooses Vertex AI Search or the sample guide for passages       |
+| `server/active-company-documents.mjs`   | Retrieval allowlist: only active company documents, with dates  |
+| `server/answer-freshness.mjs`           | Recency rules in the prompt and the fixed stale-document reply  |
 | `server/document-search.mjs`            | Search-only preview that quotes passages without Gemini         |
 | `server/chat-store.mjs`                 | Chooses Firestore or SQLite for saved chats                     |
 | `server/firestore-chat-memory.mjs`      | Firestore saved chats, support data, turn leases and expiry     |
@@ -189,7 +191,7 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | `server/departments.mjs`                | The six first departments and prefixes, seed data only (migration 004 holds the live list in `departments`); import-free             |
 | `server/employee-ids.mjs`               | The prefix rule (2–4 letters, `HR` reserved) and the `PE-0001` Employee ID format                                                    |
 | `server/employee-profiles.mjs`          | Profile validation and `employeeProfiles/{accountId}` in Firestore; removes an account's profile and `employeeImports` drafts        |
-| `server/company-knowledge.mjs`          | HR company knowledge uploads, replacements and the `onChange` hook; account chats retrieve only from Vertex AI Search                |
+| `server/company-knowledge.mjs`          | HR company knowledge uploads, replacements and the `onChange` hook; account chats retrieve from Vertex AI Search via the allowlist   |
 | `server/company-documents.mjs`          | Firestore `companyDocuments` (metadata, `listSummaries`), library and replace rules, GCS + Vertex AI Search sync and its log lines   |
 | `server/discovery-engine-documents.mjs` | Shared, pure: object names, `gs://` URIs, Vertex document IDs, Discovery Engine and GCS URLs, the paginated documents list           |
 | `server/onboarding-document-topics.mjs` | The five onboarding areas of the company library                                                                                     |
@@ -228,4 +230,4 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 
 ## Uploaded company guidance
 
-See [Account access](account-access.md#company-documentation). `server/read-uploaded-document.mjs` validates files and bounds worker execution; `server/uploaded-document-worker.mjs` extracts PDF/DOCX/text content (profile autofill reuses both, cutting long text to the limit instead of rejecting it). `server/company-knowledge.mjs` manages HR's uploaded library in Firestore `companyDocuments` for the HR dashboard while routing runtime retrieval (`retrieve`, `quote`) exclusively through the company document search (Vertex AI Search, when `VERTEX_SEARCH_ENGINE_ID` is set). `server/workspace-limits.mjs` holds the shared upload limits. The guest workspace (`guest-workspace-*.mjs`, `workspace-company-knowledge.mjs`) was removed in issue #55.
+See [Account access](account-access.md#company-documentation). `server/read-uploaded-document.mjs` validates files and bounds worker execution; `server/uploaded-document-worker.mjs` extracts PDF/DOCX/text content (profile autofill reuses both, cutting long text to the limit instead of rejecting it). `server/company-knowledge.mjs` manages HR's uploaded library in Firestore `companyDocuments` for the HR dashboard while routing runtime retrieval (`retrieve`, `quote`) exclusively through the company document search (Vertex AI Search, when `VERTEX_SEARCH_ENGINE_ID` is set); `server/active-company-documents.mjs` keeps only the passages of active library entries (see [Chat and memory](chat-and-memory.md#which-documents-chat-may-use-retrieval-allowlist)). `server/workspace-limits.mjs` holds the shared upload limits. The guest workspace (`guest-workspace-*.mjs`, `workspace-company-knowledge.mjs`) was removed in issue #55.

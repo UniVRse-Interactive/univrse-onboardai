@@ -1,4 +1,5 @@
 import { AccountError } from './account-errors.mjs';
+import { ALLOWLIST_PAGE_SIZE } from './active-company-documents.mjs';
 import { companyDocumentErrors } from './company-documents.mjs';
 import { companyDocumentIdPattern } from './discovery-engine-documents.mjs';
 import { documentCategories, onboardingDocumentTopics } from './onboarding-document-topics.mjs';
@@ -13,7 +14,11 @@ import { workspaceLimits } from './workspace-limits.mjs';
 //   delete to the GCS documents bucket and the Vertex AI Search data store.
 // - Runtime retrieval for chats and document search (`retrieve`, `quote`):
 //   queries Vertex AI Search (`companyRetrieve`) exclusively and never searches
-//   or falls back to in-memory Firestore `companyDocuments`.
+//   or falls back to in-memory Firestore `companyDocuments`. With the
+//   retrieval allowlist (`active`, active-company-documents.mjs, issue #79)
+//   it asks for 10 results, reads the library's active entries alongside the
+//   search, and keeps the first 5 passages of active documents, each with its
+//   upload date.
 export const isAccountOwner = (owner) => typeof owner === 'string' && owner.startsWith('account:');
 
 // Up to `limit` passages, alternating between two ranked lists (first list first),
@@ -93,8 +98,12 @@ const documentView = ({
 export function createCompanyKnowledge({
   // createCompanyDocumentStore(...)
   documents,
-  // The company retriever (Vertex AI Search): retrieve(query, { signal }) -> passages.
+  // The company retriever (Vertex AI Search): retrieve(query, { signal,
+  // pageSize }) -> passages.
   companyRetrieve,
+  // The retrieval allowlist (createActiveDocuments), or null: every passage
+  // companyRetrieve returns is then used as it is (the sample guide).
+  active = null,
   // onChange(): called after every add, replace, move and remove call,
   // whether it changed anything, succeeded or failed, so a cache of the
   // library (the retrieval allowlist) can drop its snapshot. It must be
@@ -115,6 +124,18 @@ export function createCompanyKnowledge({
       changed();
     }
   };
+  // The company passages for a query: with the allowlist, the search and the
+  // library snapshot run in parallel, then only passages of active documents
+  // are kept (a library failure rejects with the 503 or 504).
+  async function search(query, signal) {
+    if (!active) return companyRetrieve(query, signal ? { signal } : undefined);
+    const [found, current] = await Promise.all([
+      companyRetrieve(query, { ...(signal ? { signal } : {}), pageSize: ALLOWLIST_PAGE_SIZE }),
+      active.snapshot(),
+    ]);
+    return active.admit(found, current);
+  }
+
   // Lists stored documents for the HR dashboard without exposing their text.
   async function list() {
     return (await documents.list()).map(documentView);
@@ -215,13 +236,10 @@ export function createCompanyKnowledge({
     replace,
     move: (id, body, audit) => afterChange(() => move(id, body, audit)),
     remove: (id) => afterChange(() => documents.remove(id)),
-    // Gemini chat: always and only queries companyRetrieve (Vertex AI Search).
-    async retrieve(query, { signal } = {}) {
-      return companyRetrieve(query, signal ? { signal } : undefined);
-    },
-    // Document search: always and only queries companyRetrieve (Vertex AI Search).
-    async quote(question, { signal } = {}) {
-      return companyRetrieve(question, signal ? { signal } : undefined);
-    },
+    // Gemini chat: always and only queries companyRetrieve (Vertex AI Search),
+    // through the allowlist when there is one.
+    retrieve: (query, { signal } = {}) => search(query, signal),
+    // Document search: the same search and allowlist.
+    quote: (question, { signal } = {}) => search(question, signal),
   };
 }

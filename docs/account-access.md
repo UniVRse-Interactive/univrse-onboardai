@@ -566,8 +566,9 @@ KnowledgeSnapshot {
   body is the raw file, `Content-Type: application/octet-stream`, with the file name in
   `X-File-Name: encodeURIComponent(fileName)`. `category` is an area id or `additional`. The
   document's title is its own: `name` (trimmed, 1-80 characters, one line) when given, else the
-  file name without its extension (cut to 80 characters); never the area's title, so Alya cites
-  each document by its title. Without `replaces` an upload always adds: a new document is
+  file name without its extension (cut to 80 characters); never the area's title. The title is
+  what HR sees; Alya's sources show the **file name** (`Leave Policy 2026.docx`), with the
+  section and page. Without `replaces` an upload always adds: a new document is
   `201 { id, duplicate: false, replaced: null }` (version 1). Identical text already stored in the
   same area is `200 { id, duplicate: true, replaced: null }` (no new document, nothing synced); in
   another area it is `409`. A JSON body is `415 FILE_UPLOAD_REQUIRED`. If the GCS upload or the
@@ -604,8 +605,11 @@ KnowledgeSnapshot {
   and [document reconciliation](document-reconciliation.md) finishes it; HR does nothing. A
   successful replace writes one `company_document_replaced` audit row (`target_id` empty,
   `detail` `{ documentId: <newId>, replacedId: <oldId>, category }`, ids only); a duplicate or a
-  refused replace writes none. The new version is searchable once its import has indexed it
-  (about a minute); until then neither version answers that topic.
+  refused replace writes none. Chat uses only active entries (the
+  [retrieval allowlist](chat-and-memory.md#which-documents-chat-may-use-retrieval-allowlist)), so
+  step 1 takes the old version out of chat: on the instance that handled the replace once it
+  answers, and on others within 30 seconds. The new version is searchable once its import has
+  indexed it (about a minute); until then neither version answers that topic.
 
 - **Move** (`PATCH /api/hr/company-knowledge/documents/:id` with `{ "category": "<area id or additional>" }`,
   HR, same-origin): `200 { document }` with the document as in the snapshot. Moving to the area it is
@@ -623,7 +627,9 @@ KnowledgeSnapshot {
   Vertex AI Search delete or list answers `503 COMPANY_KNOWLEDGE_UNAVAILABLE`, or
   `504 COMPANY_KNOWLEDGE_TIMEOUT` when a request ran out of time, and the document stays listed so
   HR can delete it again (a retry tolerates the `404`s of what is already gone). An unknown or
-  retired id is `404 WORKSPACE_DOCUMENT_NOT_FOUND` before any cloud call.
+  retired id is `404 WORKSPACE_DOCUMENT_NOT_FOUND` before any cloud call. Once the entry is
+  gone the document leaves chat, even if a copy is still indexed: on the instance that handled the
+  delete as soon as it answers, and on others within 30 seconds.
 - **Storage**: Firestore `companyDocuments/{id}`, metadata only: `category`, `title`, `fileName`,
   `characters` (of the extracted text, at most 250,000), `bytes` (the file's size), `fingerprint`
   (SHA-256 of the extracted text), `connectedBy` (the HR account ID), `connectedAt` (ISO 8601, the

@@ -9,7 +9,8 @@ flowchart LR
   Q[Question and saved chat] --> M[Recall or summarise context]
   M --> I[Gemini interprets the question]
   I --> R[Search company documents with Vertex AI Search]
-  R --> A[Gemini writes a short answer with references]
+  R --> F[Keep only passages of active company documents, with their dates]
+  F --> A[Gemini writes a short answer with references, newest guidance first]
   A --> S[Save this conversation]
   S --> W[Website text and existing Alya voice]
 ```
@@ -107,18 +108,64 @@ Company passages come from Vertex AI Search (Discovery Engine). HR uploads files
 | `VERTEX_SEARCH_ENGINE_ID` | Search engine to query (`onboardai-search` in production, `onboardai-search-staging` in staging). Blank: the sample guide is used, see below. |
 | `VERTEX_SEARCH_LOCATION`  | Engine location, default `global`. `us` and `eu` use their regional endpoints.                                                                |
 | `GOOGLE_CLOUD_PROJECT`    | Project ID or number, shared with Gemini.                                                                                                     |
+| `DOCS_BUCKET`             | The documents bucket. Required with the engine ID: chat recognises the active documents by their `gs://` URI in it (see below).               |
 
 Each company question makes one search request. It is sent with a Bearer token from Application Default Credentials, with a 15-second limit and no automatic retries:
 
 ```text
 POST https://discoveryengine.googleapis.com/v1/projects/{GOOGLE_CLOUD_PROJECT}/locations/{VERTEX_SEARCH_LOCATION}
      /collections/default_collection/engines/{VERTEX_SEARCH_ENGINE_ID}/servingConfigs/default_search:search
-{ "query": "<Gemini's standalone rewrite>", "pageSize": 5,
+{ "query": "<Gemini's standalone rewrite>", "pageSize": 10,
   "contentSearchSpec": { "searchResultMode": "CHUNKS",
                          "chunkSpec": { "numPreviousChunks": 1, "numNextChunks": 1 } } }
 ```
 
-Each result's matching chunk and its neighbouring chunks become one numbered passage. A chunk already used in a higher-ranked passage is not repeated. Passage IDs follow the search rank. Gemini must cite them, and company answers without a valid citation are withheld. When the search returns nothing, Alya asks for more detail or suggests HR, with no Gemini answer request. Reference validation checks passage IDs. It does not prove that every generated sentence follows from the text, and semantic search can still miss a passage. Review answers against current company policy before rollout.
+Account chats and document search ask for 10 results and keep the first 5 passages that pass the allowlist below, so passages of deleted documents do not use up the budget. Anything else that calls the search (`npm run check:search`) asks for 5.
+
+Each result's matching chunk and its neighbouring chunks become one passage. A chunk already used in a higher-ranked passage is not repeated. The admitted passages are numbered in search rank. Gemini must cite them, and company answers without a valid citation are withheld. When no passage is left, Alya asks for more detail or suggests HR, with no Gemini answer request. Reference validation checks passage IDs. It does not prove that every generated sentence follows from the text, and semantic search can still miss a passage. Review answers against current company policy before rollout.
+
+### Which documents chat may use (retrieval allowlist)
+
+The data store can hold documents HR no longer lists: a document whose delete failed half-way, a replaced version, files imported by script. Firestore `companyDocuments` decides what chat may use (issue #79, `server/active-company-documents.mjs`). A passage reaches Gemini, document search or the browser only when its document is an **active** entry (a replaced version is `retired`) with a file name. Matching is exact:
+
+- the expected URI of an entry is `gs://<DOCS_BUCKET>/<id>/<file name>` (the stored object name, `.md` as `.txt`), and its expected data store document ID is the first 32 hex characters of SHA-256 of that URI;
+- a passage matches when its document URI equals an expected URI (as returned, or with each path segment percent-decoded; an encoded `/` never joins two segments), or when the document ID in its chunk name (`…/documents/{id}/chunks/…`) equals an expected ID;
+- anything else is dropped, including a passage with neither: an orphan, an unknown `<id>/` folder, another file under a known ID, a retired version, and every file outside HR's folders (production's 4 script-imported `onboarding/*.pdf`, staging's root `UniVRse - *.pdf`). There is no prefix exception.
+
+The search runs in parallel with one read of the library: `listSummaries()`, a select-only query of the metadata (never the legacy `text` field). Each api instance caches that snapshot for **30 seconds**. An upload, replace, move or delete on an instance drops its cache when the request ends, so a deleted or replaced document leaves chat on that instance at once and on other instances within 30 seconds. If Firestore fails, the last snapshot is used while it is younger than **10 minutes**; with none (or after a change dropped it) the chat turn fails closed with `503 COMPANY_KNOWLEDGE_UNAVAILABLE`, or `504 COMPANY_KNOWLEDGE_TIMEOUT` after Firestore's 10-second limit. It is never answered from unchecked passages.
+
+`DOCS_BUCKET` is required whenever `VERTEX_SEARCH_ENGINE_ID` is set in `gemini-chat` or `document-search` mode: the api and the local server refuse to start without it (`cannot start: VERTEX_SEARCH_ENGINE_ID is set without DOCS_BUCKET…`). An app built without it anyway (tests) withholds every passage, as does Vertex mode with no company library. The sample guide is unchanged: without `VERTEX_SEARCH_ENGINE_ID` there is no allowlist and no library read. Locally, Vertex search through chat therefore needs the matching Firestore library, which the emulator does not have; use `npm run check:search` to test the engine.
+
+Log lines (one JSON line on standard output each, Cloud Run `jsonPayload`; never a file name, title, URI, bucket name or text). `environment` comes from `ONBOARDAI_ENVIRONMENT` (`staging`, `production`, else `local`):
+
+```text
+{"severity":"WARNING","event":"onboardai_active_documents","environment":"…","result":"stale_snapshot|unavailable"}
+{"severity":"INFO","event":"onboardai_active_documents","environment":"…","result":"dropped","dropped":<int>}
+```
+
+`stale_snapshot`: Firestore failed and the last snapshot was used. `unavailable`: Firestore failed with no usable snapshot (the turn got the 503 or 504). One line per failed read, shared by the turns waiting for it. `dropped`: one line per turn that dropped at least one passage, with how many (every unmatched result counts).
+
+### Passage dates and recency
+
+Each admitted passage carries `date` (`YYYY-MM-DD`, the UTC day its version was uploaded, from the entry's `connectedAt`) and `dateKind` (`'uploaded'`), or `null` for both when no date is known (sample-guide passages, entries without `connectedAt`). There are no HR effective or expiry dates; a date written in the document text is left to Gemini. Gemini receives `{ id, title, heading, text, date, dateKind }` per passage, and the cited `passages[]` of the answer and of its saved message carry `date` and `dateKind` too (older saved answers lack them). `title` stays the file name.
+
+The answer prompt adds a recency paragraph right after "…do not turn an inference into a policy." It gives today's UTC date and six rules: note each passage's time anchors (a date or version written in the text outranks the uploaded date); when passages disagree on a point the most recent wins, and figures from older and newer passages are never combined; after resolving a disagreement, open with "According to the latest update, from <date>,"; a passage is outdated only when its text says it was replaced, withdrawn or valid until a past date, or a newer passage covers the point differently (age alone never is); if every passage on the question is outdated, set `stale=true` with no citations and coverage none; mention a passage's own written effective or last-updated date once, as day, month name and year.
+
+The answer schema has a required boolean `stale`. When a company answer comes back with `stale: true`, the server discards Gemini's text, right after the answer's shape and citations are checked and **before** the zero-citation fallback, any coverage fallback and the example opening (`server/answer-freshness.mjs`). The reply, in the answer and in the saved message (`GET /api/conversations/:id`, at the message's top level):
+
+```text
+{ answer (text): "The company documents I have on this are out of date, so I won't rely on them. Please check with HR for the latest guidance.",
+  coverage: "none", category: "onboarding", passages: [], source: "No confirmed company source",
+  guardrail: { verdict: "stale", askHr: true } }
+```
+
+`coverage: "none"` brings the Ask HR offer, as for an unsourced answer. No other turn has a `guardrail` field. Each fresh stale turn writes one line (a repeated request ID does not):
+
+```text
+{"severity":"WARNING","event":"onboardai_answer_freshness","environment":"…","verdict":"stale","surface":"chat"}
+```
+
+A stale turn is still a knowledge gap (category onboarding, coverage none), with the stale document as its nearest source. Which passage is newer, and whether one is outdated, is still Gemini's judgement, not a guarantee: on synthetic passages (issue #79) `gemini-3.5-flash-lite` and `gemini-3.8-flash` chose the newer of two conflicting policies, named its date, and marked a withdrawn policy stale in every run.
 
 References show the **file name** and, when available, the section heading and page, for example `Employee Handbook.pdf` with `Dress Code · page 4`. The file name is the last part of the document's Cloud Storage path, or else its title. `gs://` URIs and bucket names are never shown, and there are no download links.
 
@@ -164,7 +211,7 @@ npm run docs:import -- ./company-docs --prefix handbook/ --apply
 
 ## Information boundaries
 
-Chats owned by a signed-in account exclusively query Vertex AI Search (or the sample guide when `VERTEX_SEARCH_ENGINE_ID` is unset) at runtime and never search in-memory Firestore `companyDocuments`; see [Account access](account-access.md#company-documentation). Every chat belongs to a signed-in account (issue #55).
+Chats owned by a signed-in account exclusively query Vertex AI Search (or the sample guide when `VERTEX_SEARCH_ENGINE_ID` is unset) at runtime and never search Firestore `companyDocuments`; they read only its metadata, to keep the passages of active documents; see [Account access](account-access.md#company-documentation). Every chat belongs to a signed-in account (issue #55).
 
 Only documents approved for the intended employees belong in the data store. Prompt instructions cannot reliably hide PNC information that the model has already received. Exclude restricted HR records, passwords, individual salary/medical details and other material employees should not access. Employee sign-in now exists (see [Account access](account-access.md)), but every signed-in employee searches the same company documents: for multiple employee roles, apply document permissions **before retrieval**. The anonymous browser-session isolation is not employee authentication.
 
@@ -174,24 +221,27 @@ The dependency audit currently reports seven advisory entries in the existing Ko
 
 ## Files
 
-| File                                    | Purpose                                                                          |
-| --------------------------------------- | -------------------------------------------------------------------------------- |
-| `server/gemini-chat-workflow.mjs`       | Gemini models, LangGraph workflow, summaries, references and safe errors         |
-| `server/vertex-ai-search.mjs`           | Vertex AI Search request, chunk-to-passage mapping, file names and safe errors   |
-| `server/company-document-retriever.mjs` | Chooses Vertex AI Search or the sample guide                                     |
-| `server/document-search.mjs`            | Search-only preview mode that quotes passages without Gemini                     |
-| `server/chat-store.mjs`                 | Chooses Firestore or SQLite and describes the shared store interface             |
-| `server/firestore-chat-memory.mjs`      | Firestore chats, messages, support data, turn leases, expiry and deletion        |
-| `server/firestore-checkpointer.mjs`     | LangGraph checkpoints in Firestore, split into chunks above 900 KiB              |
-| `server/firestore-client.mjs`           | Lazy Firestore client, 10-second limit and safe storage error codes              |
-| `server/checkpoint-writes.mjs`          | Background checkpoint saves that fail their turn instead of the server process   |
-| `server/chat-errors.mjs`                | Chat and storage error messages shared by both stores                            |
-| `server/saved-conversations.mjs`        | SQLite history, ownership checks, retention and deletion (local default)         |
-| `server/api-routes.mjs`                 | Saved-chat endpoints, browser-session cookie and account-owned chats             |
-| `src/avatar/AlyaChatPage.jsx`           | Reopen/new/delete chats, text answers, references and existing voice integration |
-| `tests/gemini-chat-workflow.test.mjs`   | Context, restart persistence, isolation, retry, source and error tests           |
-| `tests/document-search.test.mjs`        | Search request shape, passages, file names, errors, timeout and sample fallback  |
-| `tests/server/`                         | Limits and expiry on both stores; Firestore layout, leases, errors, checkpointer |
+| File                                                                                                                | Purpose                                                                           |
+| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `server/gemini-chat-workflow.mjs`                                                                                   | Gemini models, LangGraph workflow, summaries, references and safe errors          |
+| `server/vertex-ai-search.mjs`                                                                                       | Vertex AI Search request, chunk-to-passage mapping, file names and safe errors    |
+| `server/company-document-retriever.mjs`                                                                             | Chooses Vertex AI Search or the sample guide; the `DOCS_BUCKET` start-up check    |
+| `server/active-company-documents.mjs`                                                                               | The retrieval allowlist: active-entry snapshot, cache, matching, dates, log lines |
+| `server/answer-freshness.mjs`                                                                                       | Recency prompt paragraph, the stale verdict, its fixed reply and log line         |
+| `server/document-search.mjs`                                                                                        | Search-only preview mode that quotes passages without Gemini                      |
+| `server/chat-store.mjs`                                                                                             | Chooses Firestore or SQLite and describes the shared store interface              |
+| `server/firestore-chat-memory.mjs`                                                                                  | Firestore chats, messages, support data, turn leases, expiry and deletion         |
+| `server/firestore-checkpointer.mjs`                                                                                 | LangGraph checkpoints in Firestore, split into chunks above 900 KiB               |
+| `server/firestore-client.mjs`                                                                                       | Lazy Firestore client, 10-second limit and safe storage error codes               |
+| `server/checkpoint-writes.mjs`                                                                                      | Background checkpoint saves that fail their turn instead of the server process    |
+| `server/chat-errors.mjs`                                                                                            | Chat and storage error messages shared by both stores                             |
+| `server/saved-conversations.mjs`                                                                                    | SQLite history, ownership checks, retention and deletion (local default)          |
+| `server/api-routes.mjs`                                                                                             | Saved-chat endpoints, browser-session cookie and account-owned chats              |
+| `src/avatar/AlyaChatPage.jsx`                                                                                       | Reopen/new/delete chats, text answers, references and existing voice integration  |
+| `tests/gemini-chat-workflow.test.mjs`                                                                               | Context, restart persistence, isolation, retry, source and error tests            |
+| `tests/document-search.test.mjs`                                                                                    | Search request shape, passages, file names, errors, timeout and sample fallback   |
+| `tests/server/active-company-documents.test.mjs`, `company-knowledge-allowlist.test.mjs`, `answer-recency.test.mjs` | The allowlist, passage dates, recency prompt and stale reply                      |
+| `tests/server/`                                                                                                     | Limits and expiry on both stores; Firestore layout, leases, errors, checkpointer  |
 
 Implementation follows the current official [ChatGoogle integration](https://docs.langchain.com/oss/javascript/integrations/chat/google), [LangGraph memory guide](https://docs.langchain.com/oss/javascript/langgraph/add-memory) and [SQLite checkpointer](https://github.com/langchain-ai/langgraphjs/tree/main/libs/checkpoint-sqlite). There is no official LangGraph Firestore checkpointer; `server/firestore-checkpointer.mjs` implements LangGraph's `BaseCheckpointSaver` and is tested against the SQLite saver's results. It uses the recommended `@langchain/google` package rather than the older Google GenAI integration.
 

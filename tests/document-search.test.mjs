@@ -20,6 +20,7 @@ import {
 import { createApp } from '../server/api-routes.mjs';
 import { randomUUID } from 'node:crypto';
 import { signedInFetch, stubAccounts } from './server/signed-in.mjs';
+import { summary, syntheticLibrary } from './server/active-documents-fixtures.mjs';
 
 // Synthetic Vertex AI Search configuration and chunk-mode responses. No test
 // calls Google: every request goes to an injected fetch and token provider.
@@ -30,6 +31,15 @@ const searchEnv = {
 };
 const token = async () => 'test-access-token';
 const quiet = () => {};
+// Both documents are active entries of the synthetic company library below
+// (the retrieval allowlist admits only those, issue #79).
+const handbookId = '0a1b2c3d-0000-4000-8000-000000000001';
+const hoursId = '0a1b2c3d-0000-4000-8000-000000000002';
+const library = () =>
+  syntheticLibrary([
+    summary({ id: handbookId, fileName: 'Employee Handbook.pdf' }),
+    summary({ id: hoursId, fileName: 'Working Hours.docx', connectedAt: null }),
+  ]);
 const searchResponse = {
   totalSize: 2,
   results: [
@@ -41,8 +51,8 @@ const searchResponse = {
         content:
           '# Test Handbook\n## Dress Code\nBusiness casual clothing is required. Plain T-shirts are permitted on Fridays only.',
         documentMetadata: {
-          uri: 'gs://test-bucket/handbooks/Employee%20Handbook.pdf',
-          title: 'gs://test-bucket/handbooks/Employee%20Handbook.pdf',
+          uri: `gs://test-bucket/${handbookId}/Employee%20Handbook.pdf`,
+          title: `gs://test-bucket/${handbookId}/Employee%20Handbook.pdf`,
         },
         pageSpan: { pageStart: 4, pageEnd: 4 },
         chunkMetadata: {
@@ -56,7 +66,10 @@ const searchResponse = {
       chunk: {
         id: 'c1',
         content: 'Office hours are 10 AM to 6 PM Monday to Friday.',
-        documentMetadata: { uri: 'gs://test-bucket/Working%20Hours.docx', title: 'Working Hours' },
+        documentMetadata: {
+          uri: `gs://test-bucket/${hoursId}/Working%20Hours.docx`,
+          title: 'Working Hours',
+        },
         pageSpan: { pageStart: 1, pageEnd: 2 },
       },
     },
@@ -152,12 +165,17 @@ test('chunk results become passages with file names, sections and neighbouring c
         searchResponse.results[0].chunk.content +
         '\n\nClient meetings require formal attire.',
       excerpt: searchResponse.results[0].chunk.content,
+      // Internal, for the retrieval allowlist only: never sent to the browser.
+      uri: `gs://test-bucket/${handbookId}/Employee%20Handbook.pdf`,
+      vertexId: 'doc-handbook',
     },
     {
       title: 'Working Hours.docx',
       heading: 'Pages 1–2',
       text: 'Office hours are 10 AM to 6 PM Monday to Friday.',
       excerpt: 'Office hours are 10 AM to 6 PM Monday to Friday.',
+      uri: `gs://test-bucket/${hoursId}/Working%20Hours.docx`,
+      vertexId: null,
     },
   ]);
   // The same response always yields the same passages in the same order.
@@ -455,7 +473,11 @@ const ask = async (url, question = 'What are the working hours?') => {
 test('document-search mode quotes Vertex AI Search passages by file name and never calls Gemini', async () => {
   const { calls, fetchImpl } = fakeSearch();
   await withServer(
-    { env: { AI_MODE: 'document-search', ...searchEnv }, fetchImpl },
+    {
+      env: { AI_MODE: 'document-search', ...searchEnv, DOCS_BUCKET: 'test-bucket' },
+      companyDocuments: library(),
+      fetchImpl,
+    },
     async (url) => {
       const config = await (await fetch(url + '/api/config')).json();
       assert.equal(config.aiMode, 'document-search');
@@ -475,9 +497,12 @@ test('document-search mode quotes Vertex AI Search passages by file name and nev
       assert.equal(result.source, 'Company documents: Employee Handbook.pdf, Working Hours.docx');
       assert.ok(!JSON.stringify(result).includes('gs://'));
       assert.ok(!JSON.stringify(result).includes('test-access-token'));
+      assert.ok(!JSON.stringify(result).includes('test-bucket'));
       assert.equal(calls.length, 1);
       assert.match(calls[0].url, /^https:\/\/discoveryengine\.googleapis\.com\//);
       assert.equal(calls[0].body.query, 'What should I wear on Friday?');
+      // The allowlisted search asks for 10 results and keeps 5 admitted.
+      assert.equal(calls[0].body.pageSize, 10);
     },
   );
 });
@@ -486,7 +511,8 @@ test('document-search mode declines without a match and returns safe search erro
   t.mock.method(console, 'warn', quiet);
   await withServer(
     {
-      env: { AI_MODE: 'document-search', ...searchEnv },
+      env: { AI_MODE: 'document-search', ...searchEnv, DOCS_BUCKET: 'test-bucket' },
+      companyDocuments: library(),
       fetchImpl: async () => Response.json({ totalSize: 0 }),
     },
     async (url) => {
@@ -498,7 +524,8 @@ test('document-search mode declines without a match and returns safe search erro
   );
   await withServer(
     {
-      env: { AI_MODE: 'document-search', ...searchEnv },
+      env: { AI_MODE: 'document-search', ...searchEnv, DOCS_BUCKET: 'test-bucket' },
+      companyDocuments: library(),
       fetchImpl: async () => new Response('private provider details', { status: 403 }),
     },
     async (url) => {
