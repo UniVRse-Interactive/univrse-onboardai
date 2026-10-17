@@ -8,6 +8,7 @@ import {
   checkResultMessage,
   findStep,
   firstDayRows,
+  focusAfterStepAction,
   formatWhen,
   isLocked,
   myRequestStatus,
@@ -26,7 +27,7 @@ const step = (completion, status, extra = {}) => ({
   ...extra,
 });
 
-test('self steps: Mark as done, then Undo', () => {
+test('self steps: Mark as completed, then Undo', () => {
   assert.deepEqual(stepActions(step('self', 'todo')), ['complete']);
   assert.deepEqual(stepActions(step('self', 'done')), ['reopen']);
   assert.equal(stepStatusLabel(step('self', 'done')), 'Done');
@@ -169,4 +170,57 @@ test('first-day card stays hidden until HR fills it in', () => {
     rows.map((r) => r.label),
     ['Where to go', 'Arrive at', 'Who will meet you', 'Good to know'],
   );
+});
+
+test('#66: a step with a briefing starts with Ask Alya; its action follows the briefing', () => {
+  const briefing = { briefingRequired: true, askAlya: 'Who is my buddy?' };
+  assert.deepEqual(stepActions(step('self', 'todo', briefing)), ['ask']);
+  assert.deepEqual(stepActions(step('hr_verify', 'todo', briefing)), ['ask']);
+  assert.deepEqual(stepActions(step('check', 'todo', briefing)), ['ask']);
+  assert.deepEqual(stepActions(step('self', 'todo', { ...briefing, briefed: true })), [
+    'ask',
+    'complete',
+  ]);
+  assert.deepEqual(stepActions(step('check', 'done', { ...briefing, briefed: true })), ['ask']);
+  assert.equal(
+    stepErrorMessage({ status: 409, code: 'BRIEFING_REQUIRED' }),
+    'Listen to Alya’s briefing first. Choose “Ask Alya” on this step.',
+  );
+});
+
+test('one wording everywhere: Mark as completed and Mark as submitted', async () => {
+  const { actionLabels } = await import('../../src/access/onboarding-view.mjs');
+  const { briefingAction } = await import('../../src/avatar/briefing-flow.mjs');
+  assert.equal(actionLabels.complete, 'Mark as completed');
+  assert.equal(actionLabels.submit, 'Mark as submitted');
+  // The dashboard shortcut and Alya's page use the same words.
+  assert.equal(briefingAction({ completion: 'self', status: 'todo' }).label, actionLabels.complete);
+  assert.equal(
+    briefingAction({ completion: 'hr_verify', status: 'todo' }).label,
+    actionLabels.submit,
+  );
+  assert.equal(
+    briefingAction({ completion: 'hr_verify', status: 'todo' }).note,
+    'HR will verify it.',
+  );
+  // Status texts are unchanged.
+  assert.equal(
+    stepStatusLabel({ completion: 'hr_verify', status: 'submitted' }),
+    'Waiting for HR to verify',
+  );
+  assert.equal(stepStatusLabel({ completion: 'hr_verify', status: 'done' }), 'Verified by HR');
+  assert.equal(stepStatusLabel({ completion: 'self', status: 'done' }), 'Done');
+});
+
+test('#66 QA: after a dashboard action, focus goes back to its button or to the step status', () => {
+  const briefed = { briefingRequired: true, briefed: true, askAlya: 'Who is my buddy?' };
+  // Mark as completed is gone once the step is done: focus the "Done" badge.
+  assert.equal(focusAfterStepAction(step('self', 'done', briefed), 'complete'), 'status');
+  assert.equal(focusAfterStepAction(step('hr_verify', 'submitted', briefed), 'submit'), 'status');
+  assert.equal(focusAfterStepAction(step('self', 'todo', briefed), 'reopen'), 'status');
+  // A failed action leaves the step as it was: back to the same button.
+  assert.equal(focusAfterStepAction(step('self', 'todo', briefed), 'complete'), 'action');
+  assert.equal(focusAfterStepAction(step('hr_verify', 'submitted'), 'withdraw'), 'action');
+  // The step left the plan.
+  assert.equal(focusAfterStepAction(undefined, 'complete'), 'status');
 });

@@ -28,9 +28,9 @@ async function withApp(options, check) {
 }
 async function uploadHandbook(hr) {
   const connected = await hr.upload(
-    '/api/hr/company-knowledge/documents?category=handbook',
+    '/api/hr/company-knowledge/documents?category=policies',
     Buffer.from(handbook),
-    'handbook.txt',
+    'Employee Handbook.txt',
   );
   assert.equal(connected.status, 201, connected.text);
 }

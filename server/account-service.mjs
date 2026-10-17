@@ -482,6 +482,11 @@ export function createAccountService({
     return result;
   }
 
+  // An HR change that is not about one employee (the company library), with
+  // its audit row; see store.recordEvent. Resolves to what during() returned.
+  const recordEvent = (actor, action, detail, during) =>
+    store.recordEvent(actor.account.id, action, now(), detail, during);
+
   return {
     sessionMs,
     session,
@@ -502,6 +507,7 @@ export function createAccountService({
     setStatus,
     deleteEmployee,
     recordEmployeeChange,
+    recordEvent,
     close: async () => {
       await Promise.allSettled([store.close?.(), profiles.close?.()]);
     },

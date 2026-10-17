@@ -20,20 +20,20 @@ export function stepStatusLabel(step) {
 }
 
 export const actionLabels = {
-  complete: 'Mark as done',
+  complete: 'Mark as completed',
   reopen: 'Undo',
-  submit: 'I’ve submitted this',
+  submit: 'Mark as submitted',
   withdraw: 'Withdraw',
   check: 'Take the check with Alya',
   ask: 'Ask Alya',
-  briefing: 'Get Alya’s briefing',
 };
 
-// v1.5: a required step needs Alya's briefing before it can be completed.
-export const briefingGateReason = 'Listen to Alya’s briefing first';
+// #66: a required step with a briefing has one entry action, Ask Alya, which
+// opens Alya's briefing on her page. The step's own action appears there after
+// the briefing; once briefed, the dashboard also offers it as a shortcut.
 export const briefingDoneLabel = 'Briefing done';
-export function needsBriefing(step) {
-  return step?.briefingRequired === true && step.briefed !== true;
+export function hasBriefing(step) {
+  return step?.briefingRequired === true;
 }
 // "Briefing done" while the step still has something left to do.
 export function briefingStatus(step) {
@@ -42,32 +42,39 @@ export function briefingStatus(step) {
     : '';
 }
 
-// The buttons a step shows, in order. Verified HR steps and passed checks are
-// locked, so they only keep "Ask Alya".
+// The buttons a step shows, in order. A briefing step starts with Ask Alya and
+// shows its completing action only once briefed, so nothing is ever disabled.
+// Verified HR steps and passed checks are locked and keep only Ask Alya.
 export function stepActions(step) {
   const actions = [];
   const { completion, status } = step;
-  if (status === 'todo' && needsBriefing(step)) actions.push('briefing');
-  if (completion === 'self') actions.push(status === 'done' ? 'reopen' : 'complete');
-  else if (completion === 'hr_verify') {
-    if (status === 'todo') actions.push('submit');
+  const briefing = hasBriefing(step);
+  const ready = !briefing || step.briefed === true;
+  if (briefing) actions.push('ask');
+  if (completion === 'self') {
+    if (status === 'done') actions.push('reopen');
+    else if (ready) actions.push('complete');
+  } else if (completion === 'hr_verify') {
+    if (status === 'todo' && ready) actions.push('submit');
     else if (status === 'submitted') actions.push('withdraw');
-  } else if (completion === 'check' && status === 'todo') actions.push('check');
-  if (step.askAlya) actions.push('ask');
+  } else if (completion === 'check' && status === 'todo' && ready) actions.push('check');
+  if (!briefing && step.askAlya) actions.push('ask');
   return actions;
 }
 
-// The step's buttons with their state. Until the briefing is done, the action
-// that completes the step is disabled and says why.
-const completing = new Set(['complete', 'submit', 'check']);
-export function stepActionStates(step) {
-  const gated = needsBriefing(step);
-  return stepActions(step).map((action) => ({
-    action,
-    label: actionLabels[action],
-    disabled: gated && completing.has(action),
-    reason: gated && completing.has(action) ? briefingGateReason : '',
-  }));
+// Where focus goes when a dashboard step action ends (its button was disabled
+// while it ran): back to that button if the step, as it is now, still offers
+// it; otherwise to the step's status badge, e.g. "Done" once "Mark as
+// completed" has gone.
+export function focusAfterStepAction(step, action) {
+  return step && stepActions(step).includes(action) ? 'action' : 'status';
+}
+
+// The filled (primary) button: the completing action, or Ask Alya when it is
+// the only way forward.
+export function isMainAction(action, actions) {
+  if (action === 'ask') return actions.length === 1;
+  return action !== 'reopen' && action !== 'withdraw';
 }
 
 export function isLocked(step) {
@@ -78,7 +85,7 @@ export function isLocked(step) {
 export function stepErrorMessage(error) {
   switch (error?.code) {
     case 'BRIEFING_REQUIRED':
-      return 'Listen to Alya’s briefing first. Choose “Get Alya’s briefing”.';
+      return 'Listen to Alya’s briefing first. Choose “Ask Alya” on this step.';
     case 'BRIEFING_NOT_FOUND':
       return 'This step has no briefing. Your list has been refreshed.';
     case 'CHECK_REQUIRED':

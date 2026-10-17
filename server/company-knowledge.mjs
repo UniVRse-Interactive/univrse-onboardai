@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AccountError } from './account-errors.mjs';
-import { onboardingDocumentTopics } from './onboarding-document-topics.mjs';
+import { documentCategories, onboardingDocumentTopics } from './onboarding-document-topics.mjs';
 import {
   createUploadedDocumentIndex,
   quoteUploadedDocuments,
@@ -40,16 +40,43 @@ const requestErrors = {
     new AccountError(
       400,
       'DOCUMENT_TOPIC_REQUIRED',
-      'Choose one of the six onboarding topics or add another related guide.',
+      'Choose one of the five onboarding areas or Other useful guidance.',
     ),
   nameInvalid: () =>
     new AccountError(
       400,
       'DOCUMENT_NAME_INVALID',
-      'Give the additional guide a short topic name of up to 80 characters.',
+      'Give the document a short name of one line and up to 80 characters, or leave the name out to use the file name.',
     ),
 };
 export { requestErrors as companyKnowledgeRequestErrors };
+
+const validTitle = (title) =>
+  Boolean(title) && title.length <= 80 && !/[\u0000-\u001f\u007f]/.test(title);
+
+// A document's title from its file name: no extension, no control characters,
+// at most 80 characters.
+export function titleFromFileName(fileName) {
+  const base = String(fileName ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\.[A-Za-z0-9]{1,5}$/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+    .trim();
+  return base || 'Company document';
+}
+
+// What the HR page sees of a stored document: never the text.
+const documentView = ({ id, title, fileName, category, characters, bytes, created }) => ({
+  id,
+  title,
+  fileName,
+  category,
+  characters,
+  bytes,
+  created,
+});
 
 export function createCompanyKnowledge({
   // createCompanyDocumentStore(...)
@@ -59,42 +86,55 @@ export function createCompanyKnowledge({
 }) {
   // GET /api/hr/company-knowledge: never the text.
   async function snapshot() {
-    const stored = await documents.list();
     return {
-      documents: stored.map(({ id, title, fileName, category, characters, bytes, created }) => ({
-        id,
-        title,
-        fileName,
-        category,
-        characters,
-        bytes,
-        created,
-      })),
+      topics: onboardingDocumentTopics,
+      documents: (await documents.list()).map(documentView),
       limits: workspaceLimits,
     };
   }
 
-  // The topic title (and its validation) for an upload's query, before the
-  // file is read. Returns { category, title }.
+  // Validates an upload's query before the file is read: the category (an
+  // area id or 'additional') and the optional document name. Returns
+  // { category, name } where name is HR's trimmed name or null (the file name
+  // is then the title).
   function describe({ category, name }) {
-    const topic =
-      typeof category === 'string' && onboardingDocumentTopics.find((item) => item.id === category);
-    if (!topic && category !== 'additional') throw requestErrors.topicRequired();
-    const title = topic?.title || (typeof name === 'string' ? name.trim() : '');
-    if (!title || title.length > 80 || /[\u0000-\u001f\u007f]/.test(title))
-      throw requestErrors.nameInvalid();
-    return { category, title };
+    if (typeof category !== 'string' || !documentCategories.includes(category))
+      throw requestErrors.topicRequired();
+    if (name === undefined) return { category, name: null };
+    const title = typeof name === 'string' ? name.trim() : '';
+    if (!validTitle(title)) throw requestErrors.nameInvalid();
+    return { category, name: title };
   }
 
-  // Stores a file read by readUploadedDocument ({ name, text, bytes }) under
-  // the described topic. Returns { id, duplicate: true } or
-  // { id, duplicate: false, replaced }.
-  const add = (actorId, { category, title }, file, at) =>
+  // Stores a file read by readUploadedDocument ({ name, text, bytes }) in the
+  // described area. Returns { id, duplicate: true } or { id, duplicate: false }.
+  const add = (actorId, { category, name }, file, at) =>
     documents.add(
-      { category, title, fileName: file.name, text: file.text, bytes: file.bytes },
+      {
+        category,
+        title: name ?? titleFromFileName(file.name),
+        fileName: file.name,
+        text: file.text,
+        bytes: file.bytes,
+      },
       actorId,
       at,
     );
+
+  // PATCH /api/hr/company-knowledge/documents/:id { category }. `audit` runs
+  // the move inside the company_document_moved audit row. Resolves to
+  // { document } (no audit row when the document is already there).
+  async function move(id, body, audit) {
+    const category = body && typeof body === 'object' ? body.category : undefined;
+    if (typeof category !== 'string' || !documentCategories.includes(category))
+      throw requestErrors.topicRequired();
+    const before = await documents.get(id);
+    if (before.category === category) return { document: documentView(before) };
+    const moved = await audit({ documentId: before.id, from: before.category, to: category }, () =>
+      documents.move(id, category),
+    );
+    return { document: documentView(moved) };
+  }
 
   const library = async () => (await documents.list()).map(({ title, text }) => ({ title, text }));
   let index = null;
@@ -112,6 +152,7 @@ export function createCompanyKnowledge({
     snapshot,
     describe,
     add,
+    move,
     remove: (id) => documents.remove(id),
     library,
     // Gemini chat: up to six [{ title, heading, text }], the library first.

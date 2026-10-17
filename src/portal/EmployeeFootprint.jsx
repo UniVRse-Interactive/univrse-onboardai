@@ -4,23 +4,25 @@ import CheckDialog from './CheckDialog';
 import { journeyErrorMessage } from '../access/journey-errors.mjs';
 import { journeyApi } from '../access/journey-api.mjs';
 import {
+  actionLabels,
   areaBadge,
   briefingStatus,
+  isMainAction,
   areaSummary,
   optionalStepLabel,
   thresholdOf,
   findStep,
   firstDayRows,
+  focusAfterStepAction,
   formatWhen,
   myRequestStatus,
   nextStepBanner,
   overallSummary,
-  stepActionStates,
   stepActions,
   stepErrorMessage,
   stepStatusLabel,
 } from '../access/onboarding-view.mjs';
-import { briefingHandoff, saveHandoff, stepChip, takeHandoff } from '../access/support-flow.mjs';
+import { saveHandoff, stepAskHandoff } from '../access/support-flow.mjs';
 import './footprint.css';
 
 function Ring({ percent }) {
@@ -55,13 +57,14 @@ function Ring({ percent }) {
   );
 }
 
-// A step's buttons. Until Alya's briefing is done (v1.5), the action that
-// completes a required step is disabled, with the reason shown beside it.
+// A step's buttons. A required step starts with Ask Alya, which opens her
+// briefing on her page (#66); once briefed, its completing action also shows
+// here as a shortcut, beside "Briefing done".
 function StepActions({ step, busy, onAction }) {
-  const reasonId = useId();
-  const states = stepActionStates(step);
-  const reason = states.find((state) => state.reason)?.reason;
+  const hintId = useId();
+  const actions = stepActions(step);
   const done = briefingStatus(step);
+  const submitting = actions.includes('submit');
   return (
     <>
       {done && (
@@ -70,31 +73,37 @@ function StepActions({ step, busy, onAction }) {
           {done}
         </span>
       )}
-      {states.map(({ action, label, disabled }) => (
+      {actions.map((action) => (
         <button
           key={action}
           type="button"
-          className={
-            'fp-action' +
-            (action === 'ask' || action === 'reopen' || action === 'withdraw' ? '' : ' main')
-          }
-          disabled={busy || disabled}
-          aria-label={`${label}: ${step.title}`}
-          aria-describedby={disabled ? reasonId : undefined}
+          className={'fp-action' + (isMainAction(action, actions) ? ' main' : '')}
+          disabled={busy}
+          aria-label={`${actionLabels[action]}: ${step.title}`}
+          aria-describedby={action === 'submit' ? hintId : undefined}
+          data-step-action={`${step.id}:${action}`}
           onClick={() => onAction(step, action)}
         >
           {action === 'ask' && <Icon name="chat" size={14} />}
-          {action === 'briefing' && <Icon name="volume" size={14} />}
-          {label}
+          {actionLabels[action]}
         </button>
       ))}
-      {reason && (
-        <span className="fp-gate-reason" id={reasonId}>
-          {reason}
+      {submitting && (
+        <span className="fp-action-hint" id={hintId}>
+          HR will verify it.
         </span>
       )}
     </>
   );
+}
+
+// The button that ran, while the step still offers it; else the step's badge.
+function focusTarget(step, stepId, action) {
+  const id = CSS.escape(stepId);
+  const badge = `[data-step-status="${id}"]`;
+  return focusAfterStepAction(step, action) === 'action'
+    ? [`[data-step-action="${id}:${CSS.escape(action)}"]`, badge]
+    : [badge];
 }
 
 // The signed-in employee's onboarding footprint (GET /api/me/onboarding).
@@ -109,6 +118,17 @@ export default function EmployeeFootprint({ navigate, chatPath, account, expande
   const [announce, setAnnounce] = useState('');
   const headingRef = useRef(null);
   const alive = useRef(true);
+  // Selectors to try, in order, after the next render (a finished step action).
+  const focusNext = useRef(null);
+  useEffect(() => {
+    if (!focusNext.current || busyStep) return;
+    const selectors = focusNext.current;
+    focusNext.current = null;
+    for (const selector of selectors) {
+      const target = document.querySelector(selector);
+      if (target) return target.focus();
+    }
+  });
 
   const load = useCallback(async () => {
     try {
@@ -141,25 +161,11 @@ export default function EmployeeFootprint({ navigate, chatPath, account, expande
     };
   }, [load]);
 
-  // Back from Alya's briefing with "Take the check": open that step's check.
-  const checkTaken = useRef(false);
-  useEffect(() => {
-    if (!onboarding || checkTaken.current) return;
-    checkTaken.current = true;
-    const handoff = takeHandoff(window.sessionStorage, ['check']);
-    const found = handoff ? findStep(onboarding, handoff.stepId) : null;
-    if (found && stepActions(found.step).includes('check')) setCheck(found.step);
-  }, [onboarding]);
-
   async function run(step, action) {
-    if (action === 'briefing') {
-      saveHandoff(window.sessionStorage, briefingHandoff(step.id));
-      navigate(chatPath);
-      return;
-    }
     if (action === 'ask') {
-      const chip = stepChip(step);
-      if (chip) saveHandoff(window.sessionStorage, chip);
+      // A step with a briefing hands over that briefing; others, their question.
+      const handoff = stepAskHandoff(step);
+      if (handoff) saveHandoff(window.sessionStorage, handoff);
       navigate(chatPath);
       return;
     }
@@ -176,16 +182,18 @@ export default function EmployeeFootprint({ navigate, chatPath, account, expande
         : await journeyApi.completeStep(step.id);
       if (!alive.current) return;
       setOnboarding(next);
+      focusNext.current = focusTarget(findStep(next, step.id)?.step, step.id, action);
       setAnnounce(
         action === 'complete'
-          ? `Marked “${step.title}” as done.`
+          ? `Marked “${step.title}” as completed.`
           : action === 'submit'
-            ? `Sent “${step.title}” to HR to verify.`
+            ? `Marked “${step.title}” as submitted. HR will verify it.`
             : `Moved “${step.title}” back to to do.`,
       );
     } catch (err) {
       if (!alive.current) return;
       setStepErrors((current) => ({ ...current, [step.id]: stepErrorMessage(err) }));
+      focusNext.current = focusTarget(step, step.id, action);
       if (['STEP_LOCKED', 'STEP_NOT_FOUND', 'BRIEFING_REQUIRED'].includes(err.code)) load();
     } finally {
       if (alive.current) setBusyStep('');

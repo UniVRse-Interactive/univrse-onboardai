@@ -367,6 +367,16 @@ export function createAccountStore({ pool, log = (line) => console.warn(line) })
     // commit; returns null when no employee account has that ID. `detail` is
     // optional ID-only context for the audit row (an onboarding step id and
     // status, a support request id), never personal values.
+    // An audit row with no target account (company library changes): the
+    // event is inserted, then during() runs (the Firestore write), then the
+    // commit; a failure in during() rolls the row back. Resolves to what
+    // during() returned. `detail` carries ids only.
+    async recordEvent(actorId, action, at, detail, during) {
+      return transaction(action.replaceAll('_', ' '), async (query) => {
+        await event(query, actorId, null, action, at, detail);
+        return during();
+      });
+    },
     async employeeChange(actorId, id, action, at, during, detail = null) {
       return transaction(action.replaceAll('_', ' '), async (query) => {
         const found = await query(

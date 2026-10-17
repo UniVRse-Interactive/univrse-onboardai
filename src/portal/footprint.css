@@ -99,6 +99,11 @@
   outline: 2px solid #bddfe5;
   outline-offset: -4px;
 }
+/* A step's status takes focus when the button that changed it is gone. */
+.fp-badge:focus-visible {
+  outline: 2px solid #bddfe5;
+  outline-offset: 3px;
+}
 .fp-area[open] > summary svg:last-child {
   transform: rotate(180deg);
 }
@@ -402,10 +407,19 @@
 /* The portal's bare input rule (width: 100%, padding) must not reach radios. */
 .fp-check-options input[type='radio'] {
   flex: none;
-  width: auto;
+  width: 14px;
+  height: 14px;
   padding: 0;
   border: 0;
   background: none;
+}
+/* Radio, number and the option's first line share one 24px line, so their
+   centres line up (QA E-2); a wrapped option stays aligned to its first line. */
+.fp-check-options label > input[type='radio'] {
+  margin: 5px 0 0;
+}
+.fp-check-options label > span:last-child {
+  line-height: 24px;
 }
 .fp-check-options label > .fp-option-number {
   flex: none;
@@ -416,7 +430,7 @@
   flex: none;
   width: 24px;
   height: 24px;
-  margin-top: 1px;
+  margin-top: 0;
   border: 1px solid #8fb3c4;
   border-radius: 50%;
   font-size: 12px;
@@ -479,6 +493,9 @@
 .fp-check-result p + p {
   margin-top: 6px;
 }
+.fp-check-done {
+  padding: 0 24px 20px;
+}
 @media (max-width: 480px) {
   .fp-check {
     padding: 12px 16px 16px;
@@ -489,36 +506,24 @@
   }
 }
 
-/* v1.5: Alya's briefing comes first on a required step. */
-.fp-action:disabled {
-  cursor: not-allowed;
-}
-/* Readable while waiting: the dashed outline, not fading, says "not yet". */
-.fp-action.main:disabled {
-  opacity: 1;
-  background: transparent;
-  border-style: dashed;
-  border-color: #8fa8bb;
-  color: #d4e1ea;
-}
-.fp-gate-reason {
+/* "HR will verify it." beside Mark as submitted (dark ink on the light banner). */
+.fp-action-hint {
   flex-basis: 100%;
   font-size: 12px;
   line-height: 1.5;
   color: #d4e1ea;
   text-align: right;
 }
-/* The next-step banner is light (#d4e7eb): dark ink there, still AA. */
-.fp-next .fp-action.main:disabled {
-  background: transparent;
-  border-style: dashed;
-  border-color: #4f6b7d;
-  color: #2d4365;
-}
-.fp-next .fp-gate-reason {
+.fp-next .fp-action-hint {
   text-align: left;
   color: #2d4365;
 }
+@media (max-width: 720px) {
+  .fp-action-hint {
+    text-align: left;
+  }
+}
+/* Alya's briefing on a required step: "Briefing done" beside its actions. */
 .fp-next .fp-briefed {
   color: #1d5f84;
 }
@@ -530,9 +535,4 @@
   font-size: 12px;
   font-weight: 600;
   color: #bddfe5;
-}
-@media (max-width: 720px) {
-  .fp-gate-reason {
-    text-align: left;
-  }
 }

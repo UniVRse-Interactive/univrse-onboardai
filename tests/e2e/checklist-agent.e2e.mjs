@@ -43,8 +43,23 @@ test('#51 propose, approve, decline, submitted, policy, cross-account', { skip }
   const a = await newEmployee(hr, 'Qa Agent A');
   const b = await newEmployee(hr, 'Qa Agent B');
 
+  const brief = async (id) =>
+    assert.equal(
+      (await a.c.post(`/api/me/onboarding/steps/${id}/briefing`, { completion: 'listened' }))
+        .status,
+      200,
+    );
+
+  // 0. #63: before the buddy briefing Alya points to it and marks nothing
+  let r = await ask(a.c, "I've met my buddy");
+  assert.equal(r.status, 200);
+  assert.ok(!r.json.proposedAction, 'no proposal before the briefing');
+  assert.match(r.json.answer, /briefing/i);
+  assert.equal((await stepStatus(a.c, 'team-support.meet-buddy')).s, 'todo');
+
   // 1. buddy
-  let r = await ask(a.c, "I've met my buddy today");
+  await brief('team-support.meet-buddy');
+  r = await ask(a.c, "I've met my buddy today");
   log('buddy', r.status, r.json);
   assert.equal(r.status, 200);
   const p1 = r.json.proposedAction;
@@ -60,6 +75,7 @@ test('#51 propose, approve, decline, submitted, policy, cross-account', { skip }
   assert.equal(again.status, 409, 'cannot approve twice');
 
   // 2. decline then approve later
+  await brief('team-support.meet-manager');
   r = await ask(a.c, "I've met my manager");
   const p2 = r.json.proposedAction;
   log('manager', r.status, r.json);
@@ -74,6 +90,7 @@ test('#51 propose, approve, decline, submitted, policy, cross-account', { skip }
   assert.equal((await stepStatus(a.c, p2.stepId)).s, 'todo', 'still todo');
 
   // 3. contract -> submitted
+  await brief('documentation.contract');
   r = await ask(a.c, 'I signed my contract');
   const p3 = r.json.proposedAction;
   log('contract', r.status, r.json);
@@ -95,6 +112,7 @@ test('#51 propose, approve, decline, submitted, policy, cross-account', { skip }
   assert.equal((await stepStatus(a.c, 'policies.data-protection')).s, 'todo');
 
   // 5. another account cannot approve
+  await brief('role-tools.laptop-accounts');
   r = await ask(a.c, "I've set up my laptop and accounts");
   const p5 = r.json.proposedAction;
   log('laptop', r.status, r.json);
@@ -110,4 +128,23 @@ test('#51 propose, approve, decline, submitted, policy, cross-account', { skip }
   const own = await a.c.post(`/api/me/agent-actions/${p5.id}`, { decision: 'approve' });
   assert.equal(own.status, 200);
   assert.equal((await stepStatus(a.c, p5.stepId)).s, 'done');
+
+  // 6. F5: a policy check the employee already PASSED replies fast, "already done"
+  const hb = 'policies.employee-handbook';
+  await brief(hb);
+  const qs = (await a.c.get(`/api/me/onboarding/steps/${hb}/check`)).json;
+  for (const o of qs.options) {
+    const pr = await a.c.post(`/api/me/onboarding/steps/${hb}/check`, { optionId: o.id });
+    if (pr.json?.correct) break;
+  }
+  assert.equal((await stepStatus(a.c, hb)).s, 'done');
+  const t0 = Date.now();
+  r = await ask(a.c, "I've read the employee handbook");
+  const took = Date.now() - t0;
+  log('already passed', r.status, took, r.json);
+  assert.equal(r.status, 200);
+  assert.ok(took < 45000, `took ${took} ms`);
+  assert.ok(!r.json.proposedAction);
+  assert.doesNotMatch(r.json.answer, /couldn.t update/i);
+  assert.match(r.json.answer, /already|done|passed|complete/i);
 });

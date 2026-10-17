@@ -43,7 +43,7 @@ export default function HrCompanyKnowledge({ headingRef }) {
         headingRef={headingRef}
         kicker="COMPANY DOCUMENTATION"
         title="Good guidance starts here."
-        text="Six onboarding essentials, with room for other related guidance."
+        text="Five onboarding areas, with room for other useful guidance."
       />
       <ScreenAlert message={error} onRetry={load} />
       {snapshot ? (

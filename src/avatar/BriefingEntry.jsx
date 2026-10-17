@@ -1,22 +1,49 @@
-import React, { useId } from 'react';
+import React, { useEffect, useId, useRef } from 'react';
 import Icon from '../portal/Icon';
-import { briefingAction, briefingRecordedText, briefingTitle } from './briefing-flow.mjs';
+import CheckForm from '../portal/CheckForm';
+import {
+  briefingAction,
+  briefingRecordedText,
+  briefingTitle,
+  dashboardPath,
+  opensInPage,
+  recordedPhases,
+  shouldFocusBriefingCard,
+} from './briefing-flow.mjs';
 
-// Alya's briefing on a required step (contract v1.5), as a transcript entry.
-// It is shown on this page only and never saved to the conversation.
+// Alya's briefing on a required step (contract v1.5, #66), as a transcript
+// entry. It is shown on this page only and never saved to the conversation.
+// When the briefing is recorded, the step's own action appears below it:
+// Mark as completed, Mark as submitted, or Alya's question for a check.
 export default function BriefingEntry({
   message,
   briefing,
   voiceAvailable,
   onAction,
+  onCheckPassed,
+  onDashboard,
   onRetry,
   onHelpful,
 }) {
-  const titleId = useId();
+  const titleId = useId(),
+    cardTitleId = useId();
   const step = briefing?.step || { title: message.stepTitle };
   const phase = briefing?.phase || 'presenting';
   const action = briefingAction(step);
-  const recorded = ['done', 'acting', 'completed'].includes(phase);
+  const recorded = recordedPhases.includes(phase);
+  const cardRef = useRef(null);
+  // undefined until the first render, so a card that is there from the start
+  // (a step briefed earlier) counts as appearing.
+  const previous = useRef(undefined);
+  // Move focus to the card when it appears and when the step is completed,
+  // unless the employee is typing a follow-up question in the chat.
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = phase;
+    const typing = document.activeElement?.id === 'alya-question';
+    if (!cardRef.current || !shouldFocusBriefingCard({ before, phase, typing })) return;
+    cardRef.current.focus({ preventScroll: false });
+  }, [phase]);
   return (
     <article className="alya-message assistant alya-briefing" aria-labelledby={titleId}>
       <div className="alya-message-author">
@@ -62,22 +89,61 @@ export default function BriefingEntry({
             )}
           </div>
         )}
-        {recorded && phase !== 'completed' && (
-          <div className="alya-briefing-card">
-            {action.kind === 'none' ? (
-              <p>{action.text}</p>
+        {recorded && (
+          <section
+            className={
+              'alya-briefing-card' +
+              (action.kind === 'check' && phase !== 'completed' ? ' is-check' : '')
+            }
+            ref={cardRef}
+            tabIndex={-1}
+            aria-labelledby={cardTitleId}
+          >
+            {phase === 'completed' || action.kind === 'none' ? (
+              <>
+                <h4 id={cardTitleId}>
+                  {phase === 'completed' ? (
+                    <>
+                      <Icon name="check" size={15} />
+                      {briefing.doneText}
+                    </>
+                  ) : (
+                    action.text
+                  )}
+                </h4>
+                {onDashboard && (
+                  <a
+                    href={dashboardPath}
+                    className="alya-briefing-secondary"
+                    onClick={(event) => {
+                      if (!opensInPage(event)) return;
+                      event.preventDefault();
+                      onDashboard();
+                    }}
+                  >
+                    Back to your dashboard
+                  </a>
+                )}
+              </>
+            ) : action.kind === 'check' ? (
+              <>
+                <h4 id={cardTitleId}>{action.label}</h4>
+                <p className="alya-briefing-note">{action.note}</p>
+                <CheckForm step={step} showStepTitle={false} onPassed={onCheckPassed} />
+              </>
             ) : (
               <>
-                <p>
+                <h4 id={cardTitleId}>
                   Next for <strong>{step.title}</strong>
-                </p>
+                </h4>
+                {action.note && <p className="alya-briefing-note">{action.note}</p>}
                 <button type="button" disabled={phase === 'acting'} onClick={onAction}>
-                  {action.kind === 'check' && <Icon name="checklist" size={14} />}
+                  <Icon name="check" size={14} />
                   {phase === 'acting' ? 'Saving…' : action.label}
                 </button>
               </>
             )}
-          </div>
+          </section>
         )}
       </div>
     </article>

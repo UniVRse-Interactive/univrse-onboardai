@@ -34,12 +34,10 @@ import {
   askHrLabels,
   askHrOffer,
   chatExtras,
-  checkHandoff,
   helpfulStepId,
   noCoverageText,
   reexplainForward,
   requestStatusWord,
-  saveHandoff,
   takeHandoff,
   visibleChips,
 } from '../access/support-flow.mjs';
@@ -106,7 +104,11 @@ function Message({
     message.intro || message.error || message.plain ? [] : replySentences(answerReply(message));
   const sentences = reply.length ? reply : [message.text];
   return (
-    <article className={'alya-message assistant ' + (message.error ? 'error' : '')}>
+    <article
+      className={'alya-message assistant ' + (message.error ? 'error' : '')}
+      data-message-id={message.id}
+      tabIndex={-1}
+    >
       <div className="alya-message-author">
         <span className="alya-message-mark">A</span>
         <strong>Alya</strong>
@@ -334,6 +336,33 @@ export default function AlyaChatPage({ navigate }) {
     [actionBusy, setActionBusy] = useState(''),
     [actionErrors, setActionErrors] = useState({});
   const handoffTaken = useRef(false);
+  // The voice settings popover closes on Escape (focus back to its toggle) and
+  // on a click outside it, so it never blocks the question box (QA E-1).
+  const settingsButton = useRef(null),
+    settingsPanel = useRef(null);
+  useEffect(() => {
+    if (!settings) return;
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setSettings(false);
+      settingsButton.current?.focus();
+    };
+    const onPointer = (event) => {
+      if (
+        settingsPanel.current?.contains(event.target) ||
+        settingsButton.current?.contains(event.target)
+      )
+        return;
+      setSettings(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  }, [settings]);
   // The answer whose voice is playing; only that answer's scenes follow the audio.
   const [spokenAnswerId, setSpokenAnswerId] = useState(''),
     [voiceSupported, setVoiceSupported] = useState(true),
@@ -434,7 +463,7 @@ export default function AlyaChatPage({ navigate }) {
     }
   }
   // From the dashboard: "Ask Alya" sends a step's question as its chip, and
-  // "Get Alya's briefing" presents that step's briefing (no chat request).
+  // "Ask Alya" on a step with a briefing presents it here (no chat request).
   useEffect(() => {
     if (handoffTaken.current || !config) return;
     if (config.conversationMemory && !conversationId) return;
@@ -515,16 +544,12 @@ export default function AlyaChatPage({ navigate }) {
       );
     }
   }
-  // The card after the briefing: complete the step here, or open its check.
+  // The card after the briefing (#66): Mark as completed or Mark as submitted
+  // completes the step here; a check step's question is answered in the card.
   async function actOnBriefing() {
     const current = briefingRef.current;
     if (!current) return;
     const action = briefingAction(current.step);
-    if (action.kind === 'check') {
-      saveHandoff(window.sessionStorage, checkHandoff(current.stepId));
-      navigate('/dashboard');
-      return;
-    }
     if (action.kind !== 'complete' || current.phase === 'acting') return;
     const same = (b) => b && b.stepId === current.stepId;
     setBriefing({ ...current, phase: 'acting', error: '' });
@@ -539,6 +564,19 @@ export default function AlyaChatPage({ navigate }) {
     } catch (error) {
       setBriefing((b) => (same(b) ? { ...b, phase: 'done', error: stepErrorMessage(error) } : b));
     }
+  }
+  // A pass on Alya's question completes the check step.
+  function briefingCheckPassed(onboarding) {
+    const current = briefingRef.current;
+    if (!current) return;
+    const action = briefingAction(current.step);
+    const found = onboarding ? findStep(onboarding, current.stepId) : null;
+    setBriefing((b) =>
+      b && b.stepId === current.stepId
+        ? { ...b, phase: 'completed', step: found?.step || b.step, doneText: action.done }
+        : b,
+    );
+    loadChips();
   }
   const lastMessageId = messages.at(-1)?.id;
   useEffect(() => {
@@ -878,7 +916,26 @@ export default function AlyaChatPage({ navigate }) {
     if (busy || historyBusy || learningBusy || supportBusy) return;
     setSupportDialog(message);
   }
+  // After "Send to HR" and Close, focus goes to that answer's "Sent to HR"
+  // line (QA D-1), or to the answer itself; Cancel and Escape keep the dialog's
+  // own focus return to the Ask HR button.
+  const sentFor = useRef('');
+  function closeSupportDialog() {
+    const id = sentFor.current;
+    sentFor.current = '';
+    setSupportDialog(null);
+    if (!id) return;
+    let tries = 0;
+    const focusSent = () => {
+      const line = document.querySelector(`[data-ask-hr-status="${CSS.escape(id)}"]`);
+      if (line?.getClientRects().length) return line.focus({ preventScroll: false });
+      if (++tries < 10) return setTimeout(focusSent, 50);
+      document.querySelector(`[data-message-id="${CSS.escape(id)}"]`)?.focus();
+    };
+    setTimeout(focusSent, 0);
+  }
   function supportSent(messageId, request) {
+    sentFor.current = messageId;
     setSentRequests((current) => ({ ...current, [messageId]: request }));
   }
   // F5: the employee approves or declines a change Alya proposed.
@@ -1101,6 +1158,8 @@ export default function AlyaChatPage({ navigate }) {
                       briefing={briefing?.messageId === message.id ? briefing : null}
                       voiceAvailable={voiceAvailable}
                       onAction={actOnBriefing}
+                      onCheckPassed={briefingCheckPassed}
+                      onDashboard={() => navigate('/dashboard')}
                       onHelpful={() => {
                         stopVoice();
                         recordBriefing('helpful');
@@ -1238,6 +1297,7 @@ export default function AlyaChatPage({ navigate }) {
               )}
               <button
                 className="alya-voice-settings"
+                ref={settingsButton}
                 aria-label="Voice settings"
                 aria-expanded={settings}
                 aria-controls="alya-voice-options"
@@ -1247,7 +1307,7 @@ export default function AlyaChatPage({ navigate }) {
               </button>
             </div>
             {settings && (
-              <div className="alya-voice-options" id="alya-voice-options">
+              <div className="alya-voice-options" id="alya-voice-options" ref={settingsPanel}>
                 <div className="alya-shared-voice-label">
                   <strong>{configuredVoiceLabel(config)}</strong>
                   <p>Alya’s English voice. Everyone hears the same voice.</p>
@@ -1307,7 +1367,7 @@ export default function AlyaChatPage({ navigate }) {
         <SupportRequestDialog
           conversationId={conversationId}
           message={supportDialog}
-          onClose={() => setSupportDialog(null)}
+          onClose={closeSupportDialog}
           onSent={supportSent}
         />
       )}

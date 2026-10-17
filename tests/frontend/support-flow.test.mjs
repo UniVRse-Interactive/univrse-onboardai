@@ -20,7 +20,6 @@ import {
   requestBody,
   saveHandoff,
   briefingHandoff,
-  checkHandoff,
   sentMessage,
   stepChip,
   takeHandoff,
@@ -238,9 +237,9 @@ test('real API payload shapes: stored assistant messages and chat responses', ()
   );
 });
 
-test('briefing and check hand-offs round-trip, and each page takes only its own kinds', () => {
+test('the briefing hand-off round-trips, and each page takes only its own kinds', () => {
   const storage = memoryStorage();
-  // Dashboard -> Alya: "Get Alya's briefing".
+  // Dashboard -> Alya: "Ask Alya" on a step with a briefing (#66).
   saveHandoff(storage, briefingHandoff('documentation.contract'));
   assert.equal(takeHandoff(storage), null, 'a chips-only reader leaves it in place');
   assert.ok(storage.data.has(handoffKey));
@@ -249,11 +248,10 @@ test('briefing and check hand-offs round-trip, and each page takes only its own 
     stepId: 'documentation.contract',
   });
   assert.equal(storage.data.has(handoffKey), false);
-  // Alya -> dashboard: "Take the check".
-  saveHandoff(storage, checkHandoff('policies.pdpa'));
-  assert.equal(takeHandoff(storage, ['chip', 'briefing']), null, 'Alya leaves a check alone');
-  assert.deepEqual(takeHandoff(storage, ['check']), { kind: 'check', stepId: 'policies.pdpa' });
-  assert.equal(takeHandoff(storage, ['check']), null, 'read once');
+  assert.equal(takeHandoff(storage, ['chip', 'briefing']), null, 'read once');
+  // The old Alya -> dashboard check hand-off is gone (#66).
+  storage.setItem(handoffKey, JSON.stringify({ kind: 'check', stepId: 'policies.pdpa' }));
+  assert.equal(takeHandoff(storage, ['chip', 'briefing']), null);
   // A chip saved by an older build (no kind) still works.
   storage.setItem(handoffKey, JSON.stringify({ id: 'step:x', question: 'Q?' }));
   assert.deepEqual(takeHandoff(storage), { kind: 'chip', id: 'step:x', question: 'Q?' });
