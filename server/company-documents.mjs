@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
+import {
+  SUPPORTED_EXTENSIONS,
+  extensionOf,
+  importUrl,
+} from '../scripts/import-company-documents.mjs';
 import { AccountError } from './account-errors.mjs';
 import { ChatError } from './chat-errors.mjs';
 import { createStorageCall } from './firestore-client.mjs';
+import { createAccessTokenProvider } from './vertex-ai.mjs';
 import { workspaceLimits } from './workspace-limits.mjs';
 
 // The company-wide knowledge library that signed-in HR builds by uploading
@@ -16,15 +22,168 @@ import { workspaceLimits } from './workspace-limits.mjs';
 //   characters, bytes (the file's size), fingerprint (SHA-256 of text)
 //   connectedBy   the HR account ID; connectedAt: ISO 8601
 //
-// The original file is never stored. The rules mirror the former guest workspace
-// library from #28, changed by #68: an area holds any number of documents (an
-// upload adds, never replaces), forty documents and 1,500,000 characters in
-// total, and no text twice. Every call is bounded by the Firestore deadline;
-// log lines name the operation and Firestore status only, never file names,
-// titles or text.
+// When DOCS_BUCKET and VERTEX_SEARCH_DATA_STORE_ID are configured, each upload
+// also writes the document to the GCS bucket and triggers a Vertex AI Search
+// documents:import job, and each delete removes the object from GCS and deletes
+// the document from Vertex AI Search. Every call is bounded by the deadline;
+// log lines name the operation and status only, never file names, titles or text.
 export const companyDocumentCollection = 'companyDocuments';
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const fingerprintOf = (text) => createHash('sha256').update(text).digest('hex');
+
+export function vertexDocumentSyncConfig(env = {}) {
+  const project = String(env?.GOOGLE_CLOUD_PROJECT || '').trim();
+  const location = String(env?.VERTEX_SEARCH_LOCATION || '').trim() || 'global';
+  const bucket = String(env?.DOCS_BUCKET || '').trim();
+  const dataStore = String(env?.VERTEX_SEARCH_DATA_STORE_ID || '').trim();
+  if (!project || !bucket || !dataStore) return null;
+  return { project, location, bucket, dataStore };
+}
+
+export function gcsObjectName(id, fileName) {
+  const cleaned = String(fileName || '')
+    .replace(/[\u0000-\u001f\u007f/\\]+/g, '-')
+    .trim();
+  const base = cleaned || 'document.txt';
+  const ext = extensionOf(base);
+  const indexedName = SUPPORTED_EXTENSIONS.includes(ext)
+    ? base
+    : base.replace(/\.[A-Za-z0-9]{1,8}$/, '') + '.txt';
+  return `${id}/${indexedName}`;
+}
+
+const mimeTypes = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  txt: 'text/plain; charset=utf-8',
+};
+
+export function createVertexDocumentSync({
+  env = {},
+  fetchImpl = fetch,
+  getAccessToken = createAccessTokenProvider(),
+  log = (message) => console.warn(message),
+} = {}) {
+  const config = vertexDocumentSyncConfig(env);
+  if (!config) return null;
+  const { project, bucket, dataStore } = config;
+  const importEndpoint = importUrl({ project, dataStore });
+  const documentsEndpoint = importEndpoint.replace(/:import$/, '');
+  const gcsUploadUrl = (objectName) =>
+    `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(objectName)}`;
+  const gcsObjectUrl = (objectName) =>
+    `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`;
+
+  return {
+    async uploadDocument({ id, fileName, text, content }) {
+      const token = await getAccessToken();
+      const objectName = gcsObjectName(id, fileName);
+      const ext = extensionOf(objectName);
+      const useBinary =
+        (ext === 'pdf' || ext === 'docx') && Buffer.isBuffer(content) && content.length > 0;
+      const body = useBinary ? content : Buffer.from(String(text || ''), 'utf8');
+      const contentType = mimeTypes[ext] || mimeTypes.txt;
+
+      const uploadRes = await fetchImpl(gcsUploadUrl(objectName), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': contentType,
+        },
+        body,
+      });
+      if (!uploadRes.ok) {
+        log(
+          'Company document GCS upload failed: ' +
+            JSON.stringify({ operation: 'gcs.upload', status: uploadRes.status }),
+        );
+        throw companyDocumentErrors.unavailable();
+      }
+
+      const importRes = await fetchImpl(importEndpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'x-goog-user-project': project,
+        },
+        body: JSON.stringify({
+          gcsSource: {
+            inputUris: [`gs://${bucket}/${objectName}`],
+            dataSchema: 'content',
+          },
+          reconciliationMode: 'INCREMENTAL',
+        }),
+      });
+      if (!importRes.ok) {
+        log(
+          'Company document Vertex AI Search import failed: ' +
+            JSON.stringify({ operation: 'discoveryengine.import', status: importRes.status }),
+        );
+        throw companyDocumentErrors.unavailable();
+      }
+    },
+
+    async deleteDocument({ id, fileName }) {
+      const token = await getAccessToken();
+      const objectName = gcsObjectName(id, fileName);
+      const gsUri = `gs://${bucket}/${objectName}`;
+
+      const gcsRes = await fetchImpl(gcsObjectUrl(objectName), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!gcsRes.ok && gcsRes.status !== 404) {
+        log(
+          'Company document GCS delete failed: ' +
+            JSON.stringify({ operation: 'gcs.delete', status: gcsRes.status }),
+        );
+        throw companyDocumentErrors.unavailable();
+      }
+
+      const deleteById = async (docId) => {
+        const res = await fetchImpl(`${documentsEndpoint}/${encodeURIComponent(docId)}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'x-goog-user-project': project,
+          },
+        });
+        if (!res.ok && res.status !== 404) {
+          log(
+            'Company document Vertex AI Search delete failed: ' +
+              JSON.stringify({ operation: 'discoveryengine.delete', status: res.status }),
+          );
+          throw companyDocumentErrors.unavailable();
+        }
+      };
+
+      await deleteById(id);
+
+      const listRes = await fetchImpl(`${documentsEndpoint}?pageSize=1000`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'x-goog-user-project': project,
+        },
+      }).catch(() => null);
+      if (listRes?.ok) {
+        const data = await listRes.json().catch(() => null);
+        const docs = Array.isArray(data?.documents) ? data.documents : [];
+        for (const doc of docs) {
+          const docId =
+            doc?.id ||
+            String(doc?.name || '')
+              .split('/')
+              .pop();
+          if (doc?.content?.uri === gsUri && docId && docId !== id) {
+            await deleteById(docId);
+          }
+        }
+      }
+    },
+  };
+}
 
 export const companyDocumentErrors = {
   notFound: () =>
@@ -121,12 +280,20 @@ const byConnection = (a, b) => a.created - b.created || (a.id < b.id ? -1 : a.id
 export function createCompanyDocumentStore({
   // A Firestore instance, or an async function returning one.
   firestore,
+  documentSync,
+  env,
+  fetchImpl,
+  getAccessToken,
   timeoutMs,
   log,
 }) {
   let client = null;
   const database = async () =>
     (client ??= await (typeof firestore === 'function' ? firestore() : firestore));
+  const sync =
+    documentSync !== undefined
+      ? documentSync
+      : createVertexDocumentSync({ env, fetchImpl, getAccessToken, log });
   const call = createStorageCall({ timeoutMs, log });
   const guarded = async (operation, fn) => {
     try {
@@ -146,16 +313,16 @@ export function createCompanyDocumentStore({
         const found = await collection(await database()).get();
         return found.docs.map(stored).sort(byConnection);
       }),
-    // upload: { category, title, fileName, text, bytes }. Checks and writes in
-    // one transaction, so two HR browsers cannot both take the last place.
+    // upload: { category, title, fileName, text, bytes, content? }. Checks and
+    // writes in one transaction, then syncs new documents to GCS + Vertex AI Search.
     add: (upload, connectedBy, at) =>
       guarded('add company document', async () => {
         const db = await database();
-        return db.runTransaction(async (tx) => {
+        const plan = await db.runTransaction(async (tx) => {
           const current = await tx.get(
             collection(db).select('category', 'fingerprint', 'characters'),
           );
-          const plan = planUpload(
+          const planned = planUpload(
             current.docs.map((doc) => ({
               id: doc.id,
               ...doc.data(),
@@ -163,9 +330,9 @@ export function createCompanyDocumentStore({
             })),
             upload,
           );
-          if (plan.duplicate) return plan;
+          if (planned.duplicate) return planned;
           const { category, title, fileName, text, bytes } = upload;
-          tx.set(collection(db).doc(plan.id), {
+          tx.set(collection(db).doc(planned.id), {
             category,
             title,
             fileName,
@@ -176,8 +343,26 @@ export function createCompanyDocumentStore({
             connectedBy,
             connectedAt: at.toISOString(),
           });
-          return plan;
+          return planned;
         });
+        if (!plan.duplicate && sync) {
+          try {
+            await sync.uploadDocument({
+              id: plan.id,
+              fileName: upload.fileName,
+              title: upload.title,
+              text: upload.text,
+              content: upload.content,
+            });
+          } catch (error) {
+            await collection(db)
+              .doc(plan.id)
+              .delete()
+              .catch(() => {});
+            throw error;
+          }
+        }
+        return plan;
       }),
     // One stored document with its text, or the 404.
     get: (id) =>
@@ -214,10 +399,19 @@ export function createCompanyDocumentStore({
         if (typeof id !== 'string' || !idPattern.test(id)) throw companyDocumentErrors.notFound();
         const db = await database();
         const ref = collection(db).doc(id);
-        await db.runTransaction(async (tx) => {
-          if (!(await tx.get(ref)).exists) throw companyDocumentErrors.notFound();
+        const removed = await db.runTransaction(async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists) throw companyDocumentErrors.notFound();
+          const data = stored(snap);
           tx.delete(ref);
+          return data;
         });
+        if (sync) {
+          await sync.deleteDocument({
+            id: removed.id,
+            fileName: removed.fileName,
+          });
+        }
       }),
     close: async () => {
       const open = client;

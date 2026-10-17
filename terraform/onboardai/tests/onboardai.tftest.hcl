@@ -202,12 +202,12 @@ run "deployer_holds_only_resource_level_roles" {
 run "api_runtime_holds_exactly_three_project_roles" {
   command = apply
 
-  # Gemini, Firestore and Cloud SQL Client (since #45; tests/
-  # accounts_production.tftest.hcl checks its condition). No Discovery Engine
-  # role on the project since #56: it searches through its engine grant.
+  # Gemini, Firestore, Cloud SQL Client (since #45; tests/
+  # accounts_production.tftest.hcl checks its condition), and Discovery Engine
+  # Editor (to import/delete HR-uploaded documents in the data store).
   assert {
-    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user", "roles/cloudsql.client"]) && length(google_project_iam_member.api_runtime) == 3
-    error_message = "onboardai-api-run holds exactly roles/aiplatform.user, roles/datastore.user and roles/cloudsql.client on the project, and no Discovery Engine role."
+    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user", "roles/cloudsql.client", "roles/discoveryengine.editor"]) && length(google_project_iam_member.api_runtime) == 4
+    error_message = "onboardai-api-run holds exactly roles/aiplatform.user, roles/datastore.user, roles/cloudsql.client and roles/discoveryengine.editor on the project."
   }
 
   # #56: Firestore in (default) only, by project ID or number, like staging's
@@ -510,20 +510,23 @@ run "documents_bucket_is_private_and_readable_only_by_discovery_engine" {
     error_message = "The documents bucket keeps versions and is never force-destroyed."
   }
 
-  # One bucket grant in the whole module: the Discovery Engine service agent,
-  # object read, on this bucket. The API holds no bucket role.
+  # Two bucket grants in the whole module: the Discovery Engine service agent
+  # (objectViewer) and onboardai-api-run (objectUser, to upload/delete HR docs).
   assert {
-    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_storage_bucket_iam_", file("${path.module}/${f}")))]) == 1
-    error_message = "Exactly one bucket IAM resource may exist (Discovery Engine reads the documents)."
+    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_storage_bucket_iam_", file("${path.module}/${f}")))]) == 2
+    error_message = "Exactly two bucket IAM resources may exist (Discovery Engine reads the documents; onboardai-api-run manages HR uploads)."
   }
 
   assert {
     condition = (
       google_storage_bucket_iam_member.discovery_engine_reads_docs.bucket == google_storage_bucket.docs.name &&
       google_storage_bucket_iam_member.discovery_engine_reads_docs.role == "roles/storage.objectViewer" &&
-      google_storage_bucket_iam_member.discovery_engine_reads_docs.member == "serviceAccount:service-123456789012@gcp-sa-discoveryengine.iam.gserviceaccount.com"
+      google_storage_bucket_iam_member.discovery_engine_reads_docs.member == "serviceAccount:service-123456789012@gcp-sa-discoveryengine.iam.gserviceaccount.com" &&
+      google_storage_bucket_iam_member.api_manages_docs.bucket == google_storage_bucket.docs.name &&
+      google_storage_bucket_iam_member.api_manages_docs.role == "roles/storage.objectUser" &&
+      google_storage_bucket_iam_member.api_manages_docs.member == "serviceAccount:${google_service_account.runtime["api"].email}"
     )
-    error_message = "The Discovery Engine service agent gets roles/storage.objectViewer on the documents bucket only."
+    error_message = "The Discovery Engine service agent gets roles/storage.objectViewer and onboardai-api-run gets roles/storage.objectUser on the documents bucket only."
   }
 
   assert {
@@ -879,9 +882,9 @@ run "production_keeps_its_names_labels_and_grants" {
   assert {
     condition = alltrue([
       for role, m in google_project_iam_member.api_runtime :
-      length(m.condition) == (role == "roles/aiplatform.user" ? 0 : 1)
+      length(m.condition) == (contains(["roles/aiplatform.user", "roles/discoveryengine.editor"], role) ? 0 : 1)
     ]) && !contains(keys(google_project_iam_member.api_runtime), "roles/discoveryengine.viewer")
-    error_message = "Production's api holds Gemini unconditioned and its Firestore and Cloud SQL roles with an IAM condition, and no Discovery Engine role on the project."
+    error_message = "Production's api holds Gemini and Discovery Engine Editor unconditioned and its Firestore and Cloud SQL roles with an IAM condition."
   }
 
   assert {

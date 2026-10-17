@@ -235,7 +235,7 @@ export function mountAccountRoutes(
       const added = await companyKnowledge.add(
         req.accountSession.account.id,
         req.knowledgeTopic,
-        file,
+        { ...file, content: req.body },
         new Date(),
       );
       if (!res.destroyed) res.status(added.duplicate ? 200 : 201).json(added);

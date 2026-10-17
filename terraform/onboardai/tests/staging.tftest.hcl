@@ -302,16 +302,16 @@ run "staging_api_cannot_reach_production_data" {
   command = apply
 
   assert {
-    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user", "roles/cloudsql.client"])
-    error_message = "On the project, the staging api holds Gemini (unconditioned), Firestore and Cloud SQL Client (both conditioned) only: no Discovery Engine role."
+    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user", "roles/cloudsql.client", "roles/discoveryengine.editor"])
+    error_message = "On the project, the staging api holds Gemini and Discovery Engine Editor (unconditioned), and Firestore and Cloud SQL Client (both conditioned)."
   }
 
   assert {
     condition = alltrue([
       for role, m in google_project_iam_member.api_runtime :
-      length(m.condition) == 1 if can(regex("^roles/(datastore|firestore|discoveryengine|cloudsql)\\.", role))
+      length(m.condition) == 1 if can(regex("^roles/(datastore|firestore|cloudsql)\\.", role))
     ])
-    error_message = "Every Firestore, Discovery Engine or Cloud SQL role the staging api holds on the project carries an IAM condition."
+    error_message = "Every Firestore or Cloud SQL role the staging api holds on the project carries an IAM condition."
   }
 
   assert {

@@ -114,8 +114,30 @@ test('migration 004 re-files the six old topics, keeps titles, and is idempotent
   assert.deepEqual((await migrateFirestore(empty, { log: () => {} })).applied, []);
 });
 
-test('two documents in one area are both retrieved, each under its own title', async () => {
-  const app = await startAccountsApp({ mode: 'document-search' });
+test('two documents in one area are both listed under their own titles while runtime chat queries Vertex AI Search', async () => {
+  const app = await startAccountsApp({
+    mode: 'document-search',
+    companyRetrieve: async (query) =>
+      /annual leave/i.test(query)
+        ? [
+            {
+              id: 1,
+              title: 'Leave Policy',
+              heading: 'Annual Leave',
+              text: 'Staff request annual leave through the synthetic portal two weeks ahead.',
+              score: 1,
+            },
+          ]
+        : [
+            {
+              id: 1,
+              title: 'Privacy Guide',
+              heading: 'Customer Privacy',
+              text: 'Staff never copy customer records to personal synthetic drives.',
+              score: 1,
+            },
+          ],
+  });
   try {
     const hr = await app.hrBrowser();
     const { browser } = await app.readyEmployee(hr);
@@ -153,7 +175,7 @@ test('two documents in one area are both retrieved, each under its own title', a
         ['Privacy Guide', 'policies'],
       ],
     );
-    // Moving one keeps it searchable.
+    // Moving one updates its area while keeping its title.
     const moved = await hr.patch(`/api/hr/company-knowledge/documents/${leave.body.id}`, {
       category: 'additional',
     });

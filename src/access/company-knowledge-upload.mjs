@@ -25,10 +25,22 @@ export const knowledgeText = {
   namePlaceholder: 'For example, Workplace Safety',
   chooseFile: 'Choose a file',
   limitReached: 'The library is full. Remove a document before adding another.',
+  syncingStatus: 'Real-time AI Index Syncing…',
+  syncCompletedStatus: 'Real-time AI Index Syncing: Completed',
 };
 
 export function formatCharacters(count) {
   return Number(count || 0).toLocaleString('en-US') + ' characters';
+}
+
+// Returns 'syncing', 'completed', or '' for a document row in the HR library.
+export function documentSyncState(syncByDocId, documentId) {
+  const state = syncByDocId?.[documentId];
+  return state === 'syncing' || state === 'completed' ? state : '';
+}
+
+export function uploadProgressMessage(fileName) {
+  return `Uploading ${fileName} — ${knowledgeText.syncingStatus}`;
 }
 
 // An optional document name: '' is fine (the file name becomes the title).

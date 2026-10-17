@@ -1,11 +1,13 @@
-// Account-owned chats also search HR's uploaded company knowledge library
-// (issues #32 and #35); signed-out browsers get no answer at all (issue #55).
+// Account-owned chats exclusively query Vertex AI Search (`companyRetrieve`)
+// at runtime and never search or fall back to in-memory Firestore
+// `companyDocuments`; signed-out browsers get no answer at all (issue #55).
 // Synthetic documents and fake Gemini models only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { startAccountsApp, fakeRetrieve } from './account-harness.mjs';
 import { createCompanyKnowledge } from '../../server/company-knowledge.mjs';
+import { createVertexDocumentSync, gcsObjectName } from '../../server/company-documents.mjs';
 
 const handbook =
   'Dress Code\nStaff wear smart casual clothing from Monday to Thursday, and the synthetic team shirt on Friday.';
@@ -35,7 +37,7 @@ async function uploadHandbook(hr) {
   assert.equal(connected.status, 201, connected.text);
 }
 
-test('document search: an employee’s answer quotes the uploaded handbook first; signed-out browsers get nothing', async () => {
+test('document search: an employee’s answer always queries Vertex AI Search (companyRetrieve) and never in-memory Firestore companyDocuments; signed-out browsers get nothing', async () => {
   await withApp({ mode: 'document-search' }, async (app) => {
     const hr = await app.hrBrowser();
     const { browser } = await app.readyEmployee(hr);
@@ -53,11 +55,9 @@ test('document search: an employee’s answer quotes the uploaded handbook first
     assert.equal(after.body.matched, true);
     assert.deepEqual(
       after.body.passages.map((p) => p.title),
-      ['Employee Handbook', 'Synthetic handbook'],
+      ['Synthetic handbook'],
     );
-    assert.match(after.body.passages[0].preview, /smart casual clothing/);
-    assert.match(after.body.answer, /Source: Employee Handbook — Dress Code/);
-    assert.equal(after.body.source, 'Company documents: Employee Handbook, Synthetic handbook');
+    assert.equal(after.body.source, 'Company documents: Synthetic handbook');
     // The saved turn holds the same answer.
     const saved = (await browser.get(`/api/conversations/${chat.id}`)).body.messages;
     assert.equal(saved.at(-1).text, after.body.answer);
@@ -69,7 +69,7 @@ test('document search: an employee’s answer quotes the uploaded handbook first
   });
 });
 
-test('gemini-chat: account chats retrieve the uploaded handbook alongside the company search', async () => {
+test('gemini-chat: account chats retrieve exclusively from companyRetrieve (Vertex AI Search) even when HR documents exist in Firestore', async () => {
   await withApp({ mode: 'gemini-chat' }, async (app) => {
     const hr = await app.hrBrowser();
     await uploadHandbook(hr);
@@ -78,10 +78,9 @@ test('gemini-chat: account chats retrieve the uploaded handbook alongside the co
     const answered = await ask(browser, chat.id, 'What should I wear?');
     assert.equal(answered.status, 200, answered.text);
     assert.equal(answered.body.mode, 'gemini-memory');
-    // The fake model cites passage 1, which is the library's best match.
     assert.deepEqual(
       answered.body.passages.map((p) => [p.id, p.title, p.heading]),
-      [[1, 'Employee Handbook', 'Dress Code']],
+      [[1, 'Synthetic handbook', 'Dress']],
     );
     // A signed-out browser cannot open a chat or ask.
     const signedOut = app.browser();
@@ -91,7 +90,7 @@ test('gemini-chat: account chats retrieve the uploaded handbook alongside the co
   });
 });
 
-test('an uploaded additional guide is found by its text, and a deleted one is gone', async () => {
+test('Firestore companyDocuments remains strictly for HR UI management while runtime search queries companyRetrieve', async () => {
   await withApp({ mode: 'document-search' }, async (app) => {
     const hr = await app.hrBrowser();
     const up = await hr.upload(
@@ -100,39 +99,121 @@ test('an uploaded additional guide is found by its text, and a deleted one is go
       'parking.md',
     );
     assert.equal(up.status, 201, up.text);
+    const listed = await hr.get('/api/hr/company-knowledge');
+    assert.deepEqual(
+      listed.body.documents.map((d) => d.title),
+      ['Parking'],
+    );
     const { browser } = await app.readyEmployee(hr);
     const chat = (await browser.post('/api/conversations')).body;
     const found = await ask(browser, chat.id, 'Where do staff park?');
     assert.equal(found.status, 200, found.text);
-    assert.equal(found.body.passages[0].title, 'Parking');
-    assert.match(found.body.passages[0].preview, /blue garage/);
-    // Signed-out browsers never read the library.
-    const signedOut = await ask(app.browser(), null, 'Where do staff park?');
-    assert.deepEqual([signedOut.status, signedOut.body.passages], [401, undefined]);
+    assert.deepEqual(
+      found.body.passages.map((p) => p.title),
+      ['Synthetic handbook'],
+    );
     assert.equal(
       (await hr.delete(`/api/hr/company-knowledge/documents/${up.body.id}`)).status,
       204,
     );
-    const gone = await ask(browser, chat.id, 'Where do staff park?');
-    assert.ok(gone.body.passages.every((p) => p.title !== 'Parking'));
   });
 });
 
-test('without connected documents the company search results pass through unchanged', async () => {
+test('retrieve() and quote() always and only query companyRetrieve without calling documents.list()', async () => {
   const company = await fakeRetrieve('dress code');
-  const knowledge = createCompanyKnowledge({
-    documents: { list: async () => [] },
+  let documentsListCalled = false;
+  const withDocs = createCompanyKnowledge({
+    documents: {
+      list: async () => {
+        documentsListCalled = true;
+        return [{ title: 'Employee Handbook', text: handbook }];
+      },
+    },
     companyRetrieve: async () => company,
   });
-  assert.equal(await knowledge.retrieve('dress code'), company);
-  assert.equal(await knowledge.quote('dress code'), company);
-  // With documents, the library leads and the two sources alternate.
-  const withDocs = createCompanyKnowledge({
-    documents: { list: async () => [{ title: 'Employee Handbook', text: handbook }] },
-    companyRetrieve: async () => [...company, { title: 'Second', heading: '', text: 'Other' }],
+  assert.equal(await withDocs.retrieve('dress code'), company);
+  assert.equal(await withDocs.quote('What is the dress code?'), company);
+  assert.equal(documentsListCalled, false);
+});
+
+test('createVertexDocumentSync uploads to GCS + triggers documents:import and deletes from GCS + documents.delete', async () => {
+  const calls = [];
+  const docId = '11111111-2222-3333-4444-555555555555';
+  assert.equal(gcsObjectName(docId, 'Handbook.pdf'), `${docId}/Handbook.pdf`);
+  assert.equal(gcsObjectName(docId, 'Notes.md'), `${docId}/Notes.txt`);
+
+  const sync = createVertexDocumentSync({
+    env: {
+      GOOGLE_CLOUD_PROJECT: 'test-proj',
+      DOCS_BUCKET: 'test-proj-onboardai-docs',
+      VERTEX_SEARCH_DATA_STORE_ID: 'onboardai-docs',
+    },
+    getAccessToken: async () => 'fake-token',
+    fetchImpl: async (url, init = {}) => {
+      calls.push({ url, method: init.method || 'GET', body: init.body });
+      if ((init.method || 'GET') === 'GET' && url.includes('/documents?pageSize=1000')) {
+        return new Response(
+          JSON.stringify({
+            documents: [
+              {
+                id: 'hashed-doc-id',
+                content: { uri: `gs://test-proj-onboardai-docs/${docId}/Notes.txt` },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    },
   });
+
+  await sync.uploadDocument({
+    id: docId,
+    fileName: 'Notes.md',
+    text: '# Welcome\nHello Lumora',
+    content: Buffer.from('# Welcome\nHello Lumora'),
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].method, 'POST');
+  assert.match(
+    calls[0].url,
+    /storage\.googleapis\.com\/upload\/storage\/v1\/b\/test-proj-onboardai-docs\/o/,
+  );
+  assert.equal(calls[1].method, 'POST');
+  assert.match(
+    calls[1].url,
+    /dataStores\/onboardai-docs\/branches\/default_branch\/documents:import$/,
+  );
+  assert.deepEqual(JSON.parse(calls[1].body), {
+    gcsSource: {
+      inputUris: [`gs://test-proj-onboardai-docs/${docId}/Notes.txt`],
+      dataSchema: 'content',
+    },
+    reconciliationMode: 'INCREMENTAL',
+  });
+
+  calls.length = 0;
+  await sync.deleteDocument({ id: docId, fileName: 'Notes.md' });
   assert.deepEqual(
-    (await withDocs.retrieve('dress code')).map((p) => p.title),
-    ['Employee Handbook', 'Synthetic handbook', 'Second'],
+    calls.map((c) => [c.method, c.url]),
+    [
+      [
+        'DELETE',
+        `https://storage.googleapis.com/storage/v1/b/test-proj-onboardai-docs/o/${encodeURIComponent(`${docId}/Notes.txt`)}`,
+      ],
+      [
+        'DELETE',
+        `https://discoveryengine.googleapis.com/v1/projects/test-proj/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents/${docId}`,
+      ],
+      [
+        'GET',
+        'https://discoveryengine.googleapis.com/v1/projects/test-proj/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents?pageSize=1000',
+      ],
+      [
+        'DELETE',
+        'https://discoveryengine.googleapis.com/v1/projects/test-proj/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents/hashed-doc-id',
+      ],
+    ],
   );
 });

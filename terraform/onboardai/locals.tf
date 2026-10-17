@@ -45,9 +45,10 @@ locals {
   # environment's engine.
   api_project_roles = {
     for role, purpose in {
-      "roles/aiplatform.user" = "Gemini generateContent on Vertex AI"
-      "roles/datastore.user"  = "Firestore: read and write documents"
-      "roles/cloudsql.client" = "Cloud SQL: the Cloud Run connection to the accounts instance"
+      "roles/aiplatform.user"        = "Gemini generateContent on Vertex AI"
+      "roles/datastore.user"         = "Firestore: read and write documents"
+      "roles/cloudsql.client"        = "Cloud SQL: the Cloud Run connection to the accounts instance"
+      "roles/discoveryengine.editor" = "Vertex AI Search: import and delete HR-uploaded documents"
     } : role => purpose
     if !contains(local.api_project_roles_left_out, role)
   }
