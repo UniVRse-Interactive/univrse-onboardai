@@ -195,6 +195,8 @@ export async function startAccountsApp({
   const hashing = countingHashing();
   const logs = [];
   const log = (line) => logs.push(line);
+  // The structured onboardai_docs_sync lines (C-SYNC) of the company document sync.
+  const syncEvents = [];
   const store = createAccountStore({ pool: database.pool, log });
   const profiles = createProfileStore({ firestore, log, timeoutMs: storageTimeoutMs });
   const accounts = createAccountService({ store, profiles, now: clock.now, hashing, log });
@@ -216,10 +218,15 @@ export async function startAccountsApp({
     });
   // As in createApp: the store syncs uploads and deletes to GCS + Vertex AI
   // Search when env has DOCS_BUCKET and VERTEX_SEARCH_DATA_STORE_ID, through
-  // fetchImpl; `companyDocumentSync` replaces that sync.
+  // fetchImpl; `companyDocumentSync` replaces that sync. Its log lines are kept
+  // in syncEvents (objects) and, as JSON text, in logs.
   const companyDocuments = createCompanyDocumentStore({
     firestore,
     log,
+    logEvent: (entry) => {
+      syncEvents.push(entry);
+      logs.push(JSON.stringify(entry));
+    },
     timeoutMs: storageTimeoutMs,
     documentSync: companyDocumentSync,
     env,
@@ -277,6 +284,7 @@ export async function startAccountsApp({
     clock,
     hashing,
     logs,
+    syncEvents,
     store,
     accounts,
     browser: () => new Browser(url),

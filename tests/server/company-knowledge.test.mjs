@@ -117,8 +117,8 @@ test('HR uploads PDF, DOCX, text and Markdown files; only text and metadata are 
     for (const [category, fileName, buffer] of files) {
       const up = await hr.upload(`${path}?category=${category}`, buffer, fileName);
       assert.equal(up.status, 201, up.text);
-      assert.deepEqual(Object.keys(up.body), ['id', 'duplicate']);
-      assert.deepEqual({ ...up.body, id: 'x' }, { id: 'x', duplicate: false });
+      assert.deepEqual(Object.keys(up.body), ['id', 'duplicate', 'replaced']);
+      assert.deepEqual({ ...up.body, id: 'x' }, { id: 'x', duplicate: false, replaced: null });
       ids.push(up.body.id);
     }
     const stored = app.firestore.read(`companyDocuments/${ids[1]}`);
@@ -133,6 +133,8 @@ test('HR uploads PDF, DOCX, text and Markdown files; only text and metadata are 
         fingerprint: 'sha',
         connectedBy: hrId,
         connectedAt: 'iso',
+        status: 'active',
+        version: 1,
       },
     );
     assert.equal('text' in stored, false);
@@ -161,8 +163,12 @@ test('HR uploads PDF, DOCX, text and Markdown files; only text and metadata are 
         'characters',
         'bytes',
         'created',
+        'version',
+        'connectedAt',
       ]);
       assert.equal(typeof doc.created, 'number');
+      assert.equal(doc.version, 1);
+      assert.equal(Date.parse(doc.connectedAt), doc.created);
       assert.ok(doc.characters > 0 && doc.bytes > 0);
     }
     assert.ok(!JSON.stringify(listed).includes('Laptops'));
@@ -181,11 +187,11 @@ test('uploads add: two documents in one area, duplicates by text, and delete rem
     const id = first.body.id;
 
     const same = await hr.upload(`${path}?category=policies`, Buffer.from(handbook), 'copy.txt');
-    assert.deepEqual([same.status, same.body], [200, { id, duplicate: true }]);
+    assert.deepEqual([same.status, same.body], [200, { id, duplicate: true, replaced: null }]);
 
     const added = await hr.upload(`${path}?category=policies`, Buffer.from(handbook2), 'v2.md');
     assert.equal(added.status, 201);
-    assert.deepEqual({ ...added.body, id: 'x' }, { id: 'x', duplicate: false });
+    assert.deepEqual({ ...added.body, id: 'x' }, { id: 'x', duplicate: false, replaced: null });
     assert.notEqual(added.body.id, id);
     assert.equal(app.firestore.read(`companyDocuments/${id}`).fingerprint, sha(handbook));
     assert.equal(
@@ -233,7 +239,7 @@ test('moving a document: ok, the same area, 404, 400, 409 and the audit row', as
     assert.equal(moved.status, 200, moved.text);
     assert.deepEqual(Object.keys(moved.body), ['document']);
     assert.deepEqual(
-      { ...moved.body.document, created: 0, bytes: 0, characters: 0 },
+      { ...moved.body.document, created: 0, bytes: 0, characters: 0, connectedAt: 'iso' },
       {
         id: a,
         title: 'a',
@@ -242,6 +248,8 @@ test('moving a document: ok, the same area, 404, 400, 409 and the audit row', as
         characters: 0,
         bytes: 0,
         created: 0,
+        version: 1,
+        connectedAt: 'iso',
       },
     );
     assert.equal(app.firestore.read(`companyDocuments/${a}`).category, 'alignment');
@@ -325,7 +333,7 @@ test('a document is titled by its file name or by HR’s name of one line and up
     const duplicate = await upload('category=policies&name=Another', safety);
     assert.deepEqual(
       [duplicate.status, duplicate.body],
-      [200, { id: byFile.body.id, duplicate: true }],
+      [200, { id: byFile.body.id, duplicate: true, replaced: null }],
     );
     // Other useful guidance needs no name either.
     const visitors = await upload(
@@ -507,6 +515,9 @@ test('documents connected from Google Docs before #35 still list and carry no Dr
         characters: handbook.length,
         bytes: Buffer.byteLength(handbook),
         created: Date.parse('2026-10-01T00:00:00.000Z'),
+        // Stored before replace existed: version 1.
+        version: 1,
+        connectedAt: '2026-10-01T00:00:00.000Z',
       },
     ]);
     assert.ok(!('companyKnowledge' in snapshot) && !('driveMoves' in snapshot));
@@ -691,7 +702,7 @@ test('HR uploads and deletes sync directly to GCS and trigger Vertex AI Search d
         Buffer.from(handbook),
         'Employee Handbook.txt',
       );
-      assert.deepEqual([dup.status, dup.body], [200, { id, duplicate: true }]);
+      assert.deepEqual([dup.status, dup.body], [200, { id, duplicate: true, replaced: null }]);
       assert.equal(calls.length, 0);
 
       // Failed GCS/Vertex sync rolls back the Firestore metadata entry.
@@ -709,14 +720,15 @@ test('HR uploads and deletes sync directly to GCS and trigger Vertex AI Search d
       failNextSync = false;
 
       // 2. Deleting the document deletes the GCS object, then that one document
-      // from Vertex AI Search (by id, then any other document with its URI). It
-      // never re-imports the bucket: a FULL reconciliation would also drop
-      // indexed documents whose objects are no longer in the bucket.
+      // from Vertex AI Search by its ID, sha256(gs:// URI)[:32] (D-1). It never
+      // re-imports the bucket: a FULL reconciliation would also drop indexed
+      // documents whose objects are no longer in the bucket.
       calls.length = 0;
       const del = await hr.delete(`${path}/${id}`);
       assert.equal(del.status, 204);
       const documents =
         'https://discoveryengine.googleapis.com/v1/projects/demo-test/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents';
+      const uri = `gs://demo-test-onboardai-docs/${id}/Employee Handbook.txt`;
       assert.deepEqual(
         calls.map((c) => [c.method, c.url]),
         [
@@ -724,8 +736,7 @@ test('HR uploads and deletes sync directly to GCS and trigger Vertex AI Search d
             'DELETE',
             `https://storage.googleapis.com/storage/v1/b/demo-test-onboardai-docs/o/${encodeURIComponent(`${id}/Employee Handbook.txt`)}`,
           ],
-          ['DELETE', `${documents}/${id}`],
-          ['GET', `${documents}?pageSize=1000`],
+          ['DELETE', `${documents}/${sha(uri).slice(0, 32)}`],
         ],
       );
       assert.ok(calls.every((c) => !c.url.endsWith(':import')));
@@ -785,14 +796,14 @@ test('a delete whose GCS or Vertex AI Search sync fails keeps the document liste
         [id],
       );
 
-      // The retry tolerates the GCS 404, deletes from Vertex AI Search, then
-      // removes the metadata.
+      // The retry tolerates the GCS 404, deletes from Vertex AI Search by the
+      // document's URI hash, then removes the metadata.
       calls.length = 0;
       const retried = await hr.delete(`${path}/${id}`);
       assert.equal(retried.status, 204, retried.text);
       assert.deepEqual(
         calls.map(([method]) => method),
-        ['DELETE', 'DELETE', 'GET'],
+        ['DELETE', 'DELETE'],
       );
       assert.deepEqual(app.firestore.paths('companyDocuments/'), []);
     },

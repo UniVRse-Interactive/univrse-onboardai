@@ -36,7 +36,7 @@ import {
   askHrOffer,
   chatExtras,
   helpfulStepId,
-  noCoverageText,
+  noAnswerNote,
   reexplainForward,
   requestStatusWord,
   takeHandoff,
@@ -250,7 +250,7 @@ function Message({
               <div className="alya-ask-hr">
                 <p>
                   {offer === 'no-answer'
-                    ? `${noCoverageText}. HR may be able to help.`
+                    ? noAnswerNote(message)
                     : 'Still not clear after a second explanation? HR can follow up with you.'}
                 </p>
                 <button type="button" disabled={disabled} onClick={() => onAskHr(message)}>

@@ -130,6 +130,9 @@ for (const store of chatStores)
             searchResponse.results[0].chunk.content +
             '\n\n' +
             searchResponse.results[0].chunk.chunkMetadata.nextChunks[0].content,
+          // Not an allowlisted retrieval (issue #79): no document date.
+          date: null,
+          dateKind: null,
         },
       ]);
       assert.equal(result.source, 'Test handbook.pdf');

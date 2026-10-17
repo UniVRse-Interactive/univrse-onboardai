@@ -120,7 +120,7 @@ test('the page speaks of five areas, never six guides, and confirms in the page'
   assert.match(source('HrCompanyKnowledge.jsx'), /Five onboarding areas/);
   // Remove asks inside the page, not with a browser dialog.
   assert.doesNotMatch(page, /window\.confirm|\bconfirm\(/);
-  // Uploads add; nothing on the page offers to replace a document.
-  assert.doesNotMatch(JSON.stringify(knowledgeText), /replace/i);
-  assert.doesNotMatch(source('company-knowledge-upload.mjs'), /replaced/);
+  // Replacing a document is an explicit choice (issue #79): a row action or the same-title prompt.
+  assert.equal(knowledgeText.replaceAction, 'Replace file');
+  assert.equal(knowledgeText.addSeparate, 'Add as separate');
 });

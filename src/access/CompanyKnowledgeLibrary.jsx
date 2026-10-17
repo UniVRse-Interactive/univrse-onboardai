@@ -11,15 +11,19 @@ import {
   acceptAttribute,
   documentSyncState,
   errorNeedsRefresh,
+  findSameTitleDocument,
   formatCharacters,
   knowledgeErrorMessage,
   knowledgeText as text,
   moveSuccessMessage,
   removeSuccessMessage,
+  replaceSuccessMessage,
+  sameTitlePrompt,
   uploadProgressMessage,
   uploadSuccessMessage,
   validateDocumentName,
   validateUploadFile,
+  versionLine,
 } from './company-knowledge-upload.mjs';
 import './company-knowledge-library.css';
 
@@ -66,7 +70,11 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
   const [syncStates, setSyncStates] = useState({});
   const [extraName, setExtraName] = useState('');
   const [nameError, setNameError] = useState('');
+  // { area, file, match, name } while the same-title question is open.
+  const [prompt, setPrompt] = useState(null);
   const rootRef = useRef(null);
+  const replaceRef = useRef(null);
+  const replaceTargetRef = useRef(null);
   const fileRef = useRef(null);
   const uploadAreaRef = useRef('');
   const abortRef = useRef(null);
@@ -109,6 +117,7 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
   function pick(areaId) {
     if (busy || view.full) return;
     setFeedback(null);
+    setPrompt(null);
     if (areaId === additionalArea.id) {
       const problem = validateDocumentName(extraName);
       setNameError(problem);
@@ -121,46 +130,110 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
     fileRef.current?.click();
   }
 
-  async function upload(event) {
+  function upload(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
     const areaId = uploadAreaRef.current;
     if (!file || busy || !areaId) return;
-    const title = areaTitle(view, areaId);
     const problem = validateUploadFile(file);
     if (problem) {
       setFeedback({ area: areaId, tone: 'error', text: problem });
       return;
     }
+    const name = areaId === additionalArea.id ? extraName : '';
+    const area =
+      areaId === additionalArea.id ? view.additional : view.areas.find((a) => a.id === areaId);
+    const match = findSameTitleDocument(area?.documents, { name, fileName: file.name });
+    if (match) {
+      setPrompt({ area: areaId, file, match, name });
+      focusRef.current = 'prompt-replace-' + areaId;
+      return;
+    }
+    send(file, { areaId, name });
+  }
+
+  function cancelPrompt() {
+    if (!prompt) return;
+    focusRef.current = 'upload-' + prompt.area;
+    setPrompt(null);
+  }
+  function onPromptKey(event) {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    cancelPrompt();
+  }
+  function choosePrompt(replace) {
+    if (!prompt || busy) return;
+    const { area, file, match, name } = prompt;
+    setPrompt(null);
+    send(file, replace ? { areaId: area, name, replaces: match.id } : { areaId: area, name });
+  }
+
+  function pickReplace(document, areaId) {
+    if (busy) return;
+    setFeedback(null);
+    setPending(null);
+    setPrompt(null);
+    replaceTargetRef.current = { document, areaId };
+    replaceRef.current?.click();
+  }
+  function replaceFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    const target = replaceTargetRef.current;
+    if (!file || busy || !target) return;
+    const problem = validateUploadFile(file);
+    if (problem) {
+      setFeedback({ area: target.areaId, tone: 'error', text: problem });
+      return;
+    }
+    send(file, {
+      areaId: target.document.category || target.areaId,
+      feedbackArea: target.areaId,
+      replaces: target.document.id,
+      keepTitle: true,
+    });
+  }
+
+  // Sends a file as a new document, or as the next version of `replaces`.
+  async function send(file, { areaId, name = '', replaces = '', keepTitle = false, feedbackArea }) {
+    const shownArea = feedbackArea || areaId;
+    const title = areaTitle(view, shownArea);
     const abort = new AbortController();
     abortRef.current = abort;
-    const name = areaId === additionalArea.id ? extraName : '';
     const pendingTitle =
       String(name || '').trim() ||
       String(file.name || '').replace(/\.[A-Za-z0-9]{1,5}$/, '') ||
       file.name;
+    const action = replaces ? 'replace' : 'upload';
     setPending(null);
-    setBusy({ kind: 'upload', area: areaId, fileName: file.name, title: pendingTitle });
-    setFeedback({ area: areaId, tone: 'progress', text: uploadProgressMessage(file.name) });
+    setBusy(
+      keepTitle
+        ? { kind: 'replace', area: shownArea, id: replaces, fileName: file.name }
+        : { kind: 'upload', area: shownArea, fileName: file.name, title: pendingTitle },
+    );
+    setFeedback({ area: shownArea, tone: 'progress', text: uploadProgressMessage(file.name) });
+    const successText = (result) =>
+      replaces ? replaceSuccessMessage(result) : uploadSuccessMessage(result, file.name, title);
     try {
-      const result = await api.upload(file, { category: areaId, name }, abort.signal);
+      const result = await api.upload(file, { category: areaId, name, replaces }, abort.signal);
       if (result?.id && !result.duplicate) {
         setSyncStates((prev) => ({ ...prev, [result.id]: 'syncing' }));
       }
       await onRefresh();
       if (abort.signal.aborted) return;
-      if (areaId === additionalArea.id) setExtraName('');
+      if (areaId === additionalArea.id && !replaces) setExtraName('');
       if (result?.id && !result.duplicate) {
         clearTimeout(syncTimersRef.current[result.id]);
         syncTimersRef.current[result.id] = setTimeout(() => {
           delete syncTimersRef.current[result.id];
           setSyncStates((prev) => ({ ...prev, [result.id]: 'completed' }));
           setFeedback((current) =>
-            current?.area === areaId && current?.tone === 'progress'
+            current?.area === shownArea && current?.tone === 'progress'
               ? {
-                  area: areaId,
+                  area: shownArea,
                   tone: 'status',
-                  text: uploadSuccessMessage(result, file.name, title),
+                  text: successText(result),
                   syncCompleted: true,
                 }
               : current,
@@ -168,22 +241,22 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
         }, 1200);
       } else {
         setFeedback({
-          area: areaId,
+          area: shownArea,
           tone: 'status',
-          text: uploadSuccessMessage(result, file.name, title),
-          syncCompleted: Boolean(result?.id),
+          text: successText(result),
+          syncCompleted: Boolean(result?.id) && !replaces,
         });
       }
     } catch (err) {
       if (err.name === 'AbortError' || abort.signal.aborted) return;
       if (errorNeedsRefresh(err)) await onRefresh();
-      const message = knowledgeErrorMessage(err, 'upload');
+      const message = knowledgeErrorMessage(err, action);
       if (err.code === 'DOCUMENT_NAME_INVALID' && areaId === additionalArea.id)
         setNameError(message);
-      setFeedback({ area: areaId, tone: 'error', text: message });
+      setFeedback({ area: shownArea, tone: 'error', text: message });
     } finally {
       if (!abort.signal.aborted) {
-        focusRef.current = 'upload-' + areaId;
+        focusRef.current = (keepTitle ? 'area-' : 'upload-') + shownArea;
         setBusy(null);
       }
     }
@@ -261,6 +334,7 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
         <div className="gd-doc-text">
           <strong id={titleId}>{documentLabel(document)}</strong>
           <small>{meta.join(' · ')}</small>
+          <small className="gd-doc-version">{versionLine(document)}</small>
           {syncState && (
             <span
               className={
@@ -348,6 +422,18 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
           </div>
         ) : (
           <div className="gd-doc-actions">
+            <button
+              type="button"
+              className="gd-doc-action"
+              data-focus={'replace-' + document.id}
+              aria-describedby={titleId}
+              disabled={!!busy}
+              onClick={() => pickReplace(document, area.id)}
+            >
+              {busy?.kind === 'replace' && busy.id === document.id
+                ? text.replacing
+                : text.replaceAction}
+            </button>
             <button
               type="button"
               className="gd-doc-action"
@@ -457,6 +543,41 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
             {uploading ? text.uploading : extra ? text.addAnother : text.uploadAction}
           </button>
         </div>
+        {prompt?.area === area.id && (
+          <div
+            className="gd-step gd-same-title"
+            role="group"
+            aria-label={text.replacePromptLabel}
+            aria-describedby={'gd-same-title-' + area.id}
+            onKeyDown={onPromptKey}
+          >
+            <span id={'gd-same-title-' + area.id} className="gd-step-text">
+              {sameTitlePrompt(prompt.match)}
+            </span>
+            <span className="gd-step-actions">
+              <button
+                type="button"
+                className="gd-doc-action primary"
+                data-focus={'prompt-replace-' + area.id}
+                disabled={!!busy}
+                onClick={() => choosePrompt(true)}
+              >
+                {text.replaceConfirm}
+              </button>
+              <button
+                type="button"
+                className="gd-doc-action"
+                disabled={!!busy}
+                onClick={() => choosePrompt(false)}
+              >
+                {text.addSeparate}
+              </button>
+              <button type="button" className="gd-doc-action" onClick={cancelPrompt}>
+                {text.cancel}
+              </button>
+            </span>
+          </div>
+        )}
         <Feedback item={feedback?.area === area.id ? feedback : null} />
       </article>
     );
@@ -500,6 +621,14 @@ export default function CompanyKnowledgeLibrary({ workspace, onRefresh, api }) {
         accept={acceptAttribute}
         aria-label={text.chooseFile}
         onChange={upload}
+      />
+      <input
+        ref={replaceRef}
+        type="file"
+        hidden
+        accept={acceptAttribute}
+        aria-label={text.replaceChooseFile}
+        onChange={replaceFile}
       />
     </section>
   );

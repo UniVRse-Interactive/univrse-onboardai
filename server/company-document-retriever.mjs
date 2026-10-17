@@ -12,6 +12,29 @@ export function knowledgeMode(env) {
   return vertexSearchConfig(env) ? 'vertex-ai-search' : 'sample-tasks';
 }
 
+// The answer modes that search company documents.
+const searchingModes = ['gemini-chat', 'document-search'];
+
+export class KnowledgeConfigError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'KnowledgeConfigError';
+  }
+}
+
+// Throws KnowledgeConfigError when a searching mode would use Vertex AI Search
+// without DOCS_BUCKET. Chat admits only passages of active company documents
+// (active-company-documents.mjs), which it recognises by their gs:// URI in
+// that bucket; without it every passage would be withheld. The api and the
+// local server refuse to start instead (createApp itself withholds them all).
+export function checkKnowledgeConfig(env = {}) {
+  if (!searchingModes.includes(env.AI_MODE) || !vertexSearchConfig(env)) return;
+  if (String(env.DOCS_BUCKET || '').trim()) return;
+  throw new KnowledgeConfigError(
+    'VERTEX_SEARCH_ENGINE_ID is set without DOCS_BUCKET. Chat uses only passages of active company documents and needs the documents bucket name to recognise them. Set DOCS_BUCKET, or leave VERTEX_SEARCH_ENGINE_ID blank to use the sample guide.',
+  );
+}
+
 export function describeKnowledgeSource(env) {
   const config = vertexSearchConfig(env);
   if (!config) return 'the sample onboarding guide (VERTEX_SEARCH_ENGINE_ID is not set)';
@@ -58,10 +81,16 @@ export function samplePassages(query) {
     .map((item) => item.passage);
 }
 
-// retrieve(query, { signal }) -> [{ title, heading, text, excerpt? }] in rank order.
+// retrieve(query, { signal, pageSize }) -> [{ title, heading, text, excerpt?,
+// uri?, vertexId? }] in rank order. pageSize (Vertex AI Search only) asks for
+// that many results instead of 5; the sample guide ignores it.
 export function createCompanyRetriever({ env = {}, fetchImpl, getAccessToken, log } = {}) {
   const config = vertexSearchConfig(env);
   if (!config) return async (query) => samplePassages(query);
   const search = createVertexSearch({ config, fetchImpl, getAccessToken, log });
-  return (query, options) => search(query, { signal: options?.signal });
+  return (query, options) =>
+    search(query, {
+      signal: options?.signal,
+      ...(options?.pageSize ? { pageSize: options.pageSize } : {}),
+    });
 }
