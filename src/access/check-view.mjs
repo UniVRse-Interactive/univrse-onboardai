@@ -53,7 +53,8 @@ export function checkErrorView(error, type = 'choice') {
   if (error?.code === 'BRIEFING_REQUIRED')
     return {
       field: '',
-      message: 'Listen to Alya’s briefing on this step first. Choose “Get Alya’s briefing”.',
+      message:
+        'Alya’s briefing on this step isn’t recorded yet. Listen to it, or read it to the end, first.',
     };
   return { field: '', message: journeyErrorMessage(error) };
 }

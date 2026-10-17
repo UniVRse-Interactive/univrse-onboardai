@@ -64,7 +64,7 @@ test('#50 chips and first-day details', { skip }, async () => {
 test('#48 support request lifecycle and #49 knowledge gaps', { skip }, async () => {
   const hr = client(base);
   await hr.post('/api/auth/sign-in', { username: hrId, password: hrPassword });
-  const e = await newEmployee(hr, 'Qa Support Two', -2);
+  const e = await newEmployee(hr, `Qa Support ${Math.random().toString(36).slice(2, 7)}`, -2);
   const a = await ask(e.c, 'What are the working hours?');
   assert.equal(a.status, 200);
   const conv = (await e.c.get(`/api/conversations/${a.conversationId}`)).json;

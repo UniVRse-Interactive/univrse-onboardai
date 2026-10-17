@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   briefingAction,
   briefingErrorMessage,
@@ -7,8 +8,11 @@ import {
   briefingRecordedText,
   briefingTitle,
   canConfirmRead,
+  dashboardPath,
   findBriefing,
   listenedCompletion,
+  opensInPage,
+  shouldFocusBriefingCard,
 } from '../../src/avatar/briefing-flow.mjs';
 import { createServerSpeech } from '../../src/avatar/answer-audio-player.js';
 import { answerSpeech } from '../../src/avatar/spoken-answer.mjs';
@@ -17,12 +21,12 @@ import { sceneOrder } from '../../src/avatar/scene-steps.mjs';
 import {
   actionLabels,
   briefingDoneLabel,
-  briefingGateReason,
   briefingStatus,
-  stepActionStates,
+  isMainAction,
   stepActions,
   stepErrorMessage,
 } from '../../src/access/onboarding-view.mjs';
+import { stepAskHandoff } from '../../src/access/support-flow.mjs';
 
 // A required step from GET /api/me/onboarding (contract v1.5).
 const step = (overrides = {}) => ({
@@ -202,59 +206,77 @@ test('reading needs the last page of the last scene, and only without voice', ()
   assert.equal(canConfirmRead({ voiceAvailable: false, step: last, order: [] }), false);
 });
 
-test('after the briefing, the card offers the step’s own action', () => {
+test('after the briefing, Alya’s page offers the step’s own action (#66)', () => {
   assert.deepEqual(briefingAction(step({ completion: 'self', title: 'Meet your buddy' })), {
     kind: 'complete',
-    label: 'Mark as done',
-    done: 'Marked “Meet your buddy” as done.',
+    label: 'Mark as completed',
+    note: '',
+    done: '“Meet your buddy” is completed.',
   });
   assert.deepEqual(briefingAction(step()), {
     kind: 'complete',
-    label: 'I’ve submitted this',
-    done: 'Sent “Sign your employment contract” to HR to verify.',
+    label: 'Mark as submitted',
+    note: 'HR will verify it.',
+    done: '“Sign your employment contract” is marked as submitted. HR will verify it.',
   });
-  assert.deepEqual(briefingAction(step({ completion: 'check' })), {
+  // A check step's question is answered on Alya's page, not on the dashboard.
+  assert.deepEqual(briefingAction(step({ completion: 'check', title: 'Data protection' })), {
     kind: 'check',
-    label: 'Take the check',
-    done: '',
+    label: 'Alya’s question',
+    note: 'Answer it to complete this step.',
+    done: 'You passed. “Data protection” is done.',
   });
   assert.equal(briefingAction(step({ status: 'done' })).kind, 'none');
   assert.match(briefingAction(step({ status: 'submitted' })).text, /waiting for HR/);
 });
 
-test('the dashboard gates completion until the briefing is done', () => {
-  for (const completion of ['self', 'hr_verify', 'check']) {
-    const states = stepActionStates(step({ completion }));
-    assert.equal(states[0].action, 'briefing', 'the briefing is the first action');
-    assert.equal(states[0].label, 'Get Alya’s briefing');
-    assert.equal(states[0].disabled, false);
-    const completing = states.find(
-      (state) => state.action !== 'briefing' && state.action !== 'ask',
-    );
-    assert.equal(completing.disabled, true, completion);
-    assert.equal(completing.reason, 'Listen to Alya’s briefing first');
-    assert.equal(briefingGateReason, completing.reason);
+test('the dashboard offers Ask Alya first; the completing action only once briefed', () => {
+  for (const [completion, finish] of [
+    ['self', 'complete'],
+    ['hr_verify', 'submit'],
+    ['check', 'check'],
+  ]) {
+    // Before the briefing: Ask Alya alone, filled; nothing disabled, no reason text.
+    const before = step({ completion });
+    assert.deepEqual(stepActions(before), ['ask'], completion);
+    assert.equal(isMainAction('ask', stepActions(before)), true);
+    // Ask Alya hands over the briefing, not the chip question.
+    assert.deepEqual(stepAskHandoff(before), { kind: 'briefing', stepId: before.id });
+    // Once briefed, the completing action shows as a shortcut beside it.
+    const after = step({ completion, briefed: true });
+    assert.deepEqual(stepActions(after), ['ask', finish], completion);
+    assert.equal(isMainAction(finish, stepActions(after)), true);
+    assert.equal(isMainAction('ask', stepActions(after)), false);
   }
-  const briefed = step({ briefed: true });
-  assert.deepEqual(stepActions(briefed), ['submit', 'ask'], 'no briefing action once done');
-  assert.ok(stepActionStates(briefed).every((state) => !state.disabled));
-  assert.equal(briefingStatus(briefed), briefingDoneLabel);
+  assert.deepEqual(stepActions(step({ completion: 'self', status: 'done', briefed: true })), [
+    'ask',
+    'reopen',
+  ]);
+  assert.deepEqual(stepActions(step({ status: 'submitted', briefed: true })), ['ask', 'withdraw']);
+  assert.equal(briefingStatus(step({ briefed: true })), briefingDoneLabel);
   assert.equal(briefingDoneLabel, 'Briefing done');
   assert.equal(briefingStatus(step()), '');
   assert.equal(briefingStatus(step({ briefed: true, status: 'done' })), '');
-  // Optional steps (and API payloads before v1.5) are unchanged.
+  // Optional steps (and payloads before v1.5) are unchanged: their own action,
+  // then Ask Alya with the step's question as a chip.
   const optional = step({ required: false, briefing: null, briefingRequired: false });
   assert.deepEqual(stepActions(optional), ['submit', 'ask']);
+  assert.deepEqual(stepAskHandoff(optional), {
+    id: 'step:documentation.contract',
+    question: 'How do I sign my contract?',
+  });
   assert.deepEqual(stepActions({ id: 'x', completion: 'self', status: 'todo', askAlya: null }), [
     'complete',
   ]);
-  assert.equal(actionLabels.briefing, 'Get Alya’s briefing');
+  assert.equal(stepAskHandoff({ id: 'x', askAlya: null }), null);
+  assert.equal(actionLabels.ask, 'Ask Alya');
+  assert.equal('briefing' in actionLabels, false, 'no separate briefing button');
 });
 
 test('409 BRIEFING_REQUIRED and BRIEFING_NOT_FOUND read calmly', () => {
   assert.equal(
     stepErrorMessage({ status: 409, code: 'BRIEFING_REQUIRED' }),
-    'Listen to Alya’s briefing first. Choose “Get Alya’s briefing”.',
+    'Listen to Alya’s briefing first. Choose “Ask Alya” on this step.',
   );
   assert.match(stepErrorMessage({ status: 404, code: 'BRIEFING_NOT_FOUND' }), /no briefing/);
   assert.match(briefingErrorMessage({ status: 404, code: 'BRIEFING_NOT_FOUND' }), /no briefing/);
@@ -278,4 +300,42 @@ test('the briefing is read from the onboarding payload by step id', () => {
   assert.equal(briefingRecordedText('listened'), 'Briefing done. Thanks for listening.');
   assert.equal(briefingRecordedText('read'), 'Briefing done. Thanks for reading it.');
   assert.equal(briefingRecordedText('helpful'), 'Briefing done. Marked as helpful.');
+});
+
+test('#66 QA: the action card takes focus when it appears, also for a step briefed earlier', () => {
+  // A step briefed earlier: the card is there on the entry's first render.
+  assert.equal(shouldFocusBriefingCard({ before: undefined, phase: 'done' }), true);
+  // After a played or read briefing.
+  assert.equal(shouldFocusBriefingCard({ before: 'presenting', phase: 'done' }), true);
+  assert.equal(shouldFocusBriefingCard({ before: 'recording', phase: 'done' }), true);
+  // When the step is completed.
+  assert.equal(shouldFocusBriefingCard({ before: 'acting', phase: 'completed' }), true);
+  assert.equal(shouldFocusBriefingCard({ before: undefined, phase: 'completed' }), true);
+  // Not again while the card stays, and not before it shows.
+  assert.equal(shouldFocusBriefingCard({ before: 'done', phase: 'done' }), false);
+  assert.equal(shouldFocusBriefingCard({ before: 'acting', phase: 'done' }), false);
+  assert.equal(shouldFocusBriefingCard({ before: 'done', phase: 'acting' }), false);
+  assert.equal(shouldFocusBriefingCard({ before: 'completed', phase: 'completed' }), false);
+  assert.equal(shouldFocusBriefingCard({ before: undefined, phase: 'presenting' }), false);
+  // Never while the employee types in the composer.
+  assert.equal(shouldFocusBriefingCard({ before: undefined, phase: 'done', typing: true }), false);
+  assert.equal(
+    shouldFocusBriefingCard({ before: 'acting', phase: 'completed', typing: true }),
+    false,
+  );
+});
+
+test('#66 QA: Back to your dashboard is a link; only a plain left click stays in the app', () => {
+  assert.equal(dashboardPath, '/dashboard');
+  assert.equal(opensInPage({ button: 0 }), true);
+  assert.equal(opensInPage({}), true);
+  assert.equal(opensInPage({ button: 1 }), false);
+  for (const key of ['metaKey', 'ctrlKey', 'shiftKey', 'altKey'])
+    assert.equal(opensInPage({ button: 0, [key]: true }), false);
+  const source = readFileSync(
+    new URL('../../src/avatar/BriefingEntry.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /<a\s+href=\{dashboardPath\}/);
+  assert.doesNotMatch(source, /<button[^>]*alya-briefing-secondary/);
 });

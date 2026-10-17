@@ -149,17 +149,17 @@ export function actionDecisionError(error) {
 }
 export const decisionLabels = { approve: 'Approve', decline: 'Not yet' };
 
-// Hand-offs between the dashboard and Alya's page, through sessionStorage:
-//   chip:     a step's "Ask Alya" question, sent as that step's chip;
-//   briefing: "Get Alya's briefing" on a step (v1.5) -> Alya presents it;
-//   check:    back from a briefing to the dashboard with that step's check open.
-// Each page takes only the kinds it handles; another kind is left in place.
+// Hand-offs from the dashboard to Alya's page, through sessionStorage:
+//   chip:     an optional step's "Ask Alya" question, sent as that step's chip;
+//   briefing: "Ask Alya" on a step with a briefing (#66) -> Alya presents it,
+//             then shows the step's action on her page.
+// A page takes only the kinds it handles; another kind is left in place.
 export const handoffKey = 'onboardai-chip-handoff-v1';
 export function saveHandoff(storage, handoff) {
   try {
     const value =
-      handoff?.kind === 'briefing' || handoff?.kind === 'check'
-        ? { kind: handoff.kind, stepId: handoff.stepId }
+      handoff?.kind === 'briefing'
+        ? { kind: 'briefing', stepId: handoff.stepId }
         : { kind: 'chip', id: handoff.id, question: handoff.question };
     storage.setItem(handoffKey, JSON.stringify(value));
     return true;
@@ -169,8 +169,8 @@ export function saveHandoff(storage, handoff) {
 }
 function readHandoff(value) {
   if (!value || typeof value !== 'object') return null;
-  if ((value.kind === 'briefing' || value.kind === 'check') && typeof value.stepId === 'string')
-    return value.stepId ? { kind: value.kind, stepId: value.stepId } : null;
+  if (value.kind === 'briefing' && typeof value.stepId === 'string')
+    return value.stepId ? { kind: 'briefing', stepId: value.stepId } : null;
   if ((value.kind === undefined || value.kind === 'chip') && typeof value.id === 'string')
     return typeof value.question === 'string'
       ? { kind: 'chip', id: value.id, question: value.question }
@@ -191,7 +191,12 @@ export function takeHandoff(storage, accept = ['chip']) {
   }
 }
 export const briefingHandoff = (stepId) => ({ kind: 'briefing', stepId });
-export const checkHandoff = (stepId) => ({ kind: 'check', stepId });
+// What "Ask Alya" on a dashboard step hands over: its briefing when it has one,
+// otherwise its chip question (or nothing).
+export function stepAskHandoff(step) {
+  if (step?.briefingRequired === true && step.id) return briefingHandoff(step.id);
+  return stepChip(step);
+}
 export function stepChip(step) {
   return step?.askAlya ? { id: 'step:' + step.id, question: step.askAlya } : null;
 }

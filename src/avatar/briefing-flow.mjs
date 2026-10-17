@@ -40,24 +40,66 @@ export function canConfirmRead({ voiceAvailable, step, order, pageCounts } = {})
   return stepBounds(step, order, pageCounts).last;
 }
 
-// After the briefing: the card with the step's own action.
-//   self -> Mark as done, hr_verify -> I've submitted this (both POST complete),
-//   check -> Take the check (back to the dashboard with the check open).
+// After the briefing, Alya's page shows the step's own action (#66):
+//   self      -> Mark as completed (POST complete);
+//   hr_verify -> Mark as submitted, "HR will verify it." (POST complete);
+//   check     -> Alya's question, answered right here (the check API).
 export function briefingAction(step) {
   const title = step?.title || 'this step';
   if (step?.status === 'done') return { kind: 'none', text: `“${title}” is already done.` };
   if (step?.status === 'submitted')
     return { kind: 'none', text: `“${title}” is waiting for HR to verify.` };
   if (step?.completion === 'self')
-    return { kind: 'complete', label: 'Mark as done', done: `Marked “${title}” as done.` };
+    return {
+      kind: 'complete',
+      label: 'Mark as completed',
+      note: '',
+      done: `“${title}” is completed.`,
+    };
   if (step?.completion === 'hr_verify')
     return {
       kind: 'complete',
-      label: 'I’ve submitted this',
-      done: `Sent “${title}” to HR to verify.`,
+      label: 'Mark as submitted',
+      note: 'HR will verify it.',
+      done: `“${title}” is marked as submitted. HR will verify it.`,
     };
-  if (step?.completion === 'check') return { kind: 'check', label: 'Take the check', done: '' };
+  if (step?.completion === 'check')
+    return {
+      kind: 'check',
+      label: 'Alya’s question',
+      note: 'Answer it to complete this step.',
+      done: `You passed. “${title}” is done.`,
+    };
   return { kind: 'none', text: '' };
+}
+
+// The phases in which the briefing is recorded and the action card shows.
+export const recordedPhases = ['done', 'acting', 'completed'];
+
+// Whether the action card takes focus, given the phase before this render
+// (undefined on the entry's first render) and now. It does when the card
+// appears — after a played briefing, or at once for a step briefed earlier —
+// and when the step is completed; never while the employee is typing in the
+// chat's composer.
+export function shouldFocusBriefingCard({ before, phase, typing }) {
+  if (typing) return false;
+  const appeared = phase === 'done' && !recordedPhases.includes(before);
+  const finished = phase === 'completed' && before !== 'completed';
+  return appeared || finished;
+}
+
+export const dashboardPath = '/dashboard';
+
+// A plain left click stays in the app; a modified or middle click is left to
+// the browser (new tab or window).
+export function opensInPage(event) {
+  return (
+    (event?.button ?? 0) === 0 &&
+    !event?.metaKey &&
+    !event?.ctrlKey &&
+    !event?.shiftKey &&
+    !event?.altKey
+  );
 }
 
 export function briefingRecordedText(completion) {

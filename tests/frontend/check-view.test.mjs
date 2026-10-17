@@ -126,7 +126,10 @@ test('the new error codes map to inline and general messages', () => {
     graderUnavailable,
     'Alya can’t check written answers right now. Please try again later.',
   );
-  assert.match(checkErrorView({ status: 409, code: 'BRIEFING_REQUIRED' }).message, /briefing/);
+  assert.equal(
+    checkErrorView({ status: 409, code: 'BRIEFING_REQUIRED' }).message,
+    'Alya’s briefing on this step isn’t recorded yet. Listen to it, or read it to the end, first.',
+  );
   assert.equal(
     checkErrorView({ status: 429 }).message,
     'That’s a lot at once. Please try again shortly.',

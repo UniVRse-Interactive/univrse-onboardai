@@ -229,3 +229,76 @@
   outline: 2px solid #bddfe5;
   outline-offset: 2px;
 }
+
+/* #66: the step's action after the briefing, on Alya's page. */
+.alya-briefing-card h4 > svg {
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+.alya-briefing-card h4 {
+  display: block;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #edf3f7;
+}
+.alya-live-page .alya-message p.alya-briefing-note {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #d4e1ea;
+}
+.alya-briefing-card:focus {
+  outline: 2px solid #bddfe5;
+  outline-offset: 3px;
+}
+/* "Back to your dashboard" is a link styled like the card's secondary button. */
+.alya-briefing-card a.alya-briefing-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid #bddfe5;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  color: #edf3f7;
+  text-decoration: none;
+}
+.alya-briefing-card a.alya-briefing-secondary:hover {
+  background: #3b5572;
+}
+.alya-briefing a:focus-visible {
+  outline: 2px solid #bddfe5;
+  outline-offset: 2px;
+}
+/* Alya's question sits on the transcript's own background (#1f3047), the one
+   the check styles were checked for contrast against. */
+.alya-briefing-card.is-check {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid #5d7893;
+  padding: 14px 0 0;
+  justify-items: stretch;
+}
+.alya-briefing-card .fp-check {
+  padding: 0;
+}
+.alya-briefing-card .fp-check .uv-form-actions {
+  justify-content: flex-start;
+}
+/* The transcript's paragraph size must not enlarge the check's small lines. */
+.alya-live-page .alya-briefing-card .fp-written-meta,
+.alya-live-page .alya-briefing-card .fp-muted,
+.alya-live-page .alya-briefing-card .fp-field-error {
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* Focus targets after Ask HR (QA D-1): the Sent line, or the answer itself. */
+.alya-ask-hr-sent:focus-visible,
+.alya-message.assistant:focus-visible {
+  outline: 2px solid #bddfe5;
+  outline-offset: 3px;
+}
