@@ -282,7 +282,8 @@ ProfileSummary  { fullName, preferredName, jobTitle, department, startDate }
 | `POST /api/hr/departments`                                     | HR                              | `{ name, prefix }`                                                                                        | 201 `{ department: Department }`                                                                                                                                         | 400 `DEPARTMENT_INVALID`; 409 `DEPARTMENT_NAME_TAKEN`, `DEPARTMENT_PREFIX_TAKEN`                                                                                                                                  |
 | `PATCH /api/hr/departments/:id`                                | HR                              | `{ name?, prefix?, archived? }`                                                                           | 200 `{ department: Department, updatedProfiles }`                                                                                                                        | 400 `DEPARTMENT_INVALID`; 404 `DEPARTMENT_NOT_FOUND`; 409 as POST; 503 `PROFILE_STORAGE_UNAVAILABLE`, 504 `PROFILE_STORAGE_TIMEOUT`                                                                               |
 | `GET /api/hr/company-knowledge`                                | HR                              | none                                                                                                      | 200 `KnowledgeSnapshot`; see [Company Documentation](#company-documentation)                                                                                             | 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                              |
-| `POST /api/hr/company-knowledge/documents?category=…[&name=…]` | HR                              | raw file (`application/octet-stream`, `X-File-Name`), see [Company Documentation](#company-documentation) | 201 `{ id, duplicate: false, replaced: false }`; 200 `{ id, duplicate: false, replaced: true }` or `{ id, duplicate: true }`                                             | see [Company Documentation](#company-documentation)                                                                                                                                                               |
+| `POST /api/hr/company-knowledge/documents?category=…[&name=…]` | HR                              | raw file (`application/octet-stream`, `X-File-Name`), see [Company Documentation](#company-documentation) | 201 `{ id, duplicate: false }` or 200 `{ id, duplicate: true }`                                                                                                          | see [Company Documentation](#company-documentation)                                                                                                                                                               |
+| `PATCH /api/hr/company-knowledge/documents/:id`                | HR                              | `{ category }`, see [Company Documentation](#company-documentation)                                       | 200 `{ document }`                                                                                                                                                       | 400 `DOCUMENT_TOPIC_REQUIRED`; 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 409 `COMPANY_DOCUMENT_DUPLICATE`; 503/504 as above                                                                                             |
 | `DELETE /api/hr/company-knowledge/documents/:id`               | HR                              | none                                                                                                      | 204: the record is removed (the stored text is removed)                                                                                                                  | 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                          |
 
 `PROFILE_INVALID` example:
@@ -537,37 +538,55 @@ file is never stored.
 
 ```text
 KnowledgeSnapshot {
+  topics: [{ id, title, description, icon }]   the five onboarding areas, in order (below)
   documents: [{ id, title, fileName, category, characters, bytes, created: ms since epoch }],
                                      oldest first; never the text
-  limits: { files: 12, bytes: 5242880, characters: 250000, totalCharacters: 750000 }
+  limits: { files: 40, bytes: 5242880, characters: 250000, totalCharacters: 1500000 }
 }
 ```
 
+- **Areas** (issue #68): the library is the five onboarding areas, each a folder holding any number
+  of documents, plus `additional` ("Other useful guidance"). `topics` lists the areas
+  (`server/onboarding-document-topics.mjs`): `alignment` (Company Purpose & Alignment, icon
+  `planet`), `documentation` (Documentation, `checklist`), `team-support` (People & Workplace
+  Support, `people`), `role-tools` (Role, Tools & AI Readiness, `laptop`) and `policies`
+  (Policies & Safe Practices, `shield`). The ids match the onboarding template areas. A document's
+  `category` is an area id or `additional`. The six earlier topic ids (`company`, `handbook`,
+  `first-week`, `role`, `it`, `communication`) are retired; Firestore migration
+  `004_company_documents_areas` re-files them (`company` to `alignment`, `handbook` to `policies`,
+  `first-week` to `documentation`, `role` and `it` to `role-tools`, `communication` to
+  `team-support`, anything else to `additional`) and keeps every title.
 - **Upload** (`POST /api/hr/company-knowledge/documents?category=<category>[&name=<title>]`): the
   body is the raw file, `Content-Type: application/octet-stream`, with the file name in
-  `X-File-Name: encodeURIComponent(fileName)`. `category` is one of the six topic IDs in
-  `server/onboarding-document-topics.mjs` (`company`, `handbook`, `first-week`, `role`, `it`,
-  `communication`), whose title becomes the document title, or `additional` with `name` (1-80
-  characters, one line). One document per topic: uploading another file to a topic replaces it
-  (`200 { id, duplicate: false, replaced: true }`, same `id`). Identical text already stored under
-  the same topic is `200 { id, duplicate: true }`. A new document is
-  `201 { id, duplicate: false, replaced: false }`. A JSON body is `415 FILE_UPLOAD_REQUIRED`.
+  `X-File-Name: encodeURIComponent(fileName)`. `category` is an area id or `additional`. The
+  document's title is its own: `name` (trimmed, 1-80 characters, one line) when given, else the
+  file name without its extension (cut to 80 characters); never the area's title, so Alya cites
+  each document by its title. An upload always adds: a new document is
+  `201 { id, duplicate: false }`. Identical text already stored in the same area is
+  `200 { id, duplicate: true }` (no new document); in another area it is `409`. A JSON body is
+  `415 FILE_UPLOAD_REQUIRED`.
+- **Move** (`PATCH /api/hr/company-knowledge/documents/:id` with `{ "category": "<area id or additional>" }`,
+  HR, same-origin): `200 { document }` with the document as in the snapshot. Moving to the area it is
+  already in changes nothing. Otherwise the move writes a `company_document_moved` audit row
+  (`target_id` empty, `detail` `{ documentId, from, to }`, ids only) in the same step. Errors:
+  `404 WORKSPACE_DOCUMENT_NOT_FOUND` (unknown id), `400 DOCUMENT_TOPIC_REQUIRED` (invalid
+  category), `409 COMPANY_DOCUMENT_DUPLICATE` (another document holds the same text).
 - **Storage**: Firestore `companyDocuments/{id}`: `category`, `title`, `fileName`, `text` (at most
   250,000 characters), `characters`, `bytes` (the file's size), `fingerprint` (SHA-256 of the text),
-  `connectedBy` (the HR account ID) and `connectedAt` (ISO 8601). At most twelve documents and
-  750,000 characters in total; checks and writes run in one transaction. Documents stored before issue #35 have no `fileName` (listed as `''`) and still list and retrieve.
+  `connectedBy` (the HR account ID) and `connectedAt` (ISO 8601). At most forty documents and
+  1,500,000 characters in total; checks and writes run in one transaction. Documents stored before issue #35 have no `fileName` (listed as `''`) and still list and retrieve.
   Log lines never contain file names or text.
 - **Errors** (besides the session and route tables; file errors are the shared upload reader's):
 
   | Status              | Code                                                                                                                                                                                                               | When                                                           |
   | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
   | 415                 | `FILE_UPLOAD_REQUIRED`                                                                                                                                                                                             | The body is not `application/octet-stream`                     |
-  | 400                 | `DOCUMENT_TOPIC_REQUIRED`                                                                                                                                                                                          | `category` is not a topic ID or `additional`                   |
-  | 400                 | `DOCUMENT_NAME_INVALID`                                                                                                                                                                                            | `additional` without a valid `name`                            |
+  | 400                 | `DOCUMENT_TOPIC_REQUIRED`                                                                                                                                                                                          | `category` is not an area ID or `additional`                   |
+  | 400                 | `DOCUMENT_NAME_INVALID`                                                                                                                                                                                            | `name` is empty, over 80 characters or has a line break        |
   | 400/413/415/422/503 | `FILE_NAME_INVALID`, `FILE_EMPTY`, `FILE_TOO_LARGE`, `FILE_TYPE_UNSUPPORTED`, `FILE_INVALID`, `FILE_NO_TEXT`, `FILE_TEXT_TOO_LONG`, `FILE_UNREADABLE`, `FILE_READ_TIMEOUT`, password-protected, `FILE_READER_BUSY` | The reader refused the file (see `read-uploaded-document.mjs`) |
-  | 409                 | `COMPANY_DOCUMENT_DUPLICATE`                                                                                                                                                                                       | The same text is already stored under another topic            |
-  | 409                 | `WORKSPACE_DOCUMENT_LIMIT`                                                                                                                                                                                         | Twelve documents already                                       |
-  | 413                 | `WORKSPACE_TEXT_LIMIT`                                                                                                                                                                                             | Over 750,000 characters in total                               |
+  | 409                 | `COMPANY_DOCUMENT_DUPLICATE`                                                                                                                                                                                       | The same text is already stored in another area                |
+  | 409                 | `WORKSPACE_DOCUMENT_LIMIT`                                                                                                                                                                                         | Forty documents already                                        |
+  | 413                 | `WORKSPACE_TEXT_LIMIT`                                                                                                                                                                                             | Over 1,500,000 characters in total                             |
   | 503                 | `COMPANY_KNOWLEDGE_UNAVAILABLE`                                                                                                                                                                                    | Firestore failed                                               |
   | 504                 | `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                                                                        | Firestore gave no answer within 10 seconds                     |
 
@@ -640,10 +659,10 @@ account, so every chat searches it.
 - `server/employee-ids.mjs`: the prefix rule, the reserved `HR` prefix and the Employee ID format.
 - `server/employee-profiles.mjs`: profile validation and Firestore storage, and removal of an
   account's profile and import drafts.
-- `server/company-knowledge.mjs`: the HR company library (snapshot, upload, remove) and the
+- `server/company-knowledge.mjs`: the HR company library (snapshot, upload, move, remove) and the
   library search for account chats.
 - `server/company-documents.mjs`: Firestore `companyDocuments` and the library rules.
-- `server/onboarding-document-topics.mjs`: the six onboarding topics.
+- `server/onboarding-document-topics.mjs`: the five onboarding areas HR files documents under.
 - `server/profile-autofill.mjs`: profile autofill (file checks, the Gemini request, answer checks).
 - `server/database-migrations.mjs`, `server/migrations/*.sql`: the migration runner and SQL
   (`001` accounts, `002` deleted-account labels, `003` Employee ID counters, `004` departments; #27 uses `005` on).

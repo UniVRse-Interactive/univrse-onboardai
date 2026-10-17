@@ -238,9 +238,18 @@ export function mountAccountRoutes(
         file,
         new Date(),
       );
-      if (!res.destroyed) res.status(added.duplicate || added.replaced ? 200 : 201).json(added);
+      if (!res.destroyed) res.status(added.duplicate ? 200 : 201).json(added);
     },
   );
+  // { category } -> { document }: moves a document to another area or to
+  // 'additional', with a company_document_moved audit row (ids only).
+  employees.patch('/company-knowledge/documents/:id', hr, async (req, res) => {
+    res.json(
+      await library().move(req.params.id, req.body, (detail, during) =>
+        accounts.recordEvent(req.accountSession, 'company_document_moved', detail, during),
+      ),
+    );
+  });
   employees.delete('/company-knowledge/documents/:id', hr, async (req, res) => {
     await library().remove(req.params.id);
     res.status(204).end();

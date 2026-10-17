@@ -188,7 +188,7 @@ test('without DATABASE_URL account routes are 503, and chat, conversations and v
         ['delete', `/api/hr/employees/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`],
         ['get', '/api/hr/support-requests'],
         ['get', '/api/hr/company-knowledge'],
-        ['post', '/api/hr/company-knowledge/documents', { category: 'it', url: 'x' }],
+        ['post', '/api/hr/company-knowledge/documents', { category: 'role-tools', url: 'x' }],
         ['delete', '/api/hr/company-knowledge/documents/x'],
       ]) {
         const response = await browser[method](path, body);

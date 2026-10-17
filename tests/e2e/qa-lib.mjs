@@ -27,6 +27,7 @@ export function client(base = process.env.BASE_URL || 'http://localhost:3130') {
   };
   return {
     call,
+    cookie: () => cookie,
     get: (p) => call('GET', p),
     post: (p, b) => call('POST', p, b ?? {}),
     put: (p, b) => call('PUT', p, b),

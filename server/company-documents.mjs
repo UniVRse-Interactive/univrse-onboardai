@@ -7,8 +7,9 @@ import { workspaceLimits } from './workspace-limits.mjs';
 // The company-wide knowledge library that signed-in HR builds by uploading
 // files, one Firestore document per file: companyDocuments/{id}
 //
-//   category      one of the six onboarding topic IDs, or 'additional'
-//   title         the topic's title, or HR's name for an additional guide
+//   category      one of the five onboarding area IDs, or 'additional'
+//   title         the document's own title: HR's name for it, or the file name
+//                 without its extension (never the area's title)
 //   fileName      the uploaded file's name (absent on documents connected from
 //                 Google Docs before issue #35, which still list and retrieve)
 //   text          the file's extracted plain text (at most 250,000 characters)
@@ -16,8 +17,8 @@ import { workspaceLimits } from './workspace-limits.mjs';
 //   connectedBy   the HR account ID; connectedAt: ISO 8601
 //
 // The original file is never stored. The rules mirror the former guest workspace
-// library from #28: one document per topic (uploading another replaces it),
-// any number of additional guides, twelve documents and 750,000 characters in
+// library from #28, changed by #68: an area holds any number of documents (an
+// upload adds, never replaces), forty documents and 1,500,000 characters in
 // total, and no text twice. Every call is bounded by the Firestore deadline;
 // log lines name the operation and Firestore status only, never file names,
 // titles or text.
@@ -36,13 +37,13 @@ export const companyDocumentErrors = {
     new AccountError(
       409,
       'COMPANY_DOCUMENT_DUPLICATE',
-      'This guidance is already in the company library under another topic. Upload a different file.',
+      'This guidance is already in the company library in another area. Upload a different file.',
     ),
   full: () =>
     new AccountError(
       409,
       'WORKSPACE_DOCUMENT_LIMIT',
-      'The company library supports twelve documents. Remove one before adding another.',
+      `The company library supports ${workspaceLimits.files} documents. Remove one before adding another.`,
     ),
   tooMuchText: () =>
     new AccountError(
@@ -66,24 +67,33 @@ export const companyDocumentErrors = {
 
 // Where an upload goes, given the stored documents ({ id, category,
 // fingerprint, characters }): { id, duplicate: true } when identical text is
-// already stored under this topic, else { id, duplicate: false, replaced } where
-// replaced means the topic's current document is swapped. Throws the 409/413
-// errors.
+// already stored in this area, else { id, duplicate: false } for a new
+// document. An upload only ever adds. Throws the 409/413 errors.
 export function planUpload(stored, { text, category }) {
   const fingerprint = fingerprintOf(text);
-  const slot = category === 'additional' ? null : stored.find((doc) => doc.category === category);
   const same = stored.find((doc) => doc.fingerprint === fingerprint);
   if (same && same.category === category) return { id: same.id, duplicate: true };
   if (same) throw companyDocumentErrors.textTaken();
-  const others = stored.filter((doc) => doc.id !== slot?.id);
-  if (!slot && stored.length >= workspaceLimits.files) throw companyDocumentErrors.full();
+  if (stored.length >= workspaceLimits.files) throw companyDocumentErrors.full();
   if (
     text.length > workspaceLimits.characters ||
-    others.reduce((total, doc) => total + doc.characters, 0) + text.length >
+    stored.reduce((total, doc) => total + doc.characters, 0) + text.length >
       workspaceLimits.totalCharacters
   )
     throw companyDocumentErrors.tooMuchText();
-  return { id: slot?.id || randomUUID(), duplicate: false, replaced: Boolean(slot) };
+  return { id: randomUUID(), duplicate: false };
+}
+
+// Moving document `id` to `category`: { unchanged } is true when it is
+// already there. 404 for an unknown id, 409 when another document
+// in the library already holds the same text.
+export function planMove(stored, id, category) {
+  const document = stored.find((doc) => doc.id === id);
+  if (!document) throw companyDocumentErrors.notFound();
+  if (document.category === category) return { unchanged: true };
+  if (stored.some((doc) => doc.id !== id && doc.fingerprint === document.fingerprint))
+    throw companyDocumentErrors.textTaken();
+  return { unchanged: false };
 }
 
 const created = (data) => {
@@ -168,6 +178,36 @@ export function createCompanyDocumentStore({
           });
           return plan;
         });
+      }),
+    // One stored document with its text, or the 404.
+    get: (id) =>
+      guarded('read company document', async () => {
+        if (typeof id !== 'string' || !idPattern.test(id)) throw companyDocumentErrors.notFound();
+        const found = await collection(await database())
+          .doc(id)
+          .get();
+        if (!found.exists) throw companyDocumentErrors.notFound();
+        return stored(found);
+      }),
+    // Moves one document to another category (checked and written in one
+    // transaction): 404 for an unknown id, 409 when another document already
+    // holds the same text. Resolves to the stored document.
+    move: (id, category) =>
+      guarded('move company document', async () => {
+        if (typeof id !== 'string' || !idPattern.test(id)) throw companyDocumentErrors.notFound();
+        const db = await database();
+        await db.runTransaction(async (tx) => {
+          const current = await tx.get(
+            collection(db).select('category', 'fingerprint', 'characters'),
+          );
+          const plan = planMove(
+            current.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+            id,
+            category,
+          );
+          if (!plan.unchanged) tx.update(collection(db).doc(id), { category });
+        });
+        return stored(await collection(db).doc(id).get());
       }),
     remove: (id) =>
       guarded('remove company document', async () => {

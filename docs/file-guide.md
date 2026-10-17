@@ -189,8 +189,8 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | `server/employee-ids.mjs`               | The prefix rule (2–4 letters, `HR` reserved) and the `PE-0001` Employee ID format                                                    |
 | `server/employee-profiles.mjs`          | Profile validation and `employeeProfiles/{accountId}` in Firestore; removes an account's profile and `employeeImports` drafts        |
 | `server/company-knowledge.mjs`          | HR company knowledge uploads and their search for account-owned chats                                                                |
-| `server/company-documents.mjs`          | Firestore `companyDocuments` and the library rules (one document per topic, twelve documents)                                        |
-| `server/onboarding-document-topics.mjs` | The six onboarding topics of the company library                                                                                     |
+| `server/company-documents.mjs`          | Firestore `companyDocuments` and the library rules (many documents per area, 40 documents)                                           |
+| `server/onboarding-document-topics.mjs` | The five onboarding areas of the company library                                                                                     |
 | `server/profile-autofill.mjs`           | Profile autofill: reads profile fields from an uploaded document with Gemini; saves nothing                                          |
 | `server/database-migrations.mjs`        | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                                                            |
 | `server/migrations/`                    | Plain SQL migrations                                                                                                                 |

@@ -117,7 +117,7 @@ test('a stack where 001 and 002 already ran gets 003 only, which upgrades its te
   for (const name of ['001_onboarding_templates.mjs', '002_quick_questions.mjs'])
     firestore.write(`${MARKER_COLLECTION}/${name}`, { appliedAt: '2026-10-14T01:00:00.000Z' });
   const { applied } = await migrateFirestore(firestore, { log: () => {} });
-  assert.deepEqual(applied, ['003_onboarding_templates_v2.mjs']);
+  assert.deepEqual(applied, ['003_onboarding_templates_v2.mjs', '004_company_documents_areas.mjs']);
   assert.equal(firestore.read('onboardingTemplates/employee').version, 2);
   assert.deepEqual((await migrateFirestore(firestore, { log: () => {} })).applied, []);
 });
