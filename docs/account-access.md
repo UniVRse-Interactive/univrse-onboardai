@@ -127,7 +127,7 @@ about profiles name the operation and Firestore status only, never values.
   issues a new one; a reset or disable ends all of that employee's sessions; signing out
   deletes the session on the server.
 - **Requests**: every account and HR route checks the browser's `Origin` like the saved-chat
-  routes, is never cached, and sits behind the API's limit of 30 POST and PATCH requests per
+  routes, is never cached, and sits behind the API's limit of 60 POST and PATCH requests per
   minute per IP.
 - **Start-up guard**: with `DATABASE_URL` set the server refuses to start unless
   `FIRESTORE_DATABASE_ID` and a project are set and, outside Cloud Run (`K_SERVICE` unset),
@@ -236,7 +236,7 @@ Answers every route can give:
 | 503    | `PROFILE_STORAGE_UNAVAILABLE` | Firestore failed (routes that touch profiles)                |
 | 504    | `PROFILE_STORAGE_TIMEOUT`     | Firestore gave no answer within 10 seconds                   |
 | 404    | `NOT_FOUND`                   | No such account route                                        |
-| 429    | (no code)                     | More than 30 POST and PATCH requests in a minute from one IP |
+| 429    | (no code)                     | More than 60 POST and PATCH requests in a minute from one IP |
 | 500    | `ACCOUNT_REQUEST_FAILED`      | Unexpected failure                                           |
 
 Routes that need a session check, in this order:
@@ -284,7 +284,7 @@ ProfileSummary  { fullName, preferredName, jobTitle, department, startDate }
 | `GET /api/hr/company-knowledge`                                | HR                              | none                                                                                                      | 200 `KnowledgeSnapshot`; see [Company Documentation](#company-documentation)                                                                                             | 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                              |
 | `POST /api/hr/company-knowledge/documents?category=…[&name=…]` | HR                              | raw file (`application/octet-stream`, `X-File-Name`), see [Company Documentation](#company-documentation) | 201 `{ id, duplicate: false }` or 200 `{ id, duplicate: true }`                                                                                                          | see [Company Documentation](#company-documentation)                                                                                                                                                               |
 | `PATCH /api/hr/company-knowledge/documents/:id`                | HR                              | `{ category }`, see [Company Documentation](#company-documentation)                                       | 200 `{ document }`                                                                                                                                                       | 400 `DOCUMENT_TOPIC_REQUIRED`; 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 409 `COMPANY_DOCUMENT_DUPLICATE`; 503/504 as above                                                                                             |
-| `DELETE /api/hr/company-knowledge/documents/:id`               | HR                              | none                                                                                                      | 204: the record is removed (the stored text is removed)                                                                                                                  | 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                          |
+| `DELETE /api/hr/company-knowledge/documents/:id`               | HR                              | none                                                                                                      | 204: the document is removed from GCS, Vertex AI Search and Firestore (see [Company Documentation](#company-documentation))                                              | 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                          |
 
 `PROFILE_INVALID` example:
 
@@ -533,8 +533,13 @@ Confirmed support requests, HR's workflow and the rest are in
 Signed-in HR keeps one company-wide library of uploaded files, the Company Documentation page. HR
 uploads PDF, Word (`.docx`), text or Markdown files (5 MiB each) under `/api/hr/company-knowledge`;
 the server reads each file into plain text with the shared upload reader
-(`server/read-uploaded-document.mjs`) and stores only that text and its metadata. The original
-file is never stored.
+(`server/read-uploaded-document.mjs`) to check it, find duplicates and count its characters, and
+keeps only the document's metadata in Firestore, never the text or the file. With
+`GOOGLE_CLOUD_PROJECT`, `DOCS_BUCKET` and `VERTEX_SEARCH_DATA_STORE_ID` set, the file itself goes
+to the documents bucket at `gs://<DOCS_BUCKET>/<id>/<file name>` (PDF and DOCX as uploaded, text
+and Markdown as UTF-8 `.txt`) and is imported into the Vertex AI Search data store: one
+`documents:import` of that object, `reconciliationMode: INCREMENTAL`. Without them an upload is
+listed but never reaches chats.
 
 ```text
 KnowledgeSnapshot {
@@ -563,19 +568,29 @@ KnowledgeSnapshot {
   file name without its extension (cut to 80 characters); never the area's title, so Alya cites
   each document by its title. An upload always adds: a new document is
   `201 { id, duplicate: false }`. Identical text already stored in the same area is
-  `200 { id, duplicate: true }` (no new document); in another area it is `409`. A JSON body is
-  `415 FILE_UPLOAD_REQUIRED`.
+  `200 { id, duplicate: true }` (no new document, nothing synced); in another area it is `409`.
+  A JSON body is `415 FILE_UPLOAD_REQUIRED`. If the GCS upload or the import fails, the new
+  metadata is removed again and the answer is `503 COMPANY_KNOWLEDGE_UNAVAILABLE`.
 - **Move** (`PATCH /api/hr/company-knowledge/documents/:id` with `{ "category": "<area id or additional>" }`,
   HR, same-origin): `200 { document }` with the document as in the snapshot. Moving to the area it is
   already in changes nothing. Otherwise the move writes a `company_document_moved` audit row
   (`target_id` empty, `detail` `{ documentId, from, to }`, ids only) in the same step. Errors:
   `404 WORKSPACE_DOCUMENT_NOT_FOUND` (unknown id), `400 DOCUMENT_TOPIC_REQUIRED` (invalid
-  category), `409 COMPANY_DOCUMENT_DUPLICATE` (another document holds the same text).
-- **Storage**: Firestore `companyDocuments/{id}`: `category`, `title`, `fileName`, `text` (at most
-  250,000 characters), `characters`, `bytes` (the file's size), `fingerprint` (SHA-256 of the text),
-  `connectedBy` (the HR account ID) and `connectedAt` (ISO 8601). At most forty documents and
-  1,500,000 characters in total; checks and writes run in one transaction. Documents stored before issue #35 have no `fileName` (listed as `''`) and still list and retrieve.
-  Log lines never contain file names or text.
+  category), `409 COMPANY_DOCUMENT_DUPLICATE` (another document holds the same text). A move
+  changes only the metadata; the indexed file stays as it is.
+- **Delete** (`DELETE /api/hr/company-knowledge/documents/:id`, HR, same-origin): `204`. With the
+  sync on, the server deletes the GCS object (a `404` counts as gone), then the Vertex AI Search
+  document with the same id and any other indexed document with the object's `gs://` URI, and
+  only then the Firestore metadata. It never re-imports the bucket. If GCS or Vertex AI Search
+  fails, the answer is `503 COMPANY_KNOWLEDGE_UNAVAILABLE` and the document stays listed, so HR
+  can delete it again. An unknown id is `404 WORKSPACE_DOCUMENT_NOT_FOUND` before any cloud call.
+- **Storage**: Firestore `companyDocuments/{id}`, metadata only: `category`, `title`, `fileName`,
+  `characters` (of the extracted text, at most 250,000), `bytes` (the file's size), `fingerprint`
+  (SHA-256 of the extracted text), `connectedBy` (the HR account ID) and `connectedAt` (ISO 8601).
+  At most forty documents and 1,500,000 characters in total; checks and writes run in one
+  transaction. Documents stored before the metadata-only change may still hold a `text` field,
+  which nothing reads. Documents stored before issue #35 have no `fileName` (listed as `''`) and
+  still list. Log lines never contain file names or text.
 - **Errors** (besides the session and route tables; file errors are the shared upload reader's):
 
   | Status              | Code                                                                                                                                                                                                               | When                                                           |
@@ -587,8 +602,8 @@ KnowledgeSnapshot {
   | 409                 | `COMPANY_DOCUMENT_DUPLICATE`                                                                                                                                                                                       | The same text is already stored in another area                |
   | 409                 | `WORKSPACE_DOCUMENT_LIMIT`                                                                                                                                                                                         | Forty documents already                                        |
   | 413                 | `WORKSPACE_TEXT_LIMIT`                                                                                                                                                                                             | Over 1,500,000 characters in total                             |
-  | 503                 | `COMPANY_KNOWLEDGE_UNAVAILABLE`                                                                                                                                                                                    | Firestore failed                                               |
-  | 504                 | `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                                                                        | Firestore gave no answer within 10 seconds                     |
+  | 503                 | `COMPANY_KNOWLEDGE_UNAVAILABLE`                                                                                                                                                                                    | Firestore, GCS or Vertex AI Search failed                      |
+  | 504                 | `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                                                                        | No answer within 10 seconds (Firestore and the sync together)  |
 
 - **Web service**: `server/api-proxy.mjs` forwards this path as an upload with a 5 MiB limit and
   answers `413 FILE_TOO_LARGE` for a larger file.
@@ -601,8 +616,8 @@ Chats owned by an account (`account:<id>`, employee or HR) query Vertex AI Searc
 - `AI_MODE=document-search`: the two best quotes from Vertex AI Search (`companyRetrieve`).
 - Single-turn Gemini and sample answers do not search documents, as before.
 
-The library is the uploaded documents, using the text saved at upload. Every chat belongs to an
-account, so every chat searches it.
+HR's uploads reach chats only through Vertex AI Search, once its import has indexed them. Every
+chat belongs to an account.
 
 ### Account-owned chats
 

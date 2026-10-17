@@ -227,7 +227,7 @@ test('hr_verify steps wait for HR; only HR verifies them and the employee cannot
     assert.equal(step(repeat.body, 'documentation.contract').source, 'hr');
 
     // HR can verify a step that was never submitted, and unverify one.
-    await hr.patch(`/api/hr/employees/${id}/onboarding/steps/role-tools.role-responsibilities`, {
+    await hr.patch(`/api/hr/employees/${id}/onboarding/steps/documentation.emergency-contact`, {
       status: 'done',
     });
     const unverified = await hr.patch(
@@ -235,7 +235,7 @@ test('hr_verify steps wait for HR; only HR verifies them and the employee cannot
       { status: 'todo' },
     );
     assert.equal(step(unverified.body, 'documentation.contract').status, 'todo');
-    assert.equal(step(unverified.body, 'role-tools.role-responsibilities').status, 'done');
+    assert.equal(step(unverified.body, 'documentation.emergency-contact').status, 'done');
 
     // HR changes hr_verify steps only, with a valid status, for an existing employee.
     for (const [path, body, status, code] of [
@@ -270,7 +270,7 @@ test('hr_verify steps wait for HR; only HR verifies them and the employee cannot
     assert.deepEqual(details, [
       'documentation.contract done',
       'documentation.contract todo',
-      'role-tools.role-responsibilities done',
+      'documentation.emergency-contact done',
     ]);
   });
 });
@@ -374,15 +374,17 @@ test('the track picks the template; 3 of 4 required steps in every area complete
         ['documentation', 4],
         ['policies', 4],
         ['alignment', 4],
-        ['role-tools', 4],
+        ['role-tools', 11],
         ['team-support', 4],
       ],
     );
     assert.equal(step(start, 'documentation.confidentiality-agreement').completion, 'hr_verify');
     const template = builtInTemplate('contractor');
-    // The first three required steps of every area.
-    for (const a of template.areas)
-      for (const s of a.steps.filter((t) => t.required).slice(0, 3)) {
+    // Complete enough required steps in every area to meet the 70% threshold.
+    for (const a of template.areas) {
+      const requiredSteps = a.steps.filter((t) => t.required);
+      const needed = Math.ceil(requiredSteps.length * 0.7);
+      for (const s of requiredSteps.slice(0, needed)) {
         if (s.completion === 'self')
           await browser.post(`/api/me/onboarding/steps/${s.id}/complete`);
         if (s.completion === 'hr_verify') {
@@ -397,12 +399,13 @@ test('the track picks the template; 3 of 4 required steps in every area complete
               : { optionId: s.check.correctOptionId },
           );
       }
+    }
     const end = (await browser.get('/api/me/onboarding')).body;
     assert.deepEqual(
       [end.percent, end.complete, end.waitingOnHr, end.nextStep.id],
       [75, true, 0, 'documentation.confidentiality-agreement'],
     );
-    assert.ok(end.areas.every((a) => a.meetsThreshold && a.percent === 75));
+    assert.ok(end.areas.every((a) => a.meetsThreshold && a.percent >= 70));
     const listed = (await hr.get('/api/hr/employees')).body.employees[0];
     assert.deepEqual(
       [listed.track, listed.onboarding],
@@ -497,6 +500,89 @@ test('answer style, feedback and help requests never change onboarding completio
     });
     const after = (await browser.get('/api/me/onboarding')).body;
     assert.deepEqual(after, before);
+  });
+});
+
+test('AI proficiency self-assessment: deterministic path mapping, step sync, non-destructive editing and 403 access control', async () => {
+  await withApp({}, async (app) => {
+    const hr = await app.hrBrowser();
+    const { employee, browser } = await app.readyEmployee(hr);
+    const other = await app.readyEmployee(hr, { profile: syntheticProfile('Blake Sample') });
+    const id = employee.account.id;
+    app.briefAll(id);
+
+    // 1. Default unanswered state.
+    const initial = await browser.get('/api/me/ai-proficiency');
+    assert.equal(initial.status, 200);
+    assert.equal(initial.body.aiProficiency.status, 'unanswered');
+    assert.equal(initial.body.aiProficiency.level, null);
+    assert.equal(initial.body.aiProficiency.learningPathId, 'beginner');
+    assert.equal(initial.body.aiProficiency.trainingCompleted, false);
+    assert.equal(Object.keys(initial.body.levels).length, 10);
+
+    // 2. Validation errors.
+    for (const badBody of [
+      {},
+      { status: 'unanswered' },
+      { status: 'assessed', level: 0 },
+      { status: 'assessed', level: 11 },
+      { status: 'assessed', level: 4.5 },
+      { status: 'not_sure', level: 3 },
+      { status: 'skipped', level: 1 },
+      { status: 'assessed', level: 5, extra: true },
+    ]) {
+      const bad = await browser.put('/api/me/ai-proficiency', badBody);
+      assert.deepEqual([bad.status, bad.body.code], [400, 'AI_PROFICIENCY_INVALID']);
+    }
+
+    // 3. Submit rating 5 -> intermediate, step remains todo.
+    const assessed = await browser.put('/api/me/ai-proficiency', {
+      status: 'assessed',
+      level: 5,
+    });
+    assert.equal(assessed.status, 200);
+    assert.equal(assessed.body.aiProficiency.status, 'assessed');
+    assert.equal(assessed.body.aiProficiency.level, 5);
+    assert.equal(assessed.body.aiProficiency.learningPathId, 'intermediate');
+    assert.equal(assessed.body.aiProficiency.trainingCompleted, false);
+    assert.equal(step(assessed.body.onboarding, 'role-tools.ai-readiness-training').status, 'todo');
+
+    // 4. Complete training -> step becomes done.
+    const completed = await browser.post('/api/me/ai-proficiency/complete-training', {
+      practiceNote: 'Refined prompt with constraints and verification checklist.',
+    });
+    assert.equal(completed.status, 200);
+    assert.equal(completed.body.aiProficiency.trainingCompleted, true);
+    assert.equal(
+      step(completed.body.onboarding, 'role-tools.ai-readiness-training').status,
+      'done',
+    );
+
+    // 5. Non-destructive editing: changing rating to 8 -> advanced preserves trainingCompleted and step done.
+    const edited = await browser.put('/api/me/ai-proficiency', {
+      status: 'assessed',
+      level: 8,
+    });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.body.aiProficiency.learningPathId, 'advanced');
+    assert.equal(edited.body.aiProficiency.trainingCompleted, true);
+    assert.equal(step(edited.body.onboarding, 'role-tools.ai-readiness-training').status, 'done');
+
+    // 6. Access control: HR can read an employee's AI proficiency, another employee gets 403 FORBIDDEN.
+    const hrView = await hr.get(`/api/hr/employees/${id}/ai-proficiency`);
+    assert.equal(hrView.status, 200);
+    assert.equal(hrView.body.aiProficiency.level, 8);
+
+    const crossEmployeeRead = await other.browser.get(`/api/hr/employees/${id}/ai-proficiency`);
+    assert.equal(crossEmployeeRead.status, 403);
+
+    const crossUserQuery = await other.browser.get(`/api/me/ai-proficiency?userId=${id}`);
+    assert.deepEqual([crossUserQuery.status, crossUserQuery.body.code], [403, 'FORBIDDEN']);
+
+    const crossCompanyWrite = await browser.put('/api/me/ai-proficiency?companyId=other-co', {
+      status: 'skipped',
+    });
+    assert.deepEqual([crossCompanyWrite.status, crossCompanyWrite.body.code], [403, 'FORBIDDEN']);
   });
 });
 

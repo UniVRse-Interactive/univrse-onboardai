@@ -188,8 +188,8 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | `server/departments.mjs`                | The six first departments and prefixes, seed data only (migration 004 holds the live list in `departments`); import-free             |
 | `server/employee-ids.mjs`               | The prefix rule (2–4 letters, `HR` reserved) and the `PE-0001` Employee ID format                                                    |
 | `server/employee-profiles.mjs`          | Profile validation and `employeeProfiles/{accountId}` in Firestore; removes an account's profile and `employeeImports` drafts        |
-| `server/company-knowledge.mjs`          | HR company knowledge uploads and their search for account-owned chats                                                                |
-| `server/company-documents.mjs`          | Firestore `companyDocuments` and the library rules (many documents per area, 40 documents)                                           |
+| `server/company-knowledge.mjs`          | HR company knowledge uploads; chat retrieval for account-owned chats goes only to Vertex AI Search                                   |
+| `server/company-documents.mjs`          | Firestore `companyDocuments` (metadata only), the library rules, and the GCS + Vertex AI Search sync of uploads and deletes          |
 | `server/onboarding-document-topics.mjs` | The five onboarding areas of the company library                                                                                     |
 | `server/profile-autofill.mjs`           | Profile autofill: reads profile fields from an uploaded document with Gemini; saves nothing                                          |
 | `server/database-migrations.mjs`        | Runs `server/migrations/*.sql` once each, recorded in `schema_migrations`                                                            |
@@ -205,6 +205,7 @@ HR and employee sign-in, on when `DATABASE_URL` is set. PostgreSQL holds account
 | `scripts/hr-account-tool.mjs`           | Input (terminal without echo, or piped lines) and rules shared by both HR scripts                                                    |
 | `server/onboarding-content.mjs`         | The built-in onboarding templates per track, policy scenario checks and quick-question chips                                         |
 | `server/onboarding-progress.mjs`        | Footprint rules: template validation, the Onboarding view (70% rule, next step), step transitions, the briefing gate, chip selection |
+| `server/ai-proficiency.mjs`             | AI proficiency self-assessment (levels 1–10, learning paths) for the `role-tools.ai-readiness-training` step, and its chat rating    |
 | `server/check-grader.mjs`               | Grades written policy checks with Gemini; the server decides the pass from verified evidence                                         |
 | `server/onboarding-journey.mjs`         | Firestore templates, progress, chips and first-day details for employees and HR                                                      |
 | `server/onboarding-routes.mjs`          | The onboarding journey HTTP routes under `/api/me` and `/api/hr`                                                                     |

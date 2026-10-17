@@ -10,6 +10,8 @@ import {
   contractTitle,
   handbookTitle,
   orientationTitle,
+  peopleSupportTitle,
+  roleToolsTitle,
   templateVersion,
   trackOf,
   tracks,
@@ -64,8 +66,15 @@ const areaTitles = {
 };
 const requiredIds = (template) =>
   template.areas.flatMap((area) => area.steps.filter((s) => s.required).map((s) => s.id));
+const expectedRequiredByArea = {
+  documentation: 4,
+  policies: 4,
+  alignment: 4,
+  'role-tools': 11,
+  'team-support': 4,
+};
 
-test('every built-in template is valid: the user’s areas, 4 required steps per area, a check on each policy step', () => {
+test('every built-in template is valid: the user’s areas, 11 required role-tools steps, 4 required steps in other areas, a check on each check step', () => {
   for (const track of tracks) {
     const template = builtInTemplate(track);
     assert.deepEqual(validTemplate(template, track), template, track);
@@ -76,7 +85,11 @@ test('every built-in template is valid: the user’s areas, 4 required steps per
     );
     for (const area of template.areas) {
       assert.deepEqual([area.icon, area.title, area.description], areaTitles[area.id]);
-      assert.equal(area.steps.filter((step) => step.required).length, 4, `${track} ${area.id}`);
+      assert.equal(
+        area.steps.filter((step) => step.required).length,
+        expectedRequiredByArea[area.id],
+        `${track} ${area.id}`,
+      );
       for (const step of area.steps) {
         assert.match(step.id, new RegExp(`^${area.id}\\.[a-z0-9-]+$`));
         assert.equal(typeof step.required, 'boolean');
@@ -88,7 +101,7 @@ test('every built-in template is valid: the user’s areas, 4 required steps per
     assert.ok(template.areas[1].steps.every((step) => step.completion === 'check'));
     assert.ok(template.areas[2].steps.every((step) => step.completion === 'self'));
     assert.equal(template.version, templateVersion);
-    assert.equal(templateVersion, 2);
+    assert.equal(templateVersion, 3);
     // v1.4: company rules and conduct are choice checks; data protection and
     // responsible AI are written checks with a rubric.
     assert.deepEqual(
@@ -100,8 +113,8 @@ test('every built-in template is valid: the user’s areas, 4 required steps per
         ['policies.responsible-ai', 'written'],
       ],
     );
-    for (const step of template.areas[1].steps) {
-      assert.equal(step.check.sourceTitle, handbookTitle);
+    for (const step of template.areas.flatMap((a) => a.steps).filter((s) => s.check)) {
+      assert.ok([handbookTitle, roleToolsTitle].includes(step.check.sourceTitle), step.id);
       if (step.check.type === 'choice')
         assert.ok(step.check.options.some((o) => o.id === step.check.correctOptionId));
       else {
@@ -114,7 +127,15 @@ test('every built-in template is valid: the user’s areas, 4 required steps per
     }
     // v1.5: every required step has Alya's briefing, plain and short enough to
     // read aloud; the optional step has none.
-    const titles = [handbookTitle, checklistTitle, orientationTitle, contractTitle, null];
+    const titles = [
+      handbookTitle,
+      checklistTitle,
+      orientationTitle,
+      contractTitle,
+      roleToolsTitle,
+      peopleSupportTitle,
+      null,
+    ];
     for (const step of template.areas.flatMap((a) => a.steps)) {
       if (!step.required) {
         assert.equal(step.briefing, null, step.id);
@@ -128,13 +149,11 @@ test('every built-in template is valid: the user’s areas, 4 required steps per
       assert.ok(sentences.length >= 2 && sentences.length <= 4, `${track} ${step.id}`);
       assert.doesNotMatch(text, /https?:|www\.|@|\n|^\s*[-•*#]|[#*•]/, step.id);
     }
+    assert.equal(findStep(template, 'role-tools.gsheet-training-sop').step.completion, 'check');
+    assert.equal(findStep(template, 'role-tools.gsheet-daily-updates').step.completion, 'check');
     assert.equal(
-      findStep(template, 'role-tools.role-responsibilities').step.completion,
-      'hr_verify',
-    );
-    assert.equal(
-      findStep(template, 'role-tools.ai-training').step.askAlya,
-      'Which AI training suits my role?',
+      findStep(template, 'role-tools.ai-readiness-training').step.askAlya,
+      'How does the AI proficiency self-assessment work, and what training should I complete?',
     );
     assert.equal(findStep(template, 'policies.responsible-ai').step.completion, 'check');
     // One optional step: working preferences or support needs.
@@ -143,21 +162,17 @@ test('every built-in template is valid: the user’s areas, 4 required steps per
       ['team-support.working-preferences'],
     );
   }
-  // Interns share the employee ids with intern wording; contractors substitute two steps.
-  assert.equal(stepIds(builtInTemplate('employee')).length, 21);
+  // Interns share the employee ids with intern wording; contractors substitute confidentiality-agreement.
+  assert.equal(stepIds(builtInTemplate('employee')).length, 28);
   assert.deepEqual(stepIds(builtInTemplate('intern')), stepIds(builtInTemplate('employee')));
-  assert.equal(requiredIds(builtInTemplate('contractor')).length, 20);
+  assert.equal(requiredIds(builtInTemplate('contractor')).length, 27);
   assert.deepEqual(
     stepIds(builtInTemplate('contractor')).filter((id) => !stepIds(builtInTemplate()).includes(id)),
-    ['documentation.confidentiality-agreement', 'team-support.day-to-day-contact'],
+    ['documentation.confidentiality-agreement'],
   );
   assert.equal(
     findStep(builtInTemplate('intern'), 'documentation.contract').step.title,
     'Sign your internship agreement',
-  );
-  assert.equal(
-    findStep(builtInTemplate('intern'), 'team-support.meet-manager').step.title,
-    'Meet your supervisor',
   );
   assert.equal(
     findStep(builtInTemplate('contractor'), 'documentation.contract').step.title,
@@ -173,9 +188,9 @@ test('every built-in template is valid: the user’s areas, 4 required steps per
 test('choice checks do not give the answer away: opaque option ids, varied positions, similar lengths', () => {
   for (const track of tracks) {
     const checks = builtInTemplate(track)
-      .areas[1].steps.map((step) => step.check)
-      .filter((check) => check.type === 'choice');
-    assert.equal(checks.length, 2);
+      .areas.flatMap((area) => area.steps.map((step) => step.check))
+      .filter((check) => check && check.type === 'choice');
+    assert.equal(checks.length, 3);
     // Option ids are opaque: never a letter or a number that names a position.
     for (const check of checks)
       for (const option of check.options)
@@ -185,7 +200,7 @@ test('choice checks do not give the answer away: opaque option ids, varied posit
     const positions = checks.map((check) =>
       check.options.findIndex((option) => option.id === check.correctOptionId),
     );
-    assert.equal(new Set(positions).size, 2, track);
+    assert.ok(new Set(positions).size >= 2, track);
     let correctIsLongest = 0;
     for (const check of checks) {
       const lengths = check.options.map((option) => option.text.length);
@@ -287,7 +302,13 @@ test('progress maths: a new employee is at 0% with the first Documentation step 
   assert.deepEqual(Object.keys(view.areas[0].steps[0].briefing), ['text', 'sourceTitle']);
   assert.deepEqual(
     view.areas.map((a) => [a.done, a.total, a.meetsThreshold]),
-    Array(5).fill([0, 4, false]),
+    [
+      [0, 4, false],
+      [0, 4, false],
+      [0, 4, false],
+      [0, 11, false],
+      [0, 4, false],
+    ],
   );
   // No check answer or rubric in the view.
   for (const secret of ['correctOptionId', 'keyPoints', 'mustNot', 'modelAnswer'])
@@ -314,7 +335,7 @@ test('progress maths: area percents count required steps only; submitted steps w
       ['documentation', 0, 4, 0],
       ['policies', 0, 4, 0],
       ['alignment', 1, 4, 25],
-      ['role-tools', 0, 4, 0],
+      ['role-tools', 0, 11, 0],
       ['team-support', 0, 4, 0],
     ],
   );
@@ -343,38 +364,42 @@ test('progress maths: area percents count required steps only; submitted steps w
   assert.equal(view.areas[4].steps.at(-1).status, 'todo');
 });
 
-test('the 70% rule: 3 of 4 in every area is complete; 2 of 4 in any one area is not', () => {
+test('the 70% rule: 3 of 4 (8 of 11 in role-tools) in every area is complete; 1 fewer in any area is not', () => {
   for (const track of tracks) {
     const template = builtInTemplate(track);
-    const threeOfFour = Object.fromEntries(
+    const minForArea = (area) => {
+      const req = area.steps.filter((s) => s.required);
+      return Math.ceil((req.length * 70) / 100);
+    };
+    const atThreshold = Object.fromEntries(
       template.areas.flatMap((area) =>
         area.steps
           .filter((s) => s.required)
-          .slice(0, 3)
+          .slice(0, minForArea(area))
           .map((s) => [s.id, 'done']),
       ),
     );
-    let view = buildOnboarding(template, progressOf(threeOfFour));
+    let view = buildOnboarding(template, progressOf(atThreshold));
     assert.ok(
-      view.areas.every((a) => a.percent === 75 && a.meetsThreshold),
+      view.areas.every((a) => a.meetsThreshold),
       track,
     );
-    assert.deepEqual([view.percent, view.complete], [75, true], track);
+    assert.equal(view.complete, true, track);
     // The last required step of each area is still todo: the first one is next.
     assert.equal(view.nextStep.id, template.areas[0].steps[3].id, track);
     for (const area of template.areas) {
-      const fewer = { ...threeOfFour };
-      delete fewer[area.steps.filter((s) => s.required)[2].id];
+      const fewer = { ...atThreshold };
+      const count = minForArea(area);
+      delete fewer[area.steps.filter((s) => s.required)[count - 1].id];
       view = buildOnboarding(template, progressOf(fewer));
       const below = view.areas.find((a) => a.id === area.id);
-      assert.deepEqual([below.percent, below.meetsThreshold], [50, false], `${track} ${area.id}`);
+      assert.equal(below.meetsThreshold, false, `${track} ${area.id}`);
       assert.equal(view.complete, false, `${track} ${area.id}`);
       // The next step is in the area below the threshold.
       assert.equal(view.nextStep.areaId, area.id, `${track} ${area.id}`);
-      assert.equal(view.percent, 70);
     }
     // A submitted step is not done: 2 done + 1 submitted is below the threshold.
-    const pending = { ...threeOfFour, [template.areas[0].steps[2].id]: 'submitted' };
+    const pending = { ...atThreshold, [template.areas[0].steps[2].id]: 'submitted' };
     view = buildOnboarding(template, progressOf(pending));
     assert.deepEqual([view.areas[0].meetsThreshold, view.complete], [false, false]);
   }
@@ -593,4 +618,110 @@ test('stored chip lists are checked: unknown kinds, personal chips without a typ
     [chips[0], chips[0]],
   ])
     assert.equal(validChips(list), null);
+});
+
+test('AI proficiency self-assessment: deterministic path mapping, step status sync, and non-destructive editing', async () => {
+  const {
+    AI_READINESS_STEP_ID,
+    aiLevelDescriptions,
+    applyAiAssessment,
+    applyAiTrainingCompleted,
+    assertAiProficiencyAccess,
+    learningPathFor,
+    parseChatAiAssessment,
+    presentAiProficiency,
+    validateAiAssessmentInput,
+  } = await import('../../server/ai-proficiency.mjs');
+  const template = builtInTemplate('employee');
+
+  // 1. Default unanswered state
+  const freshView = buildOnboarding(template, null);
+  assert.equal(freshView.aiProficiency.status, 'unanswered');
+  assert.equal(freshView.aiProficiency.level, null);
+  assert.equal(freshView.aiProficiency.learningPathId, 'beginner');
+  assert.equal(freshView.aiProficiency.trainingCompleted, false);
+  const aiStep = (view) =>
+    view.areas.find((a) => a.id === 'role-tools').steps.find((s) => s.id === AI_READINESS_STEP_ID);
+  assert.equal(aiStep(freshView).status, 'todo');
+
+  // 2. Deterministic path mapping across all levels (1-10), not_sure, and skipped
+  assert.equal(Object.keys(aiLevelDescriptions).length, 10);
+  for (const level of [1, 2, 3]) assert.equal(learningPathFor('assessed', level), 'beginner');
+  for (const level of [4, 5, 6]) assert.equal(learningPathFor('assessed', level), 'intermediate');
+  for (const level of [7, 8, 9, 10]) assert.equal(learningPathFor('assessed', level), 'advanced');
+  assert.equal(learningPathFor('not_sure', null), 'beginner');
+  assert.equal(learningPathFor('skipped', null), 'beginner');
+
+  // 3. Selecting a rating or skipping NEVER marks the step done until trainingCompleted === true
+  const assessedL5 = applyAiAssessment(
+    null,
+    validateAiAssessmentInput({ status: 'assessed', level: 5 }),
+    '2026-10-17T01:00:00.000Z',
+  );
+  assert.equal(assessedL5.learningPathId, 'intermediate');
+  assert.equal(assessedL5.trainingCompleted, false);
+  const viewAfterRating = buildOnboarding(template, {
+    accountId: 'synthetic',
+    aiProficiency: assessedL5,
+    steps: {
+      [AI_READINESS_STEP_ID]: { status: 'done', updatedAt: '2026-10-17T01:00:00.000Z' },
+    },
+  });
+  assert.equal(aiStep(viewAfterRating).status, 'todo');
+
+  // 4. Completing training sets trainingCompleted = true and transitions step to 'done'
+  const trained = applyAiTrainingCompleted(assessedL5, '2026-10-17T02:00:00.000Z');
+  assert.equal(trained.trainingCompleted, true);
+  const viewAfterTraining = buildOnboarding(template, {
+    accountId: 'synthetic',
+    aiProficiency: trained,
+    steps: {},
+  });
+  assert.equal(aiStep(viewAfterTraining).status, 'done');
+
+  // 5. Non-destructive editing: changing level or skipping after trainingCompleted === true
+  // updates learningPathId and updatedAt while keeping trainingCompleted === true and step 'done'
+  const updatedL9 = applyAiAssessment(
+    trained,
+    validateAiAssessmentInput({ status: 'assessed', level: 9 }),
+    '2026-10-17T03:00:00.000Z',
+  );
+  assert.equal(updatedL9.level, 9);
+  assert.equal(updatedL9.learningPathId, 'advanced');
+  assert.equal(updatedL9.trainingCompleted, true);
+  assert.equal(updatedL9.trainingCompletedAt, '2026-10-17T02:00:00.000Z');
+  assert.equal(updatedL9.updatedAt, '2026-10-17T03:00:00.000Z');
+  const viewAfterEdit = buildOnboarding(template, {
+    accountId: 'synthetic',
+    aiProficiency: updatedL9,
+    steps: {},
+  });
+  assert.equal(aiStep(viewAfterEdit).status, 'done');
+  assert.equal(presentAiProficiency(updatedL9).learningPath.id, 'advanced');
+
+  // 6. Access control rejects cross-user and cross-company requests with 403
+  assert.throws(
+    () => assertAiProficiencyAccess({ id: 'user-a', companyId: 'univrse' }, { userId: 'user-b' }),
+    (err) => err.status === 403 && err.code === 'FORBIDDEN',
+  );
+  assert.throws(
+    () =>
+      assertAiProficiencyAccess({ id: 'user-a', companyId: 'univrse' }, { companyId: 'other-co' }),
+    (err) => err.status === 403 && err.code === 'FORBIDDEN',
+  );
+
+  // 7. Chat self-assessment parser distinguishes rating/skip from practice task completion
+  assert.deepEqual(parseChatAiAssessment('I set my AI proficiency level to 6'), {
+    status: 'assessed',
+    level: 6,
+  });
+  assert.deepEqual(parseChatAiAssessment('I skipped the AI proficiency assessment'), {
+    status: 'skipped',
+    level: null,
+  });
+  assert.deepEqual(parseChatAiAssessment("I'm not sure about my AI proficiency level"), {
+    status: 'not_sure',
+    level: null,
+  });
+  assert.equal(parseChatAiAssessment('I completed the AI readiness practice task'), null);
 });

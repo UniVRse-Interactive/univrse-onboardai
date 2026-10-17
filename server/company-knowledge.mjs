@@ -5,8 +5,10 @@ import { workspaceLimits } from './workspace-limits.mjs';
 // Company knowledge for signed-in accounts (issues #32 and #35):
 //
 // - The HR library at /api/hr/company-knowledge (account-routes.mjs): files
-//   that HR uploads, tracked in Firestore companyDocuments (company-documents.mjs)
-//   for the HR dashboard (`list`, `add`, `move`, `remove`, `describe`).
+//   that HR uploads, tracked as metadata only in Firestore companyDocuments
+//   (company-documents.mjs) for the HR dashboard (`list`, `add`, `move`,
+//   `remove`, `describe`). The store syncs each upload and delete to the GCS
+//   documents bucket and the Vertex AI Search data store.
 // - Runtime retrieval for chats and document search (`retrieve`, `quote`):
 //   queries Vertex AI Search (`companyRetrieve`) exclusively and never searches
 //   or falls back to in-memory Firestore `companyDocuments`.

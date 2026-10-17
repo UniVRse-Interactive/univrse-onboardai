@@ -217,3 +217,107 @@ test('createVertexDocumentSync uploads to GCS + triggers documents:import and de
     ],
   );
 });
+
+test('document search: an employee’s answer exclusively uses Vertex AI Search and never falls back to Firestore companyDocuments; signed-out browsers get nothing', async () => {
+  const vertexQueries = [];
+  await withApp(
+    {
+      mode: 'document-search',
+      companyRetrieve: async (query) => {
+        vertexQueries.push(query);
+        return [
+          {
+            title: 'Vertex Handbook.pdf',
+            heading: 'Dress Code',
+            text: 'Business casual clothing from Vertex AI Search.',
+          },
+        ];
+      },
+    },
+    async (app) => {
+      const hr = await app.hrBrowser();
+      await uploadHandbook(hr);
+      const { browser } = await app.readyEmployee(hr);
+      const chat = (await browser.post('/api/conversations')).body;
+      const question = 'What is the dress code?';
+
+      // Even if Firestore companyDocuments were unreachable during chat, runtime
+      // retrieval never queries Firestore companyDocuments.
+      const after = await ask(browser, chat.id, question);
+      assert.equal(after.status, 200, after.text);
+      assert.equal(after.body.matched, true);
+      assert.deepEqual(vertexQueries, [question]);
+      assert.deepEqual(
+        after.body.passages.map((p) => p.title),
+        ['Vertex Handbook.pdf'],
+      );
+      assert.match(after.body.passages[0].preview, /Vertex AI Search/);
+      assert.equal(after.body.source, 'Company documents: Vertex Handbook.pdf');
+
+      const saved = (await browser.get(`/api/conversations/${chat.id}`)).body.messages;
+      assert.equal(saved.at(-1).text, after.body.answer);
+
+      // A signed-out browser is refused and reads nothing.
+      const signedOut = await ask(app.browser(), null, question);
+      assert.deepEqual([signedOut.status, signedOut.body.code], [401, 'AUTH_REQUIRED']);
+      assert.equal(signedOut.body.passages, undefined);
+    },
+  );
+});
+
+test('gemini-chat: account chats retrieve exclusively from Vertex AI Search and never read Firestore companyDocuments', async () => {
+  const vertexQueries = [];
+  await withApp(
+    {
+      mode: 'gemini-chat',
+      companyRetrieve: async (query) => {
+        vertexQueries.push(query);
+        return [
+          {
+            title: 'Synthetic handbook',
+            heading: 'Dress',
+            text: 'Business casual clothing.',
+          },
+        ];
+      },
+    },
+    async (app) => {
+      const hr = await app.hrBrowser();
+      await uploadHandbook(hr);
+      const { browser } = await app.readyEmployee(hr);
+      const chat = (await browser.post('/api/conversations')).body;
+      const answered = await ask(browser, chat.id, 'What should I wear?');
+      assert.equal(answered.status, 200, answered.text);
+      assert.equal(answered.body.mode, 'gemini-memory');
+      assert.deepEqual(vertexQueries, ['dress code']);
+      assert.deepEqual(
+        answered.body.passages.map((p) => [p.id, p.title, p.heading]),
+        [[1, 'Synthetic handbook', 'Dress']],
+      );
+      // A signed-out browser cannot open a chat or ask.
+      const signedOut = app.browser();
+      assert.equal((await signedOut.post('/api/conversations')).status, 401);
+      const refused = await ask(signedOut, chat.id, 'What should I wear?');
+      assert.deepEqual([refused.status, refused.body.code], [401, 'AUTH_REQUIRED']);
+    },
+  );
+});
+
+test('when Vertex AI Search returns no matches, runtime chat does not fall back to Firestore companyDocuments', async () => {
+  await withApp(
+    {
+      mode: 'document-search',
+      companyRetrieve: async () => [],
+    },
+    async (app) => {
+      const hr = await app.hrBrowser();
+      await uploadHandbook(hr);
+      const { browser } = await app.readyEmployee(hr);
+      const chat = (await browser.post('/api/conversations')).body;
+      const result = await ask(browser, chat.id, 'What is the dress code?');
+      assert.equal(result.status, 200, result.text);
+      assert.equal(result.body.matched, false);
+      assert.deepEqual(result.body.passages, []);
+    },
+  );
+});

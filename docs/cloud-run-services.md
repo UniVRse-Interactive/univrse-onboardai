@@ -49,7 +49,7 @@ The api needs the end user's IP (rate limit) and the public host (origin check),
 
 What this affects:
 
-- **Rate limit**: the api allows 30 `POST` and `PATCH` requests per minute per `req.ip`. Because of the hops above, that key is the end user's IP, not Google's or web's. The count is kept in memory, so each api instance has its own; this is one reason the api runs with `max-instances=1` (see [Conversation storage](#conversation-storage)).
+- **Rate limit**: the api allows 60 `POST` and `PATCH` requests per minute per `req.ip` (raised from 30 for the longer v3 onboarding checklist). Because of the hops above, that key is the end user's IP, not Google's or web's. The count is kept in memory, so each api instance has its own; this is one reason the api runs with `max-instances=1` (see [Conversation storage](#conversation-storage)).
 - **Origin check**: saved-conversation routes compare the `Origin` header's host with `req.host`. Behind the proxy that is the forwarded host, i.e. the host the browser used on the web service.
 
 If you change the number of proxies in front of either service (a load balancer, IAP), change `TRUST_PROXY` to match.

@@ -42,6 +42,15 @@ export function mountOnboardingRoutes({
   me.post('/onboarding/steps/:stepId/check', employee, async (req, res) => {
     res.json(await journey.answerCheck(account(req), req.params.stepId, req.body));
   });
+  me.get('/ai-proficiency', employee, async (req, res) => {
+    res.json(await journey.myAiProficiency(account(req), req.query));
+  });
+  me.put('/ai-proficiency', employee, async (req, res) => {
+    res.json(await journey.saveAiProficiency(account(req), req.body, req.query));
+  });
+  me.post('/ai-proficiency/complete-training', employee, async (req, res) => {
+    res.json(await journey.completeAiTraining(account(req), req.body, req.query));
+  });
   me.get('/quick-questions', employee, async (req, res) => {
     res.json(await journey.quickQuestions(account(req)));
   });
@@ -79,6 +88,9 @@ export function mountOnboardingRoutes({
   });
   hr.get('/employees/:id/onboarding', hrOnly, async (req, res) => {
     res.json(await journey.employeeOnboarding(req.params.id));
+  });
+  hr.get('/employees/:id/ai-proficiency', hrOnly, async (req, res) => {
+    res.json(await journey.employeeAiProficiency(req.params.id, req.accountSession, req.query));
   });
   hr.patch('/employees/:id/onboarding/steps/:stepId', hrOnly, async (req, res) => {
     res.json(

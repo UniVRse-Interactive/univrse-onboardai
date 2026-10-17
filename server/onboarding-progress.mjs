@@ -6,6 +6,7 @@ import {
   completionTypes,
   writtenAnswerMaxLength,
 } from './onboarding-content.mjs';
+import { AI_READINESS_STEP_ID, presentAiProficiency } from './ai-proficiency.mjs';
 
 // Pure onboarding footprint rules (issue #47): template validation, the
 // Onboarding view, step transitions and the quick-question chip selection. No
@@ -154,8 +155,20 @@ export function stepRecord(progress, stepId) {
 }
 // The stored entry of a step, or null for "todo". Only "submitted" and "done"
 // are statuses; a record with only briefedAt (v1.5) is still todo.
+// For 'role-tools.ai-readiness-training', when progress.aiProficiency is
+// present, the step status is 'done' if and only if trainingCompleted === true.
 export function progressEntry(progress, stepId) {
   const entry = stepRecord(progress, stepId);
+  if (stepId === AI_READINESS_STEP_ID && isObject(progress?.aiProficiency)) {
+    if (progress.aiProficiency.trainingCompleted !== true) return null;
+    if (entry && entry.status === 'done') return entry;
+    return {
+      status: 'done',
+      updatedAt:
+        progress.aiProficiency.trainingCompletedAt || progress.aiProficiency.updatedAt || null,
+      source: entry?.source || 'employee',
+    };
+  }
   return entry && ['submitted', 'done'].includes(entry.status) ? entry : null;
 }
 export const statusOf = (progress, stepId) => progressEntry(progress, stepId)?.status || 'todo';
@@ -245,6 +258,10 @@ export function buildOnboarding(template, progress) {
     complete: areas.every((area) => area.meetsThreshold),
     waitingOnHr,
     nextStep: firstBelow || firstAnywhere,
+    aiProficiency: presentAiProficiency(
+      progress?.aiProficiency,
+      stepRecord(progress, AI_READINESS_STEP_ID),
+    ),
     areas,
   };
 }

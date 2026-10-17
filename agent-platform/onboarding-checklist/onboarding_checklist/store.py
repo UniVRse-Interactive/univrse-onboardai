@@ -114,7 +114,28 @@ class ChecklistStore:
                 "actorId": account_id,
                 **briefing,
             }
-            updated = {"accountId": account_id, "updatedAt": at, "steps": steps}
+            updated: dict[str, Any] = {"accountId": account_id, "updatedAt": at, "steps": steps}
+            existing_ai = current.get("aiProficiency")
+            if step_id == rules.AI_READINESS_STEP_ID and new_status == rules.DONE:
+                base_ai = dict(existing_ai) if isinstance(existing_ai, dict) else {}
+                status_val = base_ai.get("status")
+                if status_val not in ("unanswered", "assessed", "not_sure", "skipped"):
+                    status_val = "unanswered"
+                level_val = base_ai.get("level") if status_val == "assessed" else None
+                path_val = base_ai.get("learningPathId")
+                if path_val not in ("beginner", "intermediate", "advanced"):
+                    path_val = "beginner"
+                updated["aiProficiency"] = {
+                    "status": status_val,
+                    "level": level_val,
+                    "learningPathId": path_val,
+                    "assessedAt": base_ai.get("assessedAt"),
+                    "updatedAt": at,
+                    "trainingCompleted": True,
+                    "trainingCompletedAt": base_ai.get("trainingCompletedAt") or at,
+                }
+            elif existing_ai is not None:
+                updated["aiProficiency"] = existing_ai
             transaction.set(ref, updated)
             return "marked", updated
 

@@ -3,6 +3,7 @@ import { ChatError } from './chat-errors.mjs';
 import { createStorageCall } from './firestore-client.mjs';
 import { asProfileStorageError } from './employee-profiles.mjs';
 import { journeyCollections } from './onboarding-collections.mjs';
+import { alyaAssessmentReply, parseChatAiAssessment } from './ai-proficiency.mjs';
 import { findStep } from './onboarding-progress.mjs';
 
 // Proposed checklist changes (#51). When an employee tells Alya they finished
@@ -79,8 +80,9 @@ const fallbackReply = {
 
 // A conservative check for "I finished an onboarding activity" in the modes
 // without the Gemini plan step (document search, sample answers). Questions,
-// plans and negations are never matched.
+// plans, negations, and AI proficiency rating/skip statements are never matched.
 export function reportsCompletion(question) {
+  if (parseChatAiAssessment(question)) return false;
   const text = String(question || '')
     .toLowerCase()
     .replace(/[’]/g, "'")
@@ -99,7 +101,7 @@ export function reportsCompletion(question) {
   )
     return false;
   return (
-    /\b(i|i've|i have|i just|i already|we|we've|we have)\b[^.!?]{0,40}\b(finished|completed|done|signed|submitted|met|set up|read|uploaded|sent|added|returned|attended|collected|joined|agreed|taken|took)\b/.test(
+    /\b(i|i've|i have|i just|i already|we|we've|we have)\b[^.!?]{0,40}\b(finished|completed|done|signed|submitted|met|set up|read|uploaded|sent|added|returned|attended|collected|joined|agreed|taken|took|accepted|created|linked|connected|opened|shared|studied|updated|checked|practiced)\b/.test(
       text,
     ) || /^(done|finished|completed)\b/.test(text)
   );
@@ -169,6 +171,14 @@ export function createAgentActions({
   // A chat turn the plan (or the heuristic) routed to the agent. Resolves to
   // { answer, proposedAction } for the turn's assistant message.
   async function propose({ account, conversationId, messageId, text, signal }) {
+    const assessment = parseChatAiAssessment(text);
+    if (assessment && typeof journey.saveAiProficiency === 'function') {
+      const saved = await journey.saveAiProficiency(account, assessment);
+      return {
+        answer: alyaAssessmentReply(saved.aiProficiency),
+        proposedAction: null,
+      };
+    }
     await expireOld(account.id);
     const track = await journey.trackFor(account);
     let outcome;

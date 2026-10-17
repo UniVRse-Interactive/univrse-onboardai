@@ -683,7 +683,7 @@ test('PATCH shares the POST rate limit', async () => {
     const hr = await app.hrBrowser();
     const finance = await named(hr, 'Finance');
     let last;
-    for (let i = 0; i < 40; i++) last = await patch(hr, finance.id, { archived: false });
+    for (let i = 0; i < 70; i++) last = await patch(hr, finance.id, { archived: false });
     assert.equal(last.status, 429);
   });
 });

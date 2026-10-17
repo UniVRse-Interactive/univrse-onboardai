@@ -21,7 +21,9 @@ function fakeAgent(app) {
   const sessions = new Map();
   const calls = [];
   const steps = [
-    ['buddy', 'team-support.meet-buddy', 'done'],
+    ['buddy', 'team-support.company-chat-groups', 'done'],
+    ['chat', 'team-support.company-chat-groups', 'done'],
+    ['ai practice', 'role-tools.ai-readiness-training', 'done'],
     ['contract', 'documentation.contract', 'submitted'],
     ['handbook', 'policies.employee-handbook', null],
     ['mystery', 'nonsense.step', 'done'],
@@ -52,19 +54,35 @@ function fakeAgent(app) {
       const path = `onboardingProgress/${accountId}`;
       const at = app.clock.now().toISOString();
       const current = app.firestore.read(path) || { accountId, steps: {} };
-      app.firestore.write(path, {
+      const next = {
+        ...current,
         accountId,
         updatedAt: at,
         steps: {
           ...current.steps,
           [session.stepId]: {
+            ...(current.steps[session.stepId] || {}),
             status: session.status,
             updatedAt: at,
             source: 'alya-agent',
             actorId: accountId,
           },
         },
-      });
+      };
+      if (session.stepId === 'role-tools.ai-readiness-training' && session.status === 'done') {
+        next.aiProficiency = {
+          ...(current.aiProficiency || {
+            status: 'unanswered',
+            level: null,
+            learningPathId: 'beginner',
+            assessedAt: null,
+          }),
+          updatedAt: at,
+          trainingCompleted: true,
+          trainingCompletedAt: at,
+        };
+      }
+      app.firestore.write(path, next);
       return {
         text: 'Done! Your next step is to sign your employment contract.',
         confirmation: null,
@@ -182,15 +200,15 @@ test('"I\'ve met my buddy today": a proposal, nothing written until Approve, the
     assert.deepEqual(
       [action.stepId, action.stepTitle, action.areaTitle, action.newStatus, action.status],
       [
-        'team-support.meet-buddy',
-        'Meet your buddy',
+        'team-support.company-chat-groups',
+        'Join company chat groups',
         'People & Workplace Support',
         'done',
         'pending',
       ],
     );
     assert.equal(action.expiresAt, new Date(app.clock.now().getTime() + 30 * MINUTE).toISOString());
-    assert.equal(answered.body.answer, 'Shall I mark “Meet your buddy” as done?');
+    assert.equal(answered.body.answer, 'Shall I mark “Join company chat groups” as done?');
     assert.deepEqual(
       [answered.body.coverage, answered.body.category, answered.body.source],
       [null, 'onboarding', 'Your onboarding checklist'],
@@ -231,10 +249,10 @@ test('"I\'ve met my buddy today": a proposal, nothing written until Approve, the
     assert.equal(approved.status, 200, approved.text);
     assert.deepEqual(approved.body.action, { ...action, status: 'approved' });
     assert.equal(approved.body.reply, 'Done! Your next step is to sign your employment contract.');
-    const buddy = approved.body.onboarding.areas[4].steps.find(
-      (s) => s.id === 'team-support.meet-buddy',
+    const chatGroup = approved.body.onboarding.areas[4].steps.find(
+      (s) => s.id === 'team-support.company-chat-groups',
     );
-    assert.deepEqual([buddy.status, buddy.source], ['done', 'alya-agent']);
+    assert.deepEqual([chatGroup.status, chatGroup.source], ['done', 'alya-agent']);
     assert.equal(approved.body.onboarding.nextStep.id, 'documentation.contract');
     assert.equal(app.firestore.read(`agentActions/${action.id}`).status, 'approved');
     // The reply is a new assistant message; the proposal shows its status.
@@ -406,10 +424,51 @@ test('document-search: a conservative heuristic routes completion reports only',
     assert.equal(searched.body.proposedAction, null);
     assert.equal(agent.calls.length, 0);
     const reported = await ask(browser, chat.id, "I've met my buddy today");
-    assert.equal(reported.body.proposedAction.stepId, 'team-support.meet-buddy');
+    assert.equal(reported.body.proposedAction.stepId, 'team-support.company-chat-groups');
     assert.equal(agent.calls[0][1].text, "I've met my buddy today");
     const opened = (await browser.get(`/api/conversations/${chat.id}`)).body.messages;
     assert.equal(opened[3].proposedAction.status, 'pending');
+  });
+});
+
+test('AI proficiency in chat: self-assessment rating saves learning path without marking step done; completing practice task proposes role-tools.ai-readiness-training', async () => {
+  await withAgentApp({}, async (app, agent) => {
+    const hr = await app.hrBrowser();
+    const { employee, browser } = await app.readyEmployee(hr);
+    const id = employee.account.id;
+    const chat = (await browser.post('/api/conversations')).body;
+
+    // 1. Reporting an AI self-assessment rating in chat saves the rating and learning path, without proposing or completing the step.
+    const rated = await ask(browser, chat.id, 'My AI level is 5');
+    assert.equal(rated.status, 200);
+    assert.equal(rated.body.proposedAction, null);
+    assert.match(rated.body.answer, /Better Prompts & Checking Results/);
+    assert.match(rated.body.answer, /Practice task:/);
+    assert.equal(agent.calls.length, 0);
+    const storedAfterRating = app.firestore.read(`onboardingProgress/${id}`);
+    assert.equal(storedAfterRating.aiProficiency.status, 'assessed');
+    assert.equal(storedAfterRating.aiProficiency.level, 5);
+    assert.equal(storedAfterRating.aiProficiency.learningPathId, 'intermediate');
+    assert.equal(storedAfterRating.aiProficiency.trainingCompleted, false);
+    assert.equal(
+      statusesIn(app)[`onboardingProgress/${id}:role-tools.ai-readiness-training`],
+      undefined,
+    );
+
+    // 2. Reporting completion of the AI practice task proposes role-tools.ai-readiness-training, and approving marks trainingCompleted = true and step done.
+    const completed = await ask(browser, chat.id, 'I finished the AI practice task');
+    assert.equal(completed.status, 200);
+    assert.equal(completed.body.proposedAction.stepId, 'role-tools.ai-readiness-training');
+    const approved = await browser.post(
+      `/api/me/agent-actions/${completed.body.proposedAction.id}`,
+      { decision: 'approve' },
+    );
+    assert.equal(approved.status, 200);
+    const aiStep = approved.body.onboarding.areas[3].steps.find(
+      (s) => s.id === 'role-tools.ai-readiness-training',
+    );
+    assert.equal(aiStep.status, 'done');
+    assert.equal(approved.body.onboarding.aiProficiency.trainingCompleted, true);
   });
 });
 

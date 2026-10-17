@@ -25,6 +25,7 @@ DONE = "done"
 SUBMITTED = "submitted"
 TODO = "todo"
 DEFAULT_THRESHOLD = 70
+AI_READINESS_STEP_ID = "role-tools.ai-readiness-training"
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,8 @@ def needs_briefing(step: Step, progress: Mapping[str, Any] | None) -> bool:
 
 
 def status_of(progress: Mapping[str, Any] | None, step_id: str) -> str:
+    if step_id == AI_READINESS_STEP_ID and isinstance((progress or {}).get("aiProficiency"), Mapping):
+        return DONE if progress["aiProficiency"].get("trainingCompleted") is True else TODO
     entry = ((progress or {}).get("steps") or {}).get(step_id)
     if isinstance(entry, Mapping) and entry.get("status") in (DONE, SUBMITTED):
         return entry["status"]
