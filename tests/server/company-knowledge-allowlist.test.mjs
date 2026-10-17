@@ -71,7 +71,6 @@ function recordingModels(prompts) {
           answer: 'Book leave two weeks ahead.',
           citations: [1],
           coverage: 'full',
-          stale: false,
         };
       },
     },
@@ -149,7 +148,10 @@ test('gemini-chat: only active documents reach Gemini and the answer, with their
     assert.equal(answered.body.source, 'Leave Guide.txt');
     assert.equal('guardrail' in answered.body, false);
     // Gemini saw the two admitted passages, numbered in rank order, with dates.
-    const passagesJson = prompts[0].slice(prompts[0].indexOf('Reference passages: ') + 20);
+    // (the Dates instruction follows the passages on its own line)
+    const passagesJson = prompts[0]
+      .slice(prompts[0].indexOf('Reference passages: ') + 20)
+      .split('\n')[0];
     assert.deepEqual(
       JSON.parse(passagesJson).map((p) => [p.id, p.text, p.date, p.dateKind]),
       [

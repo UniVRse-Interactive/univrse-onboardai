@@ -1,8 +1,8 @@
-// Recency rules and the stale verdict (issue #79): the answer prompt names
-// today and each passage's date; a company answer the model marks stale=true
-// is replaced by the fixed stale reply with guardrail { verdict: 'stale',
-// askHr: true }, coverage none and no sources, before any other fallback; the
-// saved message keeps it and a knowledge gap is recorded with the nearest
+// Date rules and the stale verdict (issue #79): the answer prompt names
+// today and each passage's date after the reference passages; a company
+// answer the model returns with coverage "outdated" is replaced by the fixed
+// stale reply with guardrail { verdict: 'stale', askHr: true }, coverage none
+// and no sources, before any other fallback; the saved message keeps it and a knowledge gap is recorded with the nearest
 // source. Fake Gemini models, the in-memory chat stores and synthetic passages.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,6 +18,7 @@ import {
   freshnessLine,
   freshnessVerdicts,
   guardrailFieldOf,
+  outdatedCoverage,
   passageDating,
   recencyInstruction,
   staleReply,
@@ -26,11 +27,11 @@ import {
 import { createChatStore } from '../../server/chat-store.mjs';
 import { startAccountsApp } from './account-harness.mjs';
 
-// The contract text (C-STALE and the recency paragraph), verbatim.
+// The contract text (C-STALE and the Dates instruction), verbatim.
 const contractReply =
   "The company documents I have on this are out of date, so I won't rely on them. Please check with HR for the latest guidance.";
 const contractParagraph =
-  'Recency: today is 2026-10-17. Each passage has a date and a dateKind: "uploaded" means the date is the day the document was added to the company library, and null means no date is known. (1) Before answering, note the time anchors in the passages you use: the date, and any effective date, last-updated date, version number, "valid until" date or replacement note written in the text. A date or version written in the text outranks an uploaded date. (2) When passages disagree on the same point, the most recent one wins: answer that point only from it and cite only it. Never combine figures, steps or conditions from an older and a newer passage. (3) After resolving such a disagreement, begin with "According to the latest update, from <date>," using the date of the passage you followed: the date written in its text if it states one, otherwise its date. (4) A passage is outdated only when its text says it has been replaced or withdrawn or was valid until a date before today, or when a newer passage covers the same point differently. Age alone never makes a passage outdated. (5) If every passage that addresses the question is outdated, do not answer from them: set stale=true, return no citations and coverage=none, and say in one sentence that the documents on this are out of date. Otherwise set stale=false. (6) When the passage you rely on states its own last-updated or effective date in its text, mention it once in plain words, for example "effective 1 March 2026". Write dates as day, month name and year. Never invent a date, and never treat a date the user mentions as a document date.';
+  'Dates: today is 2026-10-17. Each passage has a date, the day it was added to the company library (dateKind "uploaded"), or null when none is known. Dates only decide which passage to follow when passages conflict: if passages give different answers on the same point, answer that point only from the newest one (a date or version written in its text outranks its uploaded date), cite only it, never mix in an older passage\'s figures, and begin with "According to the latest update, from <day month year>,". A passage is outdated only when its own text says it was withdrawn or replaced, or was valid only until a date before today. Age, a missing date, and sample, draft, unapproved or "confirm with HR" status never make a passage outdated. These rules never reduce what you may answer from a passage that is not outdated: cite it and set coverage by the rules above. Only if every passage on the question is outdated, do not answer from it: give no citations and set coverage=outdated; the user then gets a fixed note that the documents are out of date.';
 
 const passages = [
   {
@@ -85,20 +86,25 @@ function service({ reply, retrieve = async () => passages.map((p) => ({ ...p }))
   return { conversations, prompts: fake.prompts };
 }
 
-test('the answer schema requires a boolean stale, and the module exports the contract text', () => {
-  assert.deepEqual(answerSchema.properties.stale, { type: 'boolean' });
-  assert.deepEqual(answerSchema.required, ['answer', 'citations', 'coverage', 'stale']);
+test('the answer schema has no stale field, coverage gains outdated, and the module exports the contract text', () => {
+  assert.equal('stale' in answerSchema.properties, false);
+  assert.deepEqual(answerSchema.properties.coverage.enum, ['full', 'partial', 'none', 'outdated']);
+  assert.deepEqual(answerSchema.required, ['answer', 'citations', 'coverage']);
+  assert.equal(outdatedCoverage, 'outdated');
   assert.equal(staleReply, contractReply);
   assert.deepEqual(freshnessVerdicts, ['stale']);
   assert.equal(recencyInstruction('2026-10-17'), contractParagraph);
-  assert.equal(staleVerdictOf('company', { stale: true }), 'stale');
+  assert.equal(staleVerdictOf('company', { coverage: 'outdated' }), 'stale');
+  assert.equal(staleVerdictOf('company', { coverage: 'outdated', citations: [1, 2] }), 'stale');
   for (const [kind, output] of [
-    ['company', { stale: false }],
+    ['company', { coverage: 'full' }],
+    ['company', { coverage: 'none' }],
     ['company', {}],
-    ['company', { stale: 'true' }],
-    ['conversation', { stale: true }],
-    ['clarify', { stale: true }],
-    ['checklist', { stale: true }],
+    ['company', { stale: true, coverage: 'full' }],
+    ['company', { stale: true }],
+    ['conversation', { coverage: 'outdated' }],
+    ['clarify', { coverage: 'outdated' }],
+    ['checklist', { coverage: 'outdated' }],
   ])
     assert.equal(staleVerdictOf(kind, output), null);
   assert.deepEqual(passageDating({ date: '2026-01-12', dateKind: 'uploaded' }), {
@@ -126,9 +132,9 @@ test('the answer schema requires a boolean stale, and the module exports the con
   assert.deepEqual(guardrailFieldOf(null), {});
 });
 
-test('the prompt names today and each passage’s date, right after the inference rule', async () => {
+test('the Dates instruction comes after the reference passages, and is absent without passages', async () => {
   const { conversations, prompts } = service({
-    reply: () => ({ answer: '16 days.', citations: [2], coverage: 'full', stale: false }),
+    reply: () => ({ answer: '16 days.', citations: [2], coverage: 'full' }),
   });
   try {
     const chat = await conversations.memory.create('person');
@@ -139,32 +145,59 @@ test('the prompt names today and each passage’s date, right after the inferenc
       randomUUID(),
     );
     const [system] = prompts;
+    assert.ok(system.endsWith(`\n${contractParagraph}`));
+    assert.equal(system.includes('Recency:'), false);
+    // Nothing is added mid-prompt: the inference rule is followed directly by the recall rules.
     assert.ok(
       system.includes(
-        `do not turn an inference into a policy.\n${contractParagraph}\nFor personal recall, use only this user's conversation`,
+        "do not turn an inference into a policy. For personal recall, use only this user's conversation",
       ),
     );
-    // The rest of the prompt is unchanged around it.
     assert.match(system, /^You are Alya, the polite company and onboarding assistant/);
     assert.ok(system.includes('\nStandalone question: annual leave days\nReference passages: '));
-    const sent = JSON.parse(system.slice(system.indexOf('Reference passages: ') + 20));
+    const start = system.indexOf('Reference passages: ') + 20;
+    const sent = JSON.parse(system.slice(start, system.length - contractParagraph.length - 1));
     assert.deepEqual(sent, [
       { id: 1, ...passages[0] },
       { id: 2, ...passages[1] },
     ]);
+    assert.ok(system.indexOf('Dates: today') > system.indexOf('Reference passages: '));
   } finally {
     await conversations.close();
   }
+  // With no passages there is no answer call at all, so no Dates text either.
+  const { conversations: empty, prompts: none } = service({
+    reply: () => assert.fail('no answer call'),
+    retrieve: async () => [],
+  });
+  try {
+    const chat = await empty.memory.create('person');
+    await empty.ask('person', chat.id, 'Leave days?', randomUUID());
+    assert.deepEqual(none, []);
+  } finally {
+    await empty.close();
+  }
+  // A conversation turn carries no passages, so no Dates instruction.
+  const { conversations: talk, prompts: talked } = service({
+    reply: () => ({ answer: 'Hello!', citations: [], coverage: 'none' }),
+  });
+  try {
+    const chat = await talk.memory.create('person');
+    await talk.ask('person', chat.id, 'hello Alya', randomUUID());
+    assert.equal(talked.length, 1);
+    assert.equal(talked[0].includes('Dates: today'), false);
+  } finally {
+    await talk.close();
+  }
 });
 
-test('stale=false gives the normal answer, cited passages keep their dates, and no guardrail field', async () => {
+test('a normal coverage gives the normal answer, cited passages keep their dates, and no guardrail field', async () => {
   const logs = [];
   const { conversations } = service({
     reply: () => ({
       answer: 'According to the latest update, from 12 January 2026, you get 16 days.',
       citations: [2],
       coverage: 'full',
-      stale: false,
     }),
     logs,
   });
@@ -185,14 +218,13 @@ test('stale=false gives the normal answer, cited passages keep their dates, and 
   }
 });
 
-test('stale=true gives the fixed reply, guardrail, coverage none and no sources, logged once', async () => {
+test('coverage outdated gives the fixed reply, guardrail, coverage none and no sources, logged once', async () => {
   const logs = [];
   const { conversations, prompts } = service({
     reply: () => ({
       answer: 'The leave policy on this was withdrawn, see Leave Policy 2025.',
       citations: [1, 2],
-      coverage: 'full',
-      stale: true,
+      coverage: 'outdated',
     }),
     logs,
   });
@@ -239,8 +271,7 @@ test('the stale verdict runs before the zero-citation fallback and the example o
     reply: () => ({
       answer: 'These documents are out of date.',
       citations: [],
-      coverage: 'none',
-      stale: true,
+      coverage: 'outdated',
     }),
   });
   try {
@@ -255,9 +286,9 @@ test('the stale verdict runs before the zero-citation fallback and the example o
   } finally {
     await conversations.close();
   }
-  // Without stale, the same output is still the withheld reply.
+  // Without outdated, the same output is still the withheld reply.
   const { conversations: plain } = service({
-    reply: () => ({ answer: 'Not sure.', citations: [], coverage: 'none', stale: false }),
+    reply: () => ({ answer: 'Not sure.', citations: [], coverage: 'none' }),
   });
   try {
     const chat = await plain.memory.create('person');
@@ -269,12 +300,12 @@ test('the stale verdict runs before the zero-citation fallback and the example o
   }
 });
 
-test('the answer shape and citations are checked before the verdict; other turns ignore stale', async () => {
+test('the answer shape and citations are checked before the verdict; other turns ignore outdated', async () => {
   const { conversations } = service({
     reply: (messages) =>
       messages.at(-1).content.includes('hello')
-        ? { answer: 'Hello!', citations: [], coverage: 'none', stale: true }
-        : { answer: 'Out of date.', citations: [7], coverage: 'none', stale: true },
+        ? { answer: 'Hello!', citations: [], coverage: 'outdated' }
+        : { answer: 'Out of date.', citations: [7], coverage: 'outdated' },
   });
   try {
     const chat = await conversations.memory.create('person');
@@ -303,6 +334,42 @@ test('the answer shape and citations are checked before the verdict; other turns
     assert.equal(prompts.length, 0);
   } finally {
     await empty.close();
+  }
+});
+
+test('outdated never reaches a reply or a saved message, and a stale flag from the model is ignored', async () => {
+  const { conversations } = service({
+    reply: () => ({
+      answer: 'Out of date.',
+      citations: [1],
+      coverage: 'outdated',
+    }),
+  });
+  try {
+    const chat = await conversations.memory.create('person');
+    const result = await conversations.ask('person', chat.id, 'Leave days?', randomUUID());
+    assert.equal(result.coverage, 'none');
+    assert.equal(result.answer, contractReply);
+    assert.deepEqual(result.passages, []);
+    const saved = (await conversations.memory.read('person', chat.id)).messages;
+    assert.ok(!JSON.stringify(saved).includes('outdated'));
+    assert.deepEqual(saved.at(-1).result.passages, []);
+    assert.equal(saved.at(-1).guardrail.verdict, 'stale');
+  } finally {
+    await conversations.close();
+  }
+  // A model that still sends stale: true with a normal coverage is not stale.
+  const { conversations: legacy } = service({
+    reply: () => ({ answer: '16 days.', citations: [2], coverage: 'full', stale: true }),
+  });
+  try {
+    const chat = await legacy.memory.create('person');
+    const result = await legacy.ask('person', chat.id, 'Leave days?', randomUUID());
+    assert.equal(result.answer, '16 days.');
+    assert.equal(result.coverage, 'full');
+    assert.equal('guardrail' in result, false);
+  } finally {
+    await legacy.close();
   }
 });
 
@@ -349,8 +416,8 @@ test('over HTTP: the stale reply, the saved message’s guardrail and the knowle
       answer: {
         invoke: async (messages) =>
           messages[0].content.includes('withdrawn on 1 June 2026')
-            ? { answer: 'Withdrawn.', citations: [], coverage: 'none', stale: true }
-            : { answer: 'Nine to five.', citations: [1], coverage: 'full', stale: false },
+            ? { answer: 'Withdrawn.', citations: [], coverage: 'outdated' }
+            : { answer: 'Nine to five.', citations: [1], coverage: 'full' },
       },
       summarize: { invoke: async () => new AIMessage('Earlier.') },
     }),

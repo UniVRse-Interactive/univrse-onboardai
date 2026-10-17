@@ -48,7 +48,7 @@ saved preferences survive the branding change.
 | `server/vertex-ai-search.mjs`           | Vertex AI Search chunk search, passages, file names and errors  |
 | `server/company-document-retriever.mjs` | Chooses Vertex AI Search or the sample guide for passages       |
 | `server/active-company-documents.mjs`   | Retrieval allowlist: only active company documents, with dates  |
-| `server/answer-freshness.mjs`           | Recency rules in the prompt and the fixed stale-document reply  |
+| `server/answer-freshness.mjs`           | Dates rules in the prompt and the fixed stale-document reply    |
 | `server/document-search.mjs`            | Search-only preview that quotes passages without Gemini         |
 | `server/chat-store.mjs`                 | Chooses Firestore or SQLite for saved chats                     |
 | `server/firestore-chat-memory.mjs`      | Firestore saved chats, support data, turn leases and expiry     |

@@ -1,23 +1,39 @@
-// Stale company documents (issue #79). The answer prompt's recency rules let
-// Gemini arbitrate between passages by their dates; when every passage that
-// addresses the question is out of date, the model sets stale=true in its
-// structured output. The server then discards the model's text and sends this
-// fixed reply with the Ask HR offer (coverage none), as the no-source path
-// does. Alya's wording is never parsed.
+// Stale company documents (issue #79). The answer prompt's date rules let
+// Gemini arbitrate between passages by their dates; when every passage on the
+// question is out of date, the model returns coverage "outdated" in its
+// structured output (the answer schema's coverage enum has that one extra
+// value; there is no separate stale field). The server then discards the
+// model's text and sends this fixed reply with the Ask HR offer (coverage
+// none), as the no-source path does. Alya's wording is never parsed.
 //
 // The verdict is checked right after the answer is validated and before any
 // other fallback (the zero-citation reply, coverage, the example opening), and
 // it would come before #64's no_source and evaluator steps too: a stale answer
-// has no citations, so those steps would otherwise swallow it.
+// has no sources, so those steps would otherwise swallow it.
+//
+// Why a coverage value and why the paragraph sits after the passages (#79 B2
+// round 2, measured with real gemini-3.5-flash-lite): on weakly relevant
+// passages the model's cite-or-withhold choice moved with any sentence added
+// to the middle of the prompt, and a separate required boolean made it more
+// conservative too. At the end of the SystemMessage, worded as a tie-breaker
+// that never narrows an answer, the paragraph kept the withheld rate at the
+// pre-#79 level. A single enum value also leaves no "stale but fully
+// covered" contradiction for the server to resolve.
 
 export const staleReply =
   "The company documents I have on this are out of date, so I won't rely on them. Please check with HR for the latest guidance.";
 
 export const freshnessVerdicts = Object.freeze(['stale']);
 
-// 'stale' for a company answer the model marked stale, else null.
+// The answer schema's extra coverage value: every passage on the question is
+// out of date. It never reaches a reply or a saved message (those say "none").
+export const outdatedCoverage = 'outdated';
+
+// 'stale' for a company answer whose coverage is "outdated", else null. The
+// model's citations are ignored on this path (it sometimes cites the withdrawn
+// passage it relied on to decide).
 export function staleVerdictOf(planKind, output) {
-  return planKind === 'company' && output?.stale === true ? 'stale' : null;
+  return planKind === 'company' && output?.coverage === outdatedCoverage ? 'stale' : null;
 }
 
 // The `guardrail` field of a turn a freshness verdict decided (a strict subset
@@ -42,9 +58,10 @@ export function passageDating(passage) {
   return { date, dateKind: date && passage.dateKind === 'uploaded' ? 'uploaded' : null };
 }
 
-// The recency rules of the answer SystemMessage. today is 'YYYY-MM-DD' (UTC).
+// The date rules of the answer SystemMessage, appended after the reference
+// passages of a company turn. today is 'YYYY-MM-DD' (UTC).
 export const recencyInstruction = (today) =>
-  `Recency: today is ${today}. Each passage has a date and a dateKind: "uploaded" means the date is the day the document was added to the company library, and null means no date is known. (1) Before answering, note the time anchors in the passages you use: the date, and any effective date, last-updated date, version number, "valid until" date or replacement note written in the text. A date or version written in the text outranks an uploaded date. (2) When passages disagree on the same point, the most recent one wins: answer that point only from it and cite only it. Never combine figures, steps or conditions from an older and a newer passage. (3) After resolving such a disagreement, begin with "According to the latest update, from <date>," using the date of the passage you followed: the date written in its text if it states one, otherwise its date. (4) A passage is outdated only when its text says it has been replaced or withdrawn or was valid until a date before today, or when a newer passage covers the same point differently. Age alone never makes a passage outdated. (5) If every passage that addresses the question is outdated, do not answer from them: set stale=true, return no citations and coverage=none, and say in one sentence that the documents on this are out of date. Otherwise set stale=false. (6) When the passage you rely on states its own last-updated or effective date in its text, mention it once in plain words, for example "effective 1 March 2026". Write dates as day, month name and year. Never invent a date, and never treat a date the user mentions as a document date.`;
+  `Dates: today is ${today}. Each passage has a date, the day it was added to the company library (dateKind "uploaded"), or null when none is known. Dates only decide which passage to follow when passages conflict: if passages give different answers on the same point, answer that point only from the newest one (a date or version written in its text outranks its uploaded date), cite only it, never mix in an older passage's figures, and begin with "According to the latest update, from <day month year>,". A passage is outdated only when its own text says it was withdrawn or replaced, or was valid only until a date before today. Age, a missing date, and sample, draft, unapproved or "confirm with HR" status never make a passage outdated. These rules never reduce what you may answer from a passage that is not outdated: cite it and set coverage by the rules above. Only if every passage on the question is outdated, do not answer from it: give no citations and set coverage=${outdatedCoverage}; the user then gets a fixed note that the documents are out of date.`;
 
 // One log line per stale verdict (stdout JSON, Cloud Run jsonPayload). It never
 // holds question or answer text, titles or ids.

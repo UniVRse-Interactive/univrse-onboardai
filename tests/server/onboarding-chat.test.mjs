@@ -100,7 +100,7 @@ test('the structured-output schemas carry category, topic and coverage', () => {
   assert.deepEqual(planSchema.properties.category.enum, ['onboarding', 'off_topic']);
   assert.equal(planSchema.properties.topic.type, 'string');
   assert.ok(planSchema.required.includes('category') && planSchema.required.includes('topic'));
-  assert.deepEqual(answerSchema.properties.coverage.enum, ['full', 'partial', 'none']);
+  assert.deepEqual(answerSchema.properties.coverage.enum, ['full', 'partial', 'none', 'outdated']);
   assert.ok(answerSchema.required.includes('coverage'));
 });
 

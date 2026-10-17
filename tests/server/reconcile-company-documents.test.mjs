@@ -336,6 +336,51 @@ test('parseArgs: the defaults, every flag, and usage errors', () => {
     assert.throws(() => parseArgs(argv), UsageError, argv.join(' '));
 });
 
+test('parseArgs: a bad numeric value gets a specific bad-value message, not "Unknown option"', () => {
+  for (const [argv, pattern] of [
+    [['--max-deletes', 'abc'], /Bad value for --max-deletes: "abc" is not a whole number/],
+    [['--max-deletes=abc'], /Bad value for --max-deletes: "abc"/],
+    [['--max-deletes', '-1'], /Bad value for --max-deletes: "-1" is not a whole number/],
+    [
+      ['--max-deletes', '10001'],
+      /Bad value for --max-deletes: 10001 is out of range \(0 to 10000\)/,
+    ],
+    [['--grace-minutes', '1.5'], /Bad value for --grace-minutes: "1.5"/],
+    [['--grace-minutes', '10081'], /Bad value for --grace-minutes: 10081 is out of range/],
+    [
+      ['--timeout-minutes', '0'],
+      /Bad value for --timeout-minutes: 0 is out of range \(1 to 1440\)/,
+    ],
+    [['--timeout-minutes', 'soon'], /Bad value for --timeout-minutes: "soon"/],
+    [
+      ['--timeout-minutes'],
+      /Bad value for --timeout-minutes: it needs a whole number from 1 to 1440/,
+    ],
+  ])
+    assert.throws(
+      () => parseArgs(argv),
+      (error) =>
+        error instanceof UsageError &&
+        error.reason === 'usage' &&
+        pattern.test(error.message) &&
+        !/Unknown option/.test(error.message),
+      argv.join(' '),
+    );
+});
+
+test('exit 2: a bad numeric value prints the bad-value message and exactly one summary line', async () => {
+  for (const flag of ['--max-deletes', '--grace-minutes', '--timeout-minutes']) {
+    for (const value of ['abc', '-5', '999999999']) {
+      const result = await reconcile(null, { argv: [flag, value], env: stagingEnv });
+      assert.equal(result.exitCode, 2, `${flag} ${value}`);
+      assert.equal(result.lines.length, 1);
+      assert.equal(result.summary.reason, 'usage');
+      assert.match(result.errors[0], new RegExp(`^Bad value for ${flag}: `));
+      assert.doesNotMatch(result.errors[0], /Unknown option/);
+    }
+  }
+});
+
 test('readConfig: required settings and the environment guard (names only in messages)', () => {
   assert.deepEqual(readConfig(stagingEnv), {
     environment: 'staging',

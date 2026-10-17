@@ -85,6 +85,11 @@ export class UsageError extends Error {
 }
 
 const COUNT = /^\d+$/;
+// A value echoed in a usage message: short, with no control characters.
+const shown = (value) =>
+  String(value)
+    .replace(/[^\x20-\x7e]/g, '?')
+    .slice(0, 40);
 const limits = {
   '--max-deletes': ['maxDeletes', 0, 10000],
   '--grace-minutes': ['graceMinutes', 0, 10080],
@@ -108,11 +113,19 @@ export function parseArgs(argv = []) {
     else if (limits[flag]) {
       const [key, min, max] = limits[flag];
       const value = inline ?? argv[++i];
-      if (value === undefined || !COUNT.test(value))
-        throw new UsageError(`${flag} needs a whole number`);
+      if (value === undefined)
+        throw new UsageError(
+          `Bad value for ${flag}: it needs a whole number from ${min} to ${max}`,
+        );
+      if (!COUNT.test(value))
+        throw new UsageError(
+          `Bad value for ${flag}: "${shown(value)}" is not a whole number from ${min} to ${max}`,
+        );
       const number = Number(value);
       if (number < min || number > max)
-        throw new UsageError(`${flag} must be between ${min} and ${max}`);
+        throw new UsageError(
+          `Bad value for ${flag}: ${shown(value)} is out of range (${min} to ${max})`,
+        );
       options[key] = number;
     } else if (arg.startsWith('-')) throw new UsageError(`Unknown option ${flag}`);
     else throw new UsageError(`Unexpected argument "${arg}"`);
