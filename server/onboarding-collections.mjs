@@ -8,6 +8,7 @@ export const journeyCollections = Object.freeze({
   knowledgeGaps: 'knowledgeGaps',
   agentActions: 'agentActions',
   config: 'config',
+  taskVerifications: 'taskVerifications',
 });
 // config/{quickQuestionsDoc}: the general chips per track.
 export const quickQuestionsDoc = 'quickQuestions';

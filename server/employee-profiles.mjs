@@ -360,6 +360,7 @@ export function createProfileStore({
           ...requests.docs.map((doc) => deleteOperation(doc.ref)),
           ...actions.docs.map((doc) => deleteOperation(doc.ref)),
           deleteOperation(db.collection(journeyCollections.progress).doc(accountId)),
+          deleteOperation(db.collection(journeyCollections.taskVerifications).doc(accountId)),
           deleteOperation(db.collection(journeyCollections.firstDay).doc(accountId)),
           deleteOperation(ref(db, accountId)),
         ]);

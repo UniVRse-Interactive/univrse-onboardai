@@ -26,6 +26,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY server ./server
+COPY shared ./shared
 # SQLite conversations default to /app/.cache/chat; the node user must be able to create it.
 RUN mkdir -p .cache && chown node:node .cache
 USER node

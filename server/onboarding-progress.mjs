@@ -156,16 +156,19 @@ export function stepRecord(progress, stepId) {
 // The stored entry of a step, or null for "todo". Only "submitted" and "done"
 // are statuses; a record with only briefedAt (v1.5) is still todo.
 // For 'role-tools.ai-readiness-training', when progress.aiProficiency is
-// present, the step status is 'done' if and only if trainingCompleted === true.
+// present, the step is 'done' once a self-assessment has been submitted
+// (status 'assessed') or the practice exercise is completed. The assessment is
+// a training-needs survey, not an exam, so there is no pass mark.
 export function progressEntry(progress, stepId) {
   const entry = stepRecord(progress, stepId);
   if (stepId === AI_READINESS_STEP_ID && isObject(progress?.aiProficiency)) {
-    if (progress.aiProficiency.trainingCompleted !== true) return null;
+    const { aiProficiency } = progress;
+    if (aiProficiency.trainingCompleted !== true && aiProficiency.status !== 'assessed') return null;
     if (entry && entry.status === 'done') return entry;
     return {
       status: 'done',
       updatedAt:
-        progress.aiProficiency.trainingCompletedAt || progress.aiProficiency.updatedAt || null,
+        aiProficiency.trainingCompletedAt || aiProficiency.assessedAt || aiProficiency.updatedAt || null,
       source: entry?.source || 'employee',
     };
   }

@@ -19,6 +19,23 @@ npm.cmd run dev
 
 Open [the website](http://localhost:3000/) or [Alya's chat](http://localhost:3000/alya).
 
+### Local UI preview without sign-in
+
+Run `npm run dev:preview` and open http://localhost:3000/dashboard or
+http://localhost:3000/hr. The bottom preview bar switches between employee, HR,
+and Alya pages without login. Stop any other server on port 3000 first.
+
+This separate development server uses the existing API test fixtures with
+temporary in-memory accounts and sample data. It does not load `.env`, connect
+to real databases, or call Google services. Changes disappear on restart.
+AI answers are synthetic test responses; cloud AI, uploads to cloud storage,
+and real authentication are not exercised. Use `npm run dev` for normal login
+testing with configured local databases.
+
+The preview binds only to `127.0.0.1`, rejects remote hosts, cross-origin and
+forwarded requests, and refuses production mode or Cloud Run. The production
+entry points never import it; its test fixtures are excluded from Docker images.
+
 ### One command in Docker
 
 `npm run local` starts everything in Docker (PostgreSQL, the Firestore emulator, the API, the voice service, the onboarding checklist agent and the website), creates the tables and a local HR account, and prints the website address, the HR ID and password, and the Emulator UI address. It starts Docker Desktop on macOS if needed. `npm run local:reset-hr` sets a new HR password, `npm run local:down` stops the app containers, the checklist agent included (the databases keep running) and `npm run local:logs` follows their logs. See [Account access](docs/account-access.md#local-setup-in-docker-one-command).
@@ -89,6 +106,10 @@ npm.cmd start
 Every app page needs a signed-in account; a signed-out visitor is sent to `/login` (issue #55).
 
 Inside UniVRse, Launchpad and the handbook page have already been removed. Their old addresses lead to Alya. Suggested checklist items and support roles are editable templates, not verified company instructions.
+
+## Employee document submissions
+
+Employees upload within the Documentation section of `/dashboard`; HR uses `/hr#submissions`. See [document submission setup and review notes](docs/document-submissions.md) for the private storage configuration, local preview behavior, and file list.
 
 ## Understand and edit the code
 

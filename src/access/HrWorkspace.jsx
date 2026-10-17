@@ -5,6 +5,7 @@ import { defaultHrSection, hrSections } from './hr-navigation.mjs';
 import HrEmployees from './HrEmployees';
 import HrCompanyKnowledge from './HrCompanyKnowledge';
 import HrSettings from './HrSettings';
+import HrDocumentSubmissions from '../documents/HrDocumentSubmissions';
 import { departmentCache } from './use-departments';
 import SignedInPeopleSupport from './SignedInPeopleSupport';
 import './account-access.css';
@@ -14,7 +15,21 @@ import './hr-screen.css';
 import './hr-screen-views.css';
 
 export default function HrWorkspace({ account, onSignOut }) {
-  const [view, setView] = useState(defaultHrSection);
+  const [view, setView] = useState(() =>
+    hrSections.some((s) => s.id === window.location.hash.slice(1))
+      ? window.location.hash.slice(1)
+      : defaultHrSection(),
+  );
+  useEffect(() => {
+    const update = () =>
+      setView(
+        hrSections.some((s) => s.id === window.location.hash.slice(1))
+          ? window.location.hash.slice(1)
+          : defaultHrSection(),
+      );
+    window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
+  }, []);
   const headingRef = useRef(null);
   // A new page view starts with a fresh department list.
   useEffect(() => {
@@ -22,6 +37,7 @@ export default function HrWorkspace({ account, onSignOut }) {
   }, []);
   function show(id) {
     setView(id);
+    window.location.hash = id;
     requestAnimationFrame(() => headingRef.current?.focus());
   }
   return (
@@ -53,6 +69,8 @@ export default function HrWorkspace({ account, onSignOut }) {
       <main className="hr-screen-main" id="hr-main">
         {view === 'accounts' ? (
           <HrEmployees />
+        ) : view === 'submissions' ? (
+          <HrDocumentSubmissions />
         ) : view === 'people' ? (
           <SignedInPeopleSupport headingRef={headingRef} />
         ) : view === 'settings' ? (

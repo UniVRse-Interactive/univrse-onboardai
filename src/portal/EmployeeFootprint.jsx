@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import Icon from './Icon';
+import LearningArea from './LearningArea';
+import {
+  learningAreas,
+  continueLearning,
+  focusLearningStep,
+  focusStepKey,
+} from './learning-area-model.mjs';
 import CheckDialog from './CheckDialog';
 import { journeyErrorMessage } from '../access/journey-errors.mjs';
 import { journeyApi } from '../access/journey-api.mjs';
@@ -24,6 +31,10 @@ import {
 } from '../access/onboarding-view.mjs';
 import { saveHandoff, stepAskHandoff } from '../access/support-flow.mjs';
 import './footprint.css';
+import DashboardDocumentUpload, {
+  DocumentSectionNotice,
+  useDashboardDocuments,
+} from '../documents/DashboardDocumentUpload';
 
 function Ring({ percent }) {
   return (
@@ -108,6 +119,7 @@ function focusTarget(step, stepId, action) {
 
 // The signed-in employee's onboarding footprint (GET /api/me/onboarding).
 export default function EmployeeFootprint({ navigate, chatPath, account, expanded = false }) {
+  const documents = useDashboardDocuments();
   const [onboarding, setOnboarding] = useState(null);
   const [error, setError] = useState('');
   const [firstDay, setFirstDay] = useState(null);
@@ -148,6 +160,18 @@ export default function EmployeeFootprint({ navigate, chatPath, account, expande
       .then((data) => alive.current && setRequests(data.requests || []))
       .catch(() => {});
   }, []);
+  // A task chosen in the checklist beside Alya opens here once progress has loaded.
+  useEffect(() => {
+    if (!onboarding) return;
+    let id = null;
+    try {
+      id = window.sessionStorage.getItem(focusStepKey);
+      if (id) window.sessionStorage.removeItem(focusStepKey);
+    } catch {
+      return;
+    }
+    if (id) setTimeout(() => focusLearningStep(id), 50);
+  }, [!onboarding]);
   useEffect(() => {
     alive.current = true;
     load();
@@ -283,75 +307,105 @@ export default function EmployeeFootprint({ navigate, chatPath, account, expande
         )}
       </section>
 
+      <div className="learning-continue">
+        <button
+          type="button"
+          className="fp-action main"
+          disabled={!continueLearning(onboarding.areas)}
+          onClick={() => focusLearningStep(continueLearning(onboarding.areas).id)}
+        >
+          Continue where you left off
+        </button>
+        <p>
+          {continueLearning(onboarding.areas)
+            ? 'Jump to your next required learning or setup task below.'
+            : 'All four learning and setup areas are complete.'}
+        </p>
+      </div>
       <div className="fp-areas">
-        {onboarding.areas.map((area, index) => (
-          <details className="fp-area" key={area.id} open={expanded || index === 0 || undefined}>
-            <summary>
-              <span className="fp-area-title">
-                <span className="fp-area-number" aria-hidden="true">
-                  {area.icon || '0' + (index + 1)}
-                </span>
-                <span>
-                  <strong>{area.title}</strong>
-                  <small>{areaSummary(area)}</small>
-                  {areaBadge(area, onboarding) && (
-                    <span className="fp-badge done">
-                      <Icon name="check" size={12} />
-                      {areaBadge(area, onboarding)}
-                    </span>
-                  )}
-                </span>
-              </span>
-              <span
-                className="fp-bar"
-                role="progressbar"
-                aria-label={`${area.title} progress`}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={area.percent}
-              >
-                <span style={{ width: area.percent + '%' }} />
-                <i
-                  className="fp-marker"
-                  style={{ left: thresholdOf(onboarding) + '%' }}
-                  title={thresholdOf(onboarding) + '% marker'}
-                />
-              </span>
-              <span className="fp-percent">{area.percent}%</span>
-              <Icon name="down" size={15} />
-            </summary>
-            {area.description && <p className="fp-area-description">{area.description}</p>}
-            <ul className="fp-steps">
-              {area.steps.map((step) => (
-                <li key={step.id} className={'fp-step ' + step.status}>
-                  <div className="fp-step-copy">
-                    <strong>{step.title}</strong>
-                    {step.description && <p>{step.description}</p>}
-                    {optionalStepLabel(step) && (
-                      <p className="fp-optional">{optionalStepLabel(step)}</p>
+        {onboarding.areas.map((area, index) =>
+          learningAreas.includes(area.id) ? (
+            <LearningArea
+              key={area.id}
+              area={area}
+              onUpdated={setOnboarding}
+              firstDay={firstDay}
+              expanded={expanded}
+              navigate={navigate}
+            />
+          ) : (
+            <details className="fp-area" key={area.id} open={expanded || index === 0 || undefined}>
+              <summary>
+                <span className="fp-area-title">
+                  <span className="fp-area-number" aria-hidden="true">
+                    {area.icon || '0' + (index + 1)}
+                  </span>
+                  <span>
+                    <strong>{area.title}</strong>
+                    <small>{areaSummary(area)}</small>
+                    {areaBadge(area, onboarding) && (
+                      <span className="fp-badge done">
+                        <Icon name="check" size={12} />
+                        {areaBadge(area, onboarding)}
+                      </span>
                     )}
-                    <span
-                      className={'fp-badge ' + step.status}
-                      tabIndex={-1}
-                      data-step-status={step.id}
-                    >
-                      {step.status === 'done' && <Icon name="check" size={12} />}
-                      {stepStatusLabel(step)}
-                    </span>
-                  </div>
-                  <div className="fp-step-actions">
-                    <StepActions step={step} busy={busyStep === step.id} onAction={run} />
-                  </div>
-                  {stepErrors[step.id] && (
-                    <p className="fp-inline-error" role="alert">
-                      {stepErrors[step.id]}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </details>
-        ))}
+                  </span>
+                </span>
+                <span
+                  className="fp-bar"
+                  role="progressbar"
+                  aria-label={`${area.title} progress`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={area.percent}
+                >
+                  <span style={{ width: area.percent + '%' }} />
+                  <i
+                    className="fp-marker"
+                    style={{ left: thresholdOf(onboarding) + '%' }}
+                    title={thresholdOf(onboarding) + '% marker'}
+                  />
+                </span>
+                <span className="fp-percent">{area.percent}%</span>
+                <Icon name="down" size={15} />
+              </summary>
+              {area.description && <p className="fp-area-description">{area.description}</p>}
+              {area.id === 'documentation' && <DocumentSectionNotice documents={documents} />}
+              <ul className="fp-steps">
+                {area.steps.map((step) => (
+                  <li key={step.id} className={'fp-step ' + step.status}>
+                    <div className="fp-step-copy">
+                      <strong>{step.title}</strong>
+                      {step.description && <p>{step.description}</p>}
+                      {optionalStepLabel(step) && (
+                        <p className="fp-optional">{optionalStepLabel(step)}</p>
+                      )}
+                      <span
+                        className={'fp-badge ' + step.status}
+                        tabIndex={-1}
+                        data-step-status={step.id}
+                      >
+                        {step.status === 'done' && <Icon name="check" size={12} />}
+                        {stepStatusLabel(step)}
+                      </span>
+                    </div>
+                    <div className="fp-step-actions">
+                      <StepActions step={step} busy={busyStep === step.id} onAction={run} />
+                    </div>
+                    {area.id === 'documentation' && (
+                      <DashboardDocumentUpload step={step} documents={documents} />
+                    )}
+                    {stepErrors[step.id] && (
+                      <p className="fp-inline-error" role="alert">
+                        {stepErrors[step.id]}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ),
+        )}
       </div>
 
       <div className="fp-cards">

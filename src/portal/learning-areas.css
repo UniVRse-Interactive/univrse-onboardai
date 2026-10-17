@@ -1,0 +1,525 @@
+.learning-area-content {
+  padding: 0 24px 24px;
+}
+.learning-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.learning-task {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 12px;
+  background: rgba(17, 34, 51, 0.15);
+}
+.learning-area .learning-task > summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  cursor: pointer;
+}
+.learning-task > summary > span:first-child {
+  flex: 1;
+  display: grid;
+  gap: 7px;
+}
+.learning-task small,
+.learning-contacts small {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.learning-task-body {
+  padding: 0 18px 20px;
+}
+.learning-task-body p,
+.learning-context p,
+.learning-contacts p {
+  font-size: 14px;
+  line-height: 1.7;
+  margin: 10px 0;
+}
+.learning-resource,
+.learning-context,
+.learning-contacts article {
+  border: 1px solid var(--line);
+  padding: 16px;
+  border-radius: 6px;
+  margin: 12px 0;
+}
+.learning-area h4 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.learning-resource details > summary {
+  display: list-item;
+  padding: 8px 0;
+  cursor: pointer;
+  font-size: 13px;
+}
+.learning-confirmed {
+  color: var(--aqua);
+}
+.learning-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.learning-activity label {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  font-size: 14px;
+}
+.learning-activity select,
+.learning-activity textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  font: inherit;
+  background: var(--workspace-ground);
+  color: var(--white);
+}
+.learning-activity button {
+  margin: 5px 8px 5px 0;
+}
+.learning-continue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0;
+}
+.learning-continue p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.learning-area .fp-action {
+  white-space: normal;
+  text-align: left;
+}
+@media (max-width: 600px) {
+  .learning-area-content {
+    padding: 0 16px 16px;
+  }
+  .learning-area .learning-task > summary {
+    flex-wrap: wrap;
+    padding: 14px;
+  }
+  .learning-task > summary > span:first-child {
+    flex-basis: 100%;
+  }
+  .learning-task-body {
+    padding: 0 14px 16px;
+  }
+  .learning-columns {
+    grid-template-columns: 1fr;
+  }
+  .learning-intro {
+    align-items: flex-start;
+  }
+}
+
+/* Task Verification & Proof of Completion Enhancements */
+.verification-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 4px 10px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+.verification-badge.info-badge {
+  background: rgba(0, 180, 216, 0.15);
+  color: var(--aqua);
+  border: 1px solid rgba(0, 180, 216, 0.3);
+}
+.verification-badge.optional-badge {
+  background: rgba(150, 160, 175, 0.15);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.verification-badge.warning-badge {
+  background: rgba(255, 183, 3, 0.15);
+  color: #ffb703;
+  border: 1px solid rgba(255, 183, 3, 0.3);
+}
+
+.verification-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 16px;
+}
+.verification-pill {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.verification-pill.done {
+  background: rgba(0, 201, 167, 0.15);
+  color: #00c9a7;
+  border-color: rgba(0, 201, 167, 0.4);
+}
+
+.handbook-document-viewer {
+  border: 1px solid var(--line);
+  background: rgba(10, 25, 41, 0.4);
+  padding: 16px;
+  border-radius: 6px;
+  margin: 14px 0;
+}
+.viewer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.source-tag {
+  font-size: 11px;
+  color: var(--aqua);
+}
+.policy-summary {
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+.policy-full-content {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: 14px;
+}
+.content-requirement-note {
+  font-size: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 183, 3, 0.1);
+  border-left: 3px solid #ffb703;
+  color: var(--muted);
+  margin-bottom: 12px;
+  border-radius: 0 4px 4px 0;
+}
+.policy-paragraph {
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 8px 0;
+}
+
+.acknowledgement-section {
+  border: 1px solid var(--line);
+  padding: 16px;
+  border-radius: 6px;
+  margin: 14px 0;
+  background: rgba(0, 180, 216, 0.05);
+}
+
+.comprehension-quiz-section {
+  border: 1px solid var(--line);
+  padding: 18px;
+  border-radius: 6px;
+  margin: 14px 0;
+  background: rgba(17, 34, 51, 0.25);
+}
+.quiz-meta-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+.quiz-question-fieldset {
+  border: 1px solid var(--line);
+  padding: 14px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  background: rgba(10, 25, 41, 0.3);
+}
+.quiz-question-fieldset legend {
+  font-size: 14px;
+  padding: 0 6px;
+}
+.quiz-options-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.quiz-option-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.quiz-option-label input {
+  margin-top: 3px;
+}
+.quiz-passed-banner {
+  padding: 14px;
+  background: rgba(0, 201, 167, 0.1);
+  border: 1px solid rgba(0, 201, 167, 0.3);
+  border-radius: 6px;
+}
+.quiz-retry-explanation {
+  margin-top: 8px;
+  padding: 10px;
+  background: rgba(239, 71, 111, 0.1);
+  border-left: 3px solid #ef476f;
+  border-radius: 0 4px 4px 0;
+}
+
+.alignment-activity-box {
+  border: 1px solid var(--line);
+  padding: 18px;
+  border-radius: 6px;
+  margin: 14px 0;
+  background: rgba(17, 34, 51, 0.2);
+}
+.matching-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.matching-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  background: rgba(10, 25, 41, 0.4);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.target-description {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.matching-row select {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--workspace-ground);
+  color: var(--white);
+  font-size: 13px;
+}
+
+.scenarios-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+.scenario-card,
+.scenario-routing-card {
+  padding: 14px;
+  background: rgba(10, 25, 41, 0.4);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.scenario-card p {
+  font-style: italic;
+  margin-bottom: 10px;
+}
+.scenario-card label,
+.scenario-routing-card select {
+  display: block;
+  margin-top: 8px;
+}
+.scenario-card select,
+.scenario-routing-card select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--workspace-ground);
+  color: var(--white);
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.role-contribution-form fieldset {
+  border: 1px solid var(--line);
+  padding: 12px;
+  border-radius: 6px;
+  margin: 12px 0;
+}
+.contribution-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+.contribution-option input {
+  margin-top: 4px;
+}
+
+.role-responsibilities-checklist {
+  border: 1px solid var(--line);
+  padding: 18px;
+  border-radius: 6px;
+  margin: 16px 0;
+  background: rgba(10, 25, 41, 0.35);
+}
+.checklist-items {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+}
+.checkbox-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.checkbox-item input {
+  margin-top: 3px;
+}
+
+.tool-access-workflow-box {
+  border: 1px solid var(--line);
+  padding: 16px;
+  border-radius: 6px;
+  margin: 14px 0;
+  background: rgba(17, 34, 51, 0.2);
+}
+.technical-integration-card {
+  padding: 12px;
+  background: rgba(255, 183, 3, 0.08);
+  border-left: 3px solid #ffb703;
+  margin: 12px 0;
+  border-radius: 0 4px 4px 0;
+}
+.technical-integration-card p {
+  font-size: 12px;
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+.workflow-form input {
+  width: 100%;
+  padding: 10px 14px;
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--workspace-ground);
+  color: var(--white);
+}
+
+.verified-directory-panel {
+  border: 1px solid var(--line);
+  padding: 18px;
+  border-radius: 6px;
+  margin: 16px 0;
+  background: rgba(10, 25, 41, 0.3);
+}
+.support-channels-directory {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.channel-card {
+  padding: 12px;
+  background: rgba(17, 34, 51, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.channel-card small {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.channel-card strong {
+  display: block;
+  font-size: 13px;
+  color: var(--aqua);
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+.channel-card p {
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.support-routing-activity-box {
+  border: 1px solid var(--line);
+  padding: 18px;
+  border-radius: 6px;
+  margin: 16px 0;
+  background: rgba(17, 34, 51, 0.2);
+}
+.scenarios-form {
+  display: grid;
+  gap: 14px;
+  margin: 14px 0;
+}
+.help-confirmation-panel {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 600px) {
+  .matching-row {
+    grid-template-columns: 1fr;
+  }
+  .support-channels-directory {
+    grid-template-columns: 1fr;
+  }
+}
+
+.verification-guide {
+  margin: 4px 0 12px;
+}
+.verification-guide p {
+  margin: 4px 0;
+}
+.verification-guide details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+.help-confirmation {
+  margin-top: 14px;
+}
+.quiz-option-label {
+  min-height: 44px;
+}
+
+.activity-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin: 10px 0;
+}
+.activity-card > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.activity-card > header strong {
+  flex: 1 1 200px;
+}
+.activity-card-body,
+.learning-activity-panel {
+  margin-top: 12px;
+}
+.activity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}

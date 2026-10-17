@@ -349,7 +349,7 @@
 @media (max-width: 980px) {
   .alya-live-page .alya-live-shell {
     grid-template-columns: 1fr;
-    grid-template-areas: 'presentation' 'answers';
+    grid-template-areas: 'presentation' 'checklist' 'answers';
     gap: 10px;
   }
   .ap-stage-heading {
@@ -507,7 +507,7 @@
     flex: 1 0 auto;
   }
   .alya-live-page .alya-live-shell {
-    grid-template-rows: var(--alya-stage-height) auto;
+    grid-template-rows: var(--alya-stage-height) auto auto;
   }
   .alya-live-page .alya-answer-space {
     height: max(600px, calc(100dvh - var(--alya-stage-height) - 110px));

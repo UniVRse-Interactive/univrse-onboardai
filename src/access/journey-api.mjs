@@ -7,24 +7,33 @@ import { accountRequest } from './account-api.mjs';
 const enc = encodeURIComponent;
 const post = (path, body, options) => accountRequest(path, { ...options, method: 'POST', body });
 
+// Anything that can change the employee's progress announces it, so the
+// checklist beside Alya reloads the saved progress without a page refresh.
+export const ONBOARDING_CHANGED = 'onboarding-changed';
+const changes = (request) =>
+  request.then((result) => {
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(ONBOARDING_CHANGED));
+    return result;
+  });
+
 export const journeyApi = {
   // Employee
   onboarding: (options) => accountRequest('/api/me/onboarding', options),
   completeStep: (stepId, options) =>
-    post('/api/me/onboarding/steps/' + enc(stepId) + '/complete', undefined, options),
+    changes(post('/api/me/onboarding/steps/' + enc(stepId) + '/complete', undefined, options)),
   reopenStep: (stepId, options) =>
-    post('/api/me/onboarding/steps/' + enc(stepId) + '/reopen', undefined, options),
+    changes(post('/api/me/onboarding/steps/' + enc(stepId) + '/reopen', undefined, options)),
   check: (stepId, options) =>
     accountRequest('/api/me/onboarding/steps/' + enc(stepId) + '/check', options),
   // v1.4: a choice check posts the chosen option's opaque id; a written check
   // posts the employee's answer (never stored by the server).
   answerCheck: (stepId, optionId, options) =>
-    post('/api/me/onboarding/steps/' + enc(stepId) + '/check', { optionId }, options),
+    changes(post('/api/me/onboarding/steps/' + enc(stepId) + '/check', { optionId }, options)),
   answerWrittenCheck: (stepId, answer, options) =>
-    post('/api/me/onboarding/steps/' + enc(stepId) + '/check', { answer }, options),
+    changes(post('/api/me/onboarding/steps/' + enc(stepId) + '/check', { answer }, options)),
   // v1.5: what the employee confirmed: "listened" or "read".
   recordBriefing: (stepId, completion, options) =>
-    post('/api/me/onboarding/steps/' + enc(stepId) + '/briefing', { completion }, options),
+    changes(post('/api/me/onboarding/steps/' + enc(stepId) + '/briefing', { completion }, options)),
   quickQuestions: (options) => accountRequest('/api/me/quick-questions', options),
   firstDay: (options) => accountRequest('/api/me/first-day', options),
   previewSupportRequest: ({ conversationId, messageId }, options) =>
@@ -33,6 +42,12 @@ export const journeyApi = {
   mySupportRequests: (options) => accountRequest('/api/me/support-requests', options),
   decideAction: (actionId, decision, options) =>
     post('/api/me/agent-actions/' + enc(actionId), { decision }, options),
+  getPolicyHandbook: (options) => accountRequest('/api/me/company-policy-handbook', options),
+  getVerifications: (options) => accountRequest('/api/me/task-verifications', options),
+  submitVerification: (areaId, activityId, body, options) =>
+    changes(
+      post('/api/me/task-verifications/' + enc(areaId) + '/' + enc(activityId), body, options),
+    ),
 
   // HR
   hrSupportRequests: (options) => accountRequest('/api/hr/support-requests', options),
@@ -52,6 +67,14 @@ export const journeyApi = {
       method: 'PATCH',
       body: { status },
     }),
+  employeeVerifications: (id, options) =>
+    accountRequest('/api/hr/employees/' + enc(id) + '/task-verifications', options),
+  confirmToolAccess: (id, stepId, options) =>
+    post(
+      '/api/hr/employees/' + enc(id) + '/task-verifications/tool-access/' + enc(stepId),
+      {},
+      options,
+    ),
   employeeFirstDay: (id, options) =>
     accountRequest('/api/hr/employees/' + enc(id) + '/first-day', options),
   saveFirstDay: (id, body, options) =>

@@ -599,6 +599,67 @@ function DeletePanel({ employee, onClose, onDone, onMissing }) {
   );
 }
 
+const day = (iso) => (iso ? new Date(iso).toLocaleDateString() : '');
+
+// What the employee's saved activities show, read-only. Working preferences are
+// private to the employee and never reach this view.
+function VerificationRecords({ records }) {
+  const rows = [];
+  for (const [id, record] of Object.entries(records.policies || {})) {
+    rows.push([
+      id,
+      [
+        record.acknowledgedAt ? `acknowledged ${day(record.acknowledgedAt)}` : 'not acknowledged',
+        record.quiz
+          ? `quiz ${record.quiz.passed ? 'passed' : 'not passed'} · best ${record.quiz.score}% of ${record.quiz.passingScore}% needed · ${record.quiz.attempts} attempt${record.quiz.attempts === 1 ? '' : 's'}`
+          : 'no quiz taken',
+      ].join(' · '),
+    ]);
+  }
+  for (const [id, record] of Object.entries(records.alignment || {}))
+    rows.push([
+      'alignment.' + id,
+      `${record.passed ? 'passed ' + day(record.passedAt || record.completedAt) : 'not passed'} · ${record.attempts} attempt${record.attempts === 1 ? '' : 's'}${record.score != null ? ' · ' + record.score + '%' : ''}`,
+    ]);
+  const roleTools = records.roleTools || {};
+  if (roleTools.responsibilities)
+    rows.push(['Role checklist', `acknowledged ${day(roleTools.responsibilities.acknowledgedAt)}`]);
+  for (const [id, tool] of Object.entries(roleTools.tools || {}))
+    rows.push([
+      id,
+      tool.status === 'confirmed'
+        ? `access confirmed ${day(tool.confirmedAt)}`
+        : `awaiting your confirmation · reported account ${tool.workEmail}`,
+    ]);
+  const team = records.teamSupport || {};
+  if (team.routing)
+    rows.push([
+      'Support routing',
+      `${team.routing.passed ? 'passed' : 'not passed'} · ${team.routing.attempts} attempt${team.routing.attempts === 1 ? '' : 's'}`,
+    ]);
+  if (team.confirmedHelpAt)
+    rows.push(['Knows where to find help', `confirmed ${day(team.confirmedHelpAt)}`]);
+  return (
+    <details className="hrj-records">
+      <summary>Verification records ({rows.length})</summary>
+      {rows.length ? (
+        <ul>
+          {rows.map(([name, detail]) => (
+            <li key={name}>
+              <strong>{name}</strong> — {detail}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>No verification activity saved yet.</p>
+      )}
+      <p className="account-note">
+        Self-confirmed setup tasks and the AI self-assessment appear in the steps below.
+      </p>
+    </details>
+  );
+}
+
 // Per-employee onboarding progress, with Verify / Unverify for steps HR confirms.
 function OnboardingPanel({ employee, onClose, onChanged }) {
   const username = employee.account.username;
@@ -606,6 +667,8 @@ function OnboardingPanel({ employee, onClose, onChanged }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
+  const [records, setRecords] = useState({});
+  const tools = records.roleTools?.tools || {};
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -613,6 +676,10 @@ function OnboardingPanel({ employee, onClose, onChanged }) {
       .employeeOnboarding(employee.account.id)
       .then((value) => alive.current && setData(value))
       .catch((err) => alive.current && setError(err.message));
+    journeyApi
+      .employeeVerifications(employee.account.id)
+      .then((value) => alive.current && setRecords(value.verifications || {}))
+      .catch(() => {});
     return () => {
       alive.current = false;
     };
@@ -626,6 +693,30 @@ function OnboardingPanel({ employee, onClose, onChanged }) {
       if (!alive.current) return;
       setData(next);
       setNotice(status === 'done' ? `Verified “${step.title}”.` : `Moved “${step.title}” back.`);
+      onChanged();
+    } catch (err) {
+      if (alive.current) setError(hrStepError(err));
+    } finally {
+      if (alive.current) setBusy('');
+    }
+  }
+  // Tool access is completed only by this confirmation, not by the employee.
+  async function confirmAccess(step) {
+    setBusy(step.id);
+    setError('');
+    setNotice('');
+    try {
+      const result = await journeyApi.confirmToolAccess(employee.account.id, step.id);
+      if (!alive.current) return;
+      setData(result.onboarding);
+      setRecords({
+        ...records,
+        roleTools: {
+          ...records.roleTools,
+          tools: { ...tools, [step.id]: { ...tools[step.id], status: 'confirmed' } },
+        },
+      });
+      setNotice(`Confirmed access for “${step.title}”.`);
       onChanged();
     } catch (err) {
       if (alive.current) setError(hrStepError(err));
@@ -651,6 +742,7 @@ function OnboardingPanel({ employee, onClose, onChanged }) {
           <p role="status" className="account-notice" hidden={!notice}>
             {notice}
           </p>
+          <VerificationRecords records={records} />
           <div className="hrj-areas">
             {data.areas.map((area) => (
               <section className="hrj-area" key={area.id} aria-labelledby={'hrj-' + area.id}>
@@ -689,6 +781,18 @@ function OnboardingPanel({ employee, onClose, onChanged }) {
                             {optionalStepLabel(step) ? ' · Optional' : ''}
                           </small>
                         </div>
+                        {tools[step.id]?.status === 'awaiting_confirmation' &&
+                          step.status !== 'done' && (
+                            <button
+                              type="button"
+                              disabled={busy === step.id}
+                              aria-label={`Confirm access: ${step.title}`}
+                              title={`Employee reported ${tools[step.id].workEmail}. Confirm only after checking access.`}
+                              onClick={() => confirmAccess(step)}
+                            >
+                              Confirm access
+                            </button>
+                          )}
                         {action && (
                           <button
                             type="button"

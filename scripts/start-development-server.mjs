@@ -8,8 +8,19 @@ if (['win32', 'darwin'].includes(process.platform)) {
   args.push('--watch-path=server');
   if (existsSync('.env')) args.push('--watch-path=.env');
 }
-args.push('server/index.mjs');
-const preview = spawn(process.execPath, args, { stdio: 'inherit', windowsHide: true });
+const localPreview = process.argv.includes('--local-preview');
+if (localPreview) {
+  const { assertLocalPreview } = await import('./local-preview-guard.mjs');
+  assertLocalPreview({ ...process.env, NODE_ENV: process.env.NODE_ENV || 'development' });
+}
+args.push(localPreview ? 'scripts/start-local-preview.mjs' : 'server/index.mjs');
+const preview = spawn(process.execPath, args, {
+  stdio: 'inherit',
+  windowsHide: true,
+  env: localPreview
+    ? { ...process.env, NODE_ENV: process.env.NODE_ENV || 'development' }
+    : process.env,
+});
 preview.on('error', () => {
   console.error('The preview server could not start.');
   process.exitCode = 1;
