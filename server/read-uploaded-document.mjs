@@ -1,11 +1,11 @@
 import { Worker } from 'node:worker_threads';
 import { extname } from 'node:path';
-import { ChatError } from './saved-conversations.mjs';
-import { workspaceLimits } from './guest-workspace-store.mjs';
+import { ChatError } from './chat-errors.mjs';
+import { workspaceLimits } from './workspace-limits.mjs';
 
 let activeReaders = 0;
 // truncate: keep the first workspaceLimits.characters characters of a longer
-// document instead of rejecting it (profile autofill). Guest uploads reject.
+// document instead of rejecting it (profile autofill). Library uploads reject.
 // timeoutMs bounds the reader (FILE_READ_TIMEOUT); tests may lift it.
 export async function readUploadedDocument(
   name,

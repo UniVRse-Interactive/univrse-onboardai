@@ -40,6 +40,8 @@ export const accountErrors = {
   passwordChangeRequired: () =>
     new AccountError(403, 'PASSWORD_CHANGE_REQUIRED', 'Choose a new password before continuing.'),
   hrRequired: () => new AccountError(403, 'HR_ROLE_REQUIRED', 'This page is for HR accounts only.'),
+  employeeRequired: () =>
+    new AccountError(403, 'EMPLOYEE_ROLE_REQUIRED', 'This page is for employee accounts only.'),
   employeeNotFound: () =>
     new AccountError(404, 'EMPLOYEE_NOT_FOUND', 'This employee account was not found.'),
   usernameInvalid: () =>
@@ -108,6 +110,106 @@ export const departmentErrors = {
       'That prefix is already used by a department. Choose a different prefix.',
     ),
   notFound: () => new AccountError(404, 'DEPARTMENT_NOT_FOUND', 'This department was not found.'),
+};
+
+// The onboarding journey (issues #47-#50): footprint steps, scenario checks,
+// first-day details and support requests. Fixed messages; values are never echoed.
+const fieldProblemText = {
+  required: 'is required',
+  unknown: 'is not a field here',
+  not_text: 'must be text',
+  too_long: 'is too long',
+  invalid_characters: 'contains line breaks or control characters',
+  invalid_time: 'must be a time in HH:MM form',
+  invalid_date: 'must be an ISO 8601 date and time',
+  invalid_choice: 'is not one of the allowed values',
+  not_boolean: 'must be true or false',
+};
+const listProblems = (fields) =>
+  fields
+    .slice(0, 5)
+    .map(({ field, problem }) => `${field} ${fieldProblemText[problem] || 'is invalid'}`)
+    .join('; ') + (fields.length > 5 ? '; and more' : '');
+export const journeyErrors = {
+  stepNotFound: () =>
+    new AccountError(404, 'STEP_NOT_FOUND', 'This onboarding step was not found.'),
+  checkRequired: () =>
+    new AccountError(
+      409,
+      'CHECK_REQUIRED',
+      'Answer this step’s short scenario check to complete it.',
+    ),
+  stepLocked: () =>
+    new AccountError(
+      409,
+      'STEP_LOCKED',
+      'This step was verified by HR or passed with a scenario check, so it cannot be undone here.',
+    ),
+  checkNotFound: () =>
+    new AccountError(404, 'CHECK_NOT_FOUND', 'This onboarding step has no scenario check.'),
+  // A choice check needs { optionId }; a written one { answer } of 1 to maxLength characters.
+  checkAnswerInvalid: (check) =>
+    new AccountError(
+      400,
+      'CHECK_ANSWER_INVALID',
+      check?.type === 'written'
+        ? `Write your answer in up to ${check.maxLength} characters.`
+        : 'Choose one of the answers.',
+    ),
+  checkGraderUnavailable: () =>
+    new AccountError(
+      503,
+      'CHECK_GRADER_UNAVAILABLE',
+      'Alya can’t check written answers right now. Please try again in a moment.',
+    ),
+  briefingRequired: () =>
+    new AccountError(409, 'BRIEFING_REQUIRED', 'Listen to Alya’s briefing for this step first.'),
+  briefingNotFound: () =>
+    new AccountError(404, 'BRIEFING_NOT_FOUND', 'This onboarding step has no briefing.'),
+  briefingCompletionInvalid: () =>
+    new AccountError(400, 'BRIEFING_COMPLETION_INVALID', 'Send completion "listened" or "read".'),
+  stepNotHrVerified: () =>
+    new AccountError(
+      409,
+      'STEP_NOT_HR_VERIFIED',
+      'Only steps that HR verifies can be changed in the HR workspace.',
+    ),
+  stepStatusInvalid: () =>
+    new AccountError(400, 'STEP_STATUS_INVALID', 'Choose a status of done or todo.'),
+  firstDayInvalid: (fields) =>
+    new AccountError(
+      400,
+      'FIRST_DAY_INVALID',
+      `Check the first-day details: ${listProblems(fields) || 'send the details as an object'}.`,
+      { fields },
+    ),
+  supportRequestInvalid: (fields) =>
+    new AccountError(
+      400,
+      'SUPPORT_REQUEST_INVALID',
+      `Check the support request: ${listProblems(fields) || 'send the request as an object'}.`,
+      { fields },
+    ),
+  supportRequestNotFound: () =>
+    new AccountError(404, 'SUPPORT_REQUEST_NOT_FOUND', 'This support request was not found.'),
+  briefingTimeRequired: () =>
+    new AccountError(
+      400,
+      'BRIEFING_TIME_REQUIRED',
+      'Choose a briefing date and time before scheduling a briefing.',
+    ),
+  aiProficiencyInvalid: () =>
+    new AccountError(
+      400,
+      'AI_PROFICIENCY_INVALID',
+      'Choose an AI proficiency level from 1 to 10, not_sure, or skipped.',
+    ),
+  aiProficiencyForbidden: () =>
+    new AccountError(
+      403,
+      'FORBIDDEN',
+      'You do not have permission to access or update this AI proficiency record.',
+    ),
 };
 
 // POST /api/hr/employees/autofill. Fixed messages only: provider text, file

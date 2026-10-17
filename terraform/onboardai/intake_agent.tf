@@ -10,6 +10,9 @@
 #   api --query (its own roles/aiplatform.user)--> agent on Agent Engine
 #   agent --Gemini (roles/aiplatform.user)--> Vertex AI, global endpoint
 #   agent --Streamable HTTP, Bearer INTAKE_MCP_TOKEN--> <api URL>/mcp
+#     (the api is private since #57: the agent also sends its own ID token,
+#     audience the api's origin, in X-Serverless-Authorization; run.invoker
+#     below)
 #
 # The api needs no new grant to query the agent: roles/aiplatform.user, which it
 # already holds on the project for Gemini (locals.tf), includes
@@ -35,6 +38,19 @@ resource "google_project_iam_member" "intake_agent_runtime" {
   project = var.project_id
   role    = "roles/aiplatform.user"
   member  = "serviceAccount:${google_service_account.intake_agent[0].email}"
+}
+
+# The api is private (#57, cloud_run.tf): the agent may call it (its /mcp
+# endpoint, where INTAKE_MCP_TOKEN still authorises the call) and no other
+# service.
+resource "google_cloud_run_v2_service_iam_member" "intake_agent_invokes_api" {
+  count = local.intake_agent ? 1 : 0
+
+  project  = google_cloud_run_v2_service.service["api"].project
+  location = google_cloud_run_v2_service.service["api"].location
+  name     = google_cloud_run_v2_service.service["api"].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.intake_agent[0].email}"
 }
 
 # --- INTAKE_MCP_TOKEN ----------------------------------------------------------
@@ -106,7 +122,7 @@ resource "google_secret_manager_secret_iam_member" "intake_mcp_token" {
 # project-level role any deployer holds, staging's only. It is reachable only
 # from the deploy workflow on the staging branch (identity.tf).
 resource "google_project_iam_member" "deployer_deploys_agents" {
-  count = local.intake_agent ? 1 : 0
+  count = local.intake_agent || local.checklist_agent ? 1 : 0
 
   project = var.project_id
   role    = "roles/aiplatform.user"

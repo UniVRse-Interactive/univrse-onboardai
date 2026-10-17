@@ -1,4 +1,4 @@
-/* Alya stays in view while employees choose chat or illustrated guidance. */
+/* The Alya page: a full-height workspace with the stage beside (or above) the chat. */
 .uv-assistant-workspace {
   background: #1f3047;
   height: 100dvh;
@@ -16,7 +16,9 @@
   border-bottom: 1px solid #637b94;
   flex-shrink: 0;
   display: grid;
-  grid-template-columns: 190px 1fr auto;
+  /* The actions column may shrink: the account label gives way (ellipsis)
+     before any control is pushed out of the header. */
+  grid-template-columns: 190px 1fr minmax(0, auto);
   grid-template-areas: 'brand nav actions';
   align-items: center;
   gap: 18px;
@@ -41,6 +43,13 @@
 .uv-assistant-workspace .uv-header-actions {
   grid-area: actions;
   gap: 12px;
+  min-width: 0;
+  /* Fill the grid track (no auto margin), so the track's width limits it. */
+  margin-left: 0;
+  justify-content: flex-end;
+}
+.uv-assistant-workspace .uv-header-actions > :not(.uv-account-id) {
+  flex-shrink: 0;
 }
 .uv-assistant-workspace .uv-menu-button {
   display: none;
@@ -93,55 +102,6 @@
   gap: 16px;
   isolation: isolate;
 }
-.alya-companion-stage {
-  border: 1px solid #536b72;
-  grid-area: avatar;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  border-radius: 15px;
-}
-.alya-companion-stage .alya-avatar-stage {
-  height: 100%;
-}
-.alya-companion-stage .alya-stage-top {
-  top: 24px;
-  left: 23px;
-  right: 20px;
-  font-size: 8px;
-  letter-spacing: 0.13em;
-  line-height: 1.8;
-}
-.alya-companion-stage .alya-stage-bottom {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 17px;
-  padding: 90px 25px 26px;
-}
-.alya-companion-stage .alya-avatar-name {
-  gap: 9px;
-}
-.alya-companion-stage .alya-avatar-name strong {
-  font-size: 43px;
-  letter-spacing: -0.055em;
-}
-.alya-companion-stage .alya-avatar-name small {
-  font-size: 11px;
-  margin-top: 3px;
-}
-.alya-companion-stage .alya-presence {
-  padding: 0;
-  background: transparent;
-  border: 0;
-  font-size: 11px;
-}
-.alya-companion-stage .alya-model-state {
-  left: 15px;
-  right: 15px;
-  top: 63px;
-  font-size: 10px;
-  border-radius: 6px;
-}
 .alya-answer-space {
   grid-area: answers;
   display: flex;
@@ -152,65 +112,6 @@
   border-radius: 15px;
   background: #1f3047;
   overflow: hidden;
-}
-.alya-view-heading {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 21px 24px;
-  border-bottom: 1px solid #637b94;
-  position: relative;
-}
-.alya-view-heading h1 {
-  color: #e8eff4;
-  font-size: 32px;
-  letter-spacing: -0.055em;
-  line-height: 1.1;
-}
-.alya-view-tabs {
-  display: flex;
-  flex-shrink: 0;
-  gap: 3px;
-  padding: 4px;
-  border: 1px solid #456b7c;
-  border-radius: 9px;
-  background: #19273b;
-}
-.alya-view-tabs button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 42px;
-  padding: 9px 14px;
-  border-radius: 5px;
-  color: #c1d1d6;
-  font-size: 12px;
-  white-space: nowrap;
-}
-.alya-view-tabs button[aria-selected='true'] {
-  background: #abd7de;
-  color: #1f3047;
-  font-weight: 700;
-}
-.alya-view-tabs button:hover:not([aria-selected='true']) {
-  background: #334b66;
-  color: #e8eff4;
-}
-.alya-tab-new {
-  color: #abd7de;
-  font-size: 8px;
-  padding: 3px 4px;
-  border: 1px solid #7496ad;
-  border-radius: 3px;
-}
-.alya-guide-ready {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
 }
 .alya-view-panels {
   flex: 1;
@@ -239,14 +140,6 @@
   display: block;
   min-width: 0;
 }
-.alya-chat-eyebrow {
-  display: block;
-  font-size: 8px;
-  font-weight: 650;
-  letter-spacing: 0.13em;
-  margin-bottom: 6px;
-  color: #a2bac5;
-}
 .alya-chat-heading h2 {
   font-size: 16px;
   letter-spacing: -0.02em;
@@ -256,11 +149,6 @@
   font-size: 10px;
   white-space: nowrap;
   min-height: 36px;
-}
-.alya-connection {
-  padding: 9px 20px;
-  min-height: 31px;
-  font-size: 9px;
 }
 .alya-memory-bar {
   padding: 4px 17px;
@@ -272,7 +160,6 @@
   min-height: 28px;
   gap: 5px;
 }
-
 .alya-chat-log {
   min-height: 0;
   max-height: none;
@@ -294,8 +181,7 @@
   font-size: 9px;
 }
 .alya-message.user > p,
-.alya-answer-body > p,
-.alya-passage > p {
+.alya-answer-body > p {
   font-size: 14px;
   line-height: 1.85;
 }
@@ -426,204 +312,10 @@
   gap: 8px;
   font-size: 10px;
 }
-/* The illustrated sheet keeps the same interaction in the lighter studio. */
-.alya-visual-workspace {
-  border: 0;
-  border-radius: 0;
-  background: #dce6ed;
-}
-.alya-visual-workspace > header {
-  color: #254b58;
-  background: #dce6ed;
-  border-bottom: 1px solid #e3f3f4;
-  padding: 11px 20px;
-  gap: 12px;
-}
-.av-section-label {
-  display: none;
-}
-.alya-visual-workspace h2 {
-  font-size: 22px;
-  margin: 0;
-}
-.av-answer-picker {
-  width: 160px;
-  flex-shrink: 0;
-}
-.av-answer-picker label {
-  color: #52677b;
-  font-size: 9px;
-}
-.av-answer-picker select {
-  background: #eaf0f4;
-  border-color: #c8d8e2;
-  color: #48636a;
-  font-size: 11px;
-  padding: 8px 22px 8px 8px;
-}
-.av-question {
-  background: #edf5f8;
-  padding: 11px 20px;
-  border-color: #e3f3f4;
-}
-.av-question p {
-  color: #52677b;
-  font-size: 11px;
-}
-.av-chapters {
-  padding: 6px 20px 0;
-}
-.av-chapter-caption {
-  color: #52677b;
-}
-.av-chapter-list button {
-  border-color: #c8d8e2;
-  color: #52677b;
-  min-height: 36px;
-  padding: 6px 9px;
-}
-.av-chapter-name {
-  display: block;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.av-reading h3 {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
-.av-illustration .av-artwork {
-  height: 0;
-  flex: 1;
-  min-height: 0;
-  max-height: 260px;
-}
-.av-illustration figcaption {
-  flex-shrink: 0;
-}
-.alya-composer-area.is-visual {
-  padding: 7px 20px;
-}
-.alya-composer-area.is-visual .alya-voice-toolbar {
-  margin-top: 0;
-}
-.alya-composer-area.is-visual .alya-voice-options {
-  bottom: 44px;
-}
-.av-navigation > span {
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-.av-navigation small {
-  font-size: 10px;
-}
-
-.av-chapter-list button.selected {
-  background: #e3f3f4;
-  border-color: #256a91;
-  color: #1f3047;
-}
-.av-chapter-list button:hover {
-  background: #edf5f8;
-}
-.av-infographic {
-  padding-left: 20px;
-  padding-right: 20px;
-}
-.av-illustration {
-  border-color: #dce9ef;
-}
-.av-plate-index {
-  color: #7496ad;
-}
-.av-illustration figcaption {
-  color: #52677b;
-}
-.av-reading h3 {
-  color: #254b58;
-  font-size: 25px;
-}
-.av-reading p {
-  color: #3c5e64;
-  font-size: 15px;
-  line-height: 1.85;
-}
-.av-reading-position {
-  color: #52677b;
-}
-.av-important-word {
-  color: #294d50;
-  text-decoration-color: #7496ad;
-}
-.av-navigation {
-  border-color: #dce9ef;
-  padding: 8px 20px;
-}
-.av-navigation button {
-  background: #256a91;
-  color: #e8eff4;
-  border-radius: 5px;
-  min-height: 38px;
-  min-width: 78px;
-}
-.av-navigation button:not(:disabled):hover {
-  background: #1e587a;
-}
-.av-navigation button:disabled {
-  border-color: #c8d8e2;
-  color: #52677b;
-}
-.av-source-footer {
-  background: #edf5f8;
-  border-color: #dce9ef;
-  color: #52677b;
-  padding: 8px 20px;
-}
-.av-source-footer button {
-  color: #52677b;
-}
-@container (max-width: 600px) {
-  .av-infographic {
-    grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
-    grid-template-rows: minmax(0, 1fr);
-    padding-top: 15px;
-    gap: 18px;
-  }
-  .av-illustration {
-    flex-direction: column;
-    border-bottom: 0;
-    border-right: 1px solid #dce9ef;
-    padding: 0 14px 0 0;
-  }
-  .av-reading h3 {
-    font-size: 25px;
-    margin-top: 7px;
-  }
-  .av-illustration .av-artwork {
-    width: 100%;
-    height: 0;
-    max-height: 230px;
-  }
-  .av-illustration figcaption {
-    position: static;
-    max-width: none;
-    text-align: center;
-    margin-top: 5px;
-  }
-  .av-plate-index {
-    top: 7px;
-  }
-  .av-reading {
-    align-items: stretch;
-  }
-}
-
-/* Give the chosen view the full reading area; the avatar never swaps away. */
+/* Narrower desktops and tablets: tighter header and chat spacing. */
 @media (max-width: 1200px) {
   .uv-assistant-workspace > .uv-header {
-    grid-template-columns: 172px 1fr auto;
+    grid-template-columns: 172px 1fr minmax(0, auto);
     gap: 8px;
   }
   .uv-assistant-workspace .uv-preview-label {
@@ -636,49 +328,16 @@
     padding-right: 10px;
     font-size: 11px;
   }
-  .alya-conversation-shell {
-    grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
-    gap: 12px;
-  }
-  .alya-view-heading {
-    padding: 17px 19px;
-    gap: 10px;
-  }
-  .alya-view-heading h1 {
-    font-size: 29px;
-  }
-  .alya-view-tabs button {
-    padding: 8px 10px;
-    gap: 6px;
-  }
-  .alya-companion-stage .alya-stage-bottom {
-    padding: 80px 22px 25px;
-  }
-  .alya-companion-stage .alya-avatar-name strong {
-    font-size: 40px;
-  }
 }
 @media (min-width: 681px) and (max-width: 1000px) {
   .uv-assistant-workspace .uv-header-actions > .uv-icon-button[aria-label='Search your workspace'],
-  .uv-assistant-workspace .uv-profile-top {
+  .uv-assistant-workspace .uv-profile-top,
+  .uv-assistant-workspace .uv-account-prefix {
     display: none;
   }
   .uv-assistant-workspace > .uv-header,
   .uv-assistant-workspace > .uv-main {
     width: calc(100% - 28px);
-  }
-  .alya-conversation-shell {
-    grid-template-columns: minmax(0, 0.56fr) minmax(0, 1fr);
-  }
-  .alya-view-heading {
-    padding: 15px;
-  }
-  .alya-view-heading h1 {
-    font-size: 26px;
-  }
-  .alya-view-tabs button {
-    padding: 8px 9px;
-    font-size: 11px;
   }
   .alya-chat-heading {
     padding: 10px 17px;
@@ -700,20 +359,9 @@
   .uv-assistant-workspace > .uv-main {
     padding-top: 12px;
   }
-  .alya-view-heading {
-    padding: 12px 20px;
-  }
-  .alya-view-heading .alya-chat-eyebrow {
-    display: none;
-  }
   .alya-chat-heading {
     min-height: 44px;
     padding: 7px 20px;
-  }
-  .alya-connection {
-    padding-top: 5px;
-    padding-bottom: 5px;
-    min-height: 25px;
   }
   .alya-composer textarea {
     height: 46px;
@@ -724,32 +372,13 @@
     padding-top: 9px;
     padding-bottom: 7px;
   }
-  .alya-visual-workspace > header {
-    padding: 8px 20px;
-  }
-  .av-section-label {
-    display: none;
-  }
 }
-@media (max-width: 680px) {
-  .uv-assistant-workspace > .uv-header,
-  .uv-assistant-workspace > .uv-main {
-    width: calc(100% - 20px);
-  }
+/* Like the rest of the portal, the nav collapses behind the menu button at
+   800px and below; the account and Sign out move into that menu. */
+@media (max-width: 800px) {
   .uv-assistant-workspace > .uv-header {
-    height: 56px;
     grid-template-columns: 1fr auto;
     grid-template-areas: 'brand actions';
-  }
-  .uv-assistant-workspace .onboard-brand-name {
-    font-size: 20px;
-  }
-  .uv-assistant-workspace .uv-header-actions {
-    gap: 10px;
-  }
-  .uv-assistant-workspace .uv-header-actions > .uv-icon-button[aria-label='Search your workspace'],
-  .uv-assistant-workspace .uv-profile-top {
-    display: none;
   }
   .uv-assistant-workspace .uv-menu-button {
     display: grid;
@@ -757,7 +386,7 @@
   .uv-assistant-workspace .uv-navigation {
     display: none;
     position: absolute;
-    top: 55px;
+    top: 100%;
     left: 0;
     right: 0;
     height: auto;
@@ -775,66 +404,30 @@
     min-height: 46px;
     padding: 12px;
   }
+}
+@media (max-width: 680px) {
+  .uv-assistant-workspace > .uv-header,
+  .uv-assistant-workspace > .uv-main {
+    width: calc(100% - 20px);
+  }
+  .uv-assistant-workspace > .uv-header {
+    height: 56px;
+  }
+  .uv-assistant-workspace .onboard-brand-name {
+    font-size: 20px;
+  }
+  .uv-assistant-workspace .uv-header-actions {
+    gap: 10px;
+  }
+  .uv-assistant-workspace .uv-header-actions > .uv-icon-button[aria-label='Search your workspace'],
+  .uv-assistant-workspace .uv-profile-top {
+    display: none;
+  }
   .uv-assistant-workspace > .uv-main {
     padding-top: 7px;
   }
-  .alya-conversation-shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(155px, 0.38fr) minmax(0, 1fr);
-    grid-template-areas: 'avatar' 'answers';
-    gap: 8px;
-  }
-  .alya-companion-stage,
   .alya-answer-space {
     border-radius: 10px;
-  }
-  .alya-companion-stage .alya-stage-top {
-    top: 12px;
-    left: 16px;
-    font-size: 7px;
-  }
-  .alya-companion-stage .alya-stage-bottom {
-    flex-direction: row;
-    align-items: flex-end;
-    padding: 45px 16px 14px;
-    gap: 10px;
-    background: none;
-    text-shadow: 0 1px 7px #1f3047;
-  }
-  .alya-companion-stage .alya-avatar-name strong {
-    font-size: 29px;
-  }
-  .alya-companion-stage .alya-avatar-name small {
-    display: none;
-  }
-  .alya-companion-stage .alya-presence {
-    font-size: 9px;
-  }
-  .alya-companion-stage .alya-model-state {
-    top: 35px;
-    left: 12px;
-    right: 12px;
-    padding: 7px;
-    font-size: 8px;
-  }
-  .alya-view-heading {
-    padding: 9px 12px;
-    gap: 8px;
-  }
-  .alya-view-heading h1 {
-    font-size: 24px;
-  }
-  .alya-view-heading .alya-chat-eyebrow {
-    display: none;
-  }
-  .alya-view-tabs {
-    padding: 3px;
-  }
-  .alya-view-tabs button {
-    font-size: 11px;
-    gap: 6px;
-    min-height: 38px;
-    padding: 7px 9px;
   }
   .alya-chat-heading {
     padding: 7px 13px;
@@ -845,9 +438,6 @@
   }
   .alya-chat-heading .alya-new-chat {
     min-height: 30px;
-  }
-  .alya-connection {
-    display: none;
   }
   .alya-memory-bar {
     min-height: 31px;
@@ -899,57 +489,6 @@
   .alya-chat-caption {
     display: none;
   }
-  .alya-visual-workspace > header {
-    padding: 10px 13px;
-  }
-  .alya-visual-workspace h2 {
-    font-size: 20px;
-  }
-  .av-answer-picker {
-    width: 134px;
-  }
-  .av-question {
-    padding: 7px 13px;
-  }
-  .av-chapters {
-    padding: 5px 13px 0;
-  }
-  .av-chapter-list button {
-    min-height: 36px;
-    padding: 5px 10px;
-  }
-  .av-infographic {
-    grid-template-columns: minmax(85px, 0.7fr) minmax(0, 1.3fr);
-    grid-template-rows: minmax(0, 1fr);
-    padding: 10px 13px;
-    gap: 12px;
-  }
-  .av-illustration .av-artwork {
-    max-height: 150px;
-  }
-  .av-reading h3 {
-    font-size: 22px;
-    margin: 4px 0 9px;
-  }
-  .av-reading p {
-    font-size: 14px;
-    line-height: 1.75;
-  }
-  .av-navigation {
-    padding: 5px 13px;
-  }
-  .av-navigation button {
-    min-height: 34px;
-    min-width: 68px;
-    padding: 5px 8px;
-    font-size: 11px;
-  }
-  .av-source-footer {
-    padding: 5px 13px;
-  }
-  .av-source-footer button {
-    min-height: 28px;
-  }
   .alya-page-footnote {
     padding: 5px 2px;
     min-height: 25px;
@@ -985,5 +524,51 @@
   }
   .uv-assistant-workspace > .uv-main {
     min-height: 730px;
+  }
+}
+/* Give the transcript the room: compact banner, one scrolling row of chips, and
+   a clear gap so the last row never sits under the banner. */
+.alya-chat-log {
+  padding-bottom: 28px;
+}
+.alya-voice-error {
+  padding: 6px 20px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.alya-chips {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+}
+.alya-chips button {
+  flex-shrink: 0;
+  white-space: nowrap;
+  min-height: 36px;
+  padding-block: 6px;
+}
+@media (max-width: 680px) {
+  .alya-chat-log,
+  .alya-memory-bar ~ .alya-chat-log {
+    min-height: 340px;
+    max-height: none;
+  }
+  .alya-chat-heading {
+    min-height: 44px;
+    padding-block: 6px;
+  }
+  .alya-voice-error {
+    padding: 6px 14px;
+  }
+}
+@media (max-height: 800px) and (min-width: 681px) {
+  .alya-chat-heading {
+    min-height: 40px;
+    padding-block: 4px;
+  }
+  .alya-memory-bar {
+    min-height: 32px;
+    padding-block: 2px;
   }
 }

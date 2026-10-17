@@ -164,7 +164,7 @@ test('npm run db:migrate explains an unreachable database without printing DATAB
   assert.match((await run('scripts/migrate-database.mjs')).stderr, /Set DATABASE_URL/);
 });
 
-test('without DATABASE_URL the app behaves as before: account routes are 503 and account cookies are ignored', async () => {
+test('without DATABASE_URL account routes are 503, and chat, conversations and voice need a sign-in nobody can make', async () => {
   for (const mode of ['document-search', 'gemini-chat']) {
     const app = await startAccountsApp({ mode, accounts: false });
     try {
@@ -172,7 +172,8 @@ test('without DATABASE_URL the app behaves as before: account routes are 503 and
       browser.cookies.set('onboardai_account', 'a'.repeat(64));
       const config = await browser.get('/api/config');
       assert.equal(config.body.accounts, false);
-      assert.equal(config.body.conversationMemory, mode === 'gemini-chat');
+      // Issue #55: no anonymous saved chats in any mode.
+      assert.equal(config.body.conversationMemory, false);
       assert.notEqual(config.headers.get('cache-control'), 'no-store');
       for (const [method, path, body] of [
         ['post', '/api/auth/sign-in', { username: 'HR-0001', password: 'synthetic-hr-pass-1' }],
@@ -180,13 +181,14 @@ test('without DATABASE_URL the app behaves as before: account routes are 503 and
         ['post', '/api/auth/sign-out'],
         ['post', '/api/auth/password', { currentPassword: 'a', newPassword: 'b' }],
         ['get', '/api/me/profile'],
+        ['get', '/api/me/onboarding'],
         ['get', '/api/hr/employees'],
         ['post', '/api/hr/employees', {}],
         ['put', `/api/hr/employees/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}/status`, {}],
         ['delete', `/api/hr/employees/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`],
-        ['get', '/api/hr/support-summaries'],
+        ['get', '/api/hr/support-requests'],
         ['get', '/api/hr/company-knowledge'],
-        ['post', '/api/hr/company-knowledge/documents', { category: 'it', url: 'x' }],
+        ['post', '/api/hr/company-knowledge/documents', { category: 'role-tools', url: 'x' }],
         ['delete', '/api/hr/company-knowledge/documents/x'],
       ]) {
         const response = await browser[method](path, body);
@@ -196,21 +198,23 @@ test('without DATABASE_URL the app behaves as before: account routes are 503 and
           path,
         );
       }
-      if (mode === 'document-search') {
-        assert.equal((await browser.get('/api/conversations')).status, 404);
-        const answer = await browser.post('/api/chat', {
-          question: 'How do I finish the onboarding quiz?',
-          taskId: 'quiz-part-1',
-        });
-        assert.equal(answer.status, 200);
-        assert.equal(answer.body.mode, 'document-search');
-      } else {
-        // The anonymous browser cookie still owns the chats.
-        const chat = await browser.post('/api/conversations');
-        assert.equal(chat.status, 201);
-        assert.ok(browser.cookies.has('alya_session'));
-        assert.match(app.firestore.read(`conversations/${chat.body.id}`).owner, /^[0-9a-f]{64}$/);
+      // The account cookie is not honoured without accounts, and there is no
+      // anonymous fallback: 401 AUTH_REQUIRED, nothing answered or stored.
+      for (const [method, path, body] of [
+        ['get', '/api/conversations'],
+        ['post', '/api/conversations'],
+        [
+          'post',
+          '/api/chat',
+          { question: 'How do I finish the onboarding quiz?', taskId: 'quiz-part-1' },
+        ],
+        ['post', '/api/voice', { text: 'Hello' }],
+      ]) {
+        const response = await browser[method](path, body);
+        assert.deepEqual([response.status, response.body.code], [401, 'AUTH_REQUIRED'], path);
       }
+      assert.ok(!browser.cookies.has('alya_session'));
+      assert.deepEqual(app.firestore.paths('conversations/'), []);
       assert.equal((await app.rows('SELECT count(*)::int AS n FROM sessions'))[0].n, 0);
     } finally {
       await app.close();

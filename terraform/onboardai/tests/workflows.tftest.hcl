@@ -94,9 +94,10 @@ run "deploy_flags_match_terraform" {
     condition = (
       strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,") &&
       strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), ",VERTEX_SEARCH_LOCATION=$VERTEX_SEARCH_LOCATION,VERTEX_SEARCH_ENGINE_ID=$VERTEX_SEARCH_ENGINE_ID,FIRESTORE_DATABASE_ID=$FIRESTORE_DATABASE_ID,") &&
+      strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "DOCS_BUCKET=$GCP_PROJECT_ID-onboardai-docs$NAME_SUFFIX,VERTEX_SEARCH_DATA_STORE_ID=onboardai-docs$NAME_SUFFIX,") &&
       strcontains(file("${path.module}/../../.github/workflows/deploy.yml"), "TTS_SERVICE_URL=$tts_url\"")
     )
-    error_message = "The api env (contract v2) must carry AI_MODE, GEMINI_MODEL, VERTEX_SEARCH_LOCATION, VERTEX_SEARCH_ENGINE_ID, FIRESTORE_DATABASE_ID and TTS_SERVICE_URL."
+    error_message = "The api env (contract v2) must carry AI_MODE, GEMINI_MODEL, VERTEX_SEARCH_LOCATION, VERTEX_SEARCH_ENGINE_ID, FIRESTORE_DATABASE_ID, DOCS_BUCKET, VERTEX_SEARCH_DATA_STORE_ID and TTS_SERVICE_URL."
   }
 
   # The deploy job takes the three contract v2 values from the repository
@@ -146,8 +147,11 @@ run "repository_variables_match_terraform" {
       for f in fileset("${path.module}/../../.github/workflows", "*.{yml,yaml}") : [
         for m in regexall("vars\\.([A-Za-z0-9_]+)", file("${path.module}/../../.github/workflows/${f}")) : m[0]
       ]
-    ])) == toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) ", output.github_variable_commands) : m[0]])
-    error_message = "The vars.* the workflows read and the gh variable set commands in output github_variable_commands must be the same set."
+      ])) == setunion(
+      toset([for m in regexall("(?m)^gh variable set ([A-Z0-9_]+) ", output.github_variable_commands) : m[0]]),
+      toset(["VOICE_PROVIDER", "GEMINI_TTS_MODEL", "GEMINI_TTS_LOCATION", "GEMINI_TTS_VOICE", "CHECKLIST_AGENT_ENABLED"])
+    )
+    error_message = "The vars.* the workflows read and the gh variable set commands in output github_variable_commands must be the same set, except the optional voice (#52) and CHECKLIST_AGENT_ENABLED (#51) variables, which have defaults in deploy.yml."
   }
 
   assert {
@@ -203,15 +207,40 @@ run "workflows_follow_public_repo_rules" {
     error_message = "Pin every action to a 40-character commit SHA followed by '# vX.Y.Z'."
   }
 
-  # id-token: write only on the three jobs that call Google Cloud: images,
-  # agent (staging's intake agent, #30) and deploy.
+  # id-token: write only on the jobs that call Google Cloud: images, agent
+  # (staging's intake agent, #30), checklist_agent (#51), deploy, and smoke for
+  # one ID token (#57).
   assert {
     condition = (
-      length(regexall("id-token: write", file("${path.module}/../../.github/workflows/deploy.yml"))) == 3 &&
-      toset([for name, job in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs : name if try(job.permissions["id-token"], "") == "write"]) == toset(["images", "agent", "deploy"]) &&
+      length(regexall("id-token: write", file("${path.module}/../../.github/workflows/deploy.yml"))) == 5 &&
+      toset([for name, job in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs : name if try(job.permissions["id-token"], "") == "write"]) == toset(["images", "agent", "checklist_agent", "deploy", "smoke"]) &&
       !strcontains(file("${path.module}/../../.github/workflows/ci.yml"), "id-token")
     )
-    error_message = "id-token: write belongs to the images, agent and deploy jobs of deploy.yml only."
+    error_message = "id-token: write belongs to the images, agent, checklist_agent, deploy and smoke jobs of deploy.yml only."
+  }
+
+  # smoke's token is for one thing: the deployer's ID token for the api, only
+  # when the run deployed the intake agent. No access token, no credentials
+  # file, no gcloud, and nothing else in the job uses an action.
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.permissions == { "id-token" = "write" } &&
+      length([for st in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps : st if can(st.uses)]) == 1 &&
+      one([for st in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps : st if can(st.uses)]).if == "needs.deploy.outputs.intake_agent == 'true'" &&
+      startswith(one([for st in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps : st.uses if can(st.uses)]), "google-github-actions/auth@") &&
+      one([for st in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps : st.with if can(st.uses)]) == {
+        workload_identity_provider   = "$${{ needs.deploy.outputs.wif_provider }}"
+        service_account              = "$${{ needs.deploy.outputs.deployer_sa }}"
+        token_format                 = "id_token"
+        id_token_audience            = "$${{ needs.deploy.outputs.api_url }}"
+        id_token_include_email       = true
+        create_credentials_file      = false
+        export_environment_variables = false
+      } &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.outputs.wif_provider == "$${{ vars.GCP_WIF_PROVIDER }}" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.outputs.deployer_sa == "$${{ vars.GCP_DEPLOYER_SA }}"
+    )
+    error_message = "The smoke job's only action is google-github-actions/auth for an ID token (audience: the api URL) as the stack's deployer, when the intake agent was deployed, with no credentials file or exported variables."
   }
 
   assert {
@@ -512,7 +541,7 @@ run "migrations_run_everywhere_and_the_agent_only_on_staging" {
   # before it deploys anything, in every stack.
   assert {
     condition = (
-      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.needs == ["images", "agent"] &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.needs == ["images", "agent", "checklist_agent"] &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env.INTAKE_AGENT_DEPLOYED == "$${{ needs.agent.outputs.deployed }}" &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env.INTAKE_AGENT_ENGINE == "$${{ needs.agent.outputs.engine }}" &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.outputs.intake_agent == "$${{ steps.deploy.outputs.intake_agent }}" &&
@@ -522,7 +551,7 @@ run "migrations_run_everywhere_and_the_agent_only_on_staging" {
       try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].if, null) == null &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[5].env.MIGRATE_OUTCOME == "$${{ steps.migrate.outcome }}"
     )
-    error_message = "deploy needs [images, agent], takes the agent job's deployed and engine, and runs 'Migrate the databases' (id migrate) in every stack, with no condition, right before the Deploy step."
+    error_message = "deploy needs [images, agent, checklist_agent], takes the agent job's deployed and engine, and runs 'Migrate the databases' (id migrate) in every stack, with no condition, right before the Deploy step."
   }
 
   # The deploy job outlasts two full migration attempts (timeout x
@@ -546,6 +575,17 @@ run "migrations_run_everywhere_and_the_agent_only_on_staging" {
     error_message = "The migration step updates the job to this commit's api image, executes it with --wait, prints its lines, then fails with ::error:: if the execution failed (an incomplete log only warns)."
   }
 
+  # #54: the step reads the job before it updates it, and a job it cannot read
+  # (not applied yet, or no access) stops the step with an error that names
+  # the missing apply and gcloud's own first error line, before anything runs.
+  assert {
+    condition = (
+      [for m in regexall("gcloud run jobs (describe|update|execute) ", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run) : m[0]] == ["describe", "update", "execute"] &&
+      can(regex("^set -euo pipefail\\njob=\"onboardai-db-migrate\\$NAME_SUFFIX\"\\nview=\"onboardai-db-migrate\\$NAME_SUFFIX\"\\nif ! gcloud run jobs describe \"\\$job\" --project=\"\\$GCP_PROJECT_ID\" --region=\"\\$GCP_REGION\" [^\\n]*> /dev/null 2> \"\\$RUNNER_TEMP/migrate-describe\\.log\"; then\\n  echo \"::error::Cannot read the migration job \\$job\\. Apply terraform/onboardai \\(\\$DEPLOY_ENV\\) first; it creates the job and the deployer's access to it\\. Nothing was deployed\\.\"\\n  echo \"gcloud: \\$\\(grep -m 1 '\\^ERROR' \"\\$RUNNER_TEMP/migrate-describe\\.log\" \\|\\| head -n 1 \"\\$RUNNER_TEMP/migrate-describe\\.log\"\\)\"\\n  exit 1\\nfi\\ngcloud run jobs update \"\\$job\" ", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].run))
+    )
+    error_message = "Before gcloud run jobs update, the migration step must run gcloud run jobs describe on the job and, if that fails, print the ::error:: naming the missing terraform/onboardai apply and gcloud's first error line, then exit 1."
+  }
+
   # The log: this execution only, through the stack's log view, retried a
   # bounded number of times, and only the runner's lines are printed.
   assert {
@@ -562,16 +602,51 @@ run "migrations_run_everywhere_and_the_agent_only_on_staging" {
   }
 
   # The smoke test checks accounts in every stack, and the agent's checks only
-  # when this run deployed the agent.
+  # when this run deployed the agent. POST /mcp carries the deployer's ID token
+  # (#57) and must get the api's own 401, not Cloud Run's.
   assert {
     condition = (
-      length(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps) == 3 &&
+      [for st in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps : st.name] == ["Check the deployed services", "Get an ID token for the api", "Check employee accounts and form import", "Print rollback commands"] &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.env.INTAKE_AGENT == "$${{ needs.deploy.outputs.intake_agent }}" &&
-      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].name == "Check employee accounts and form import" &&
-      try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].if, null) == null &&
-      can(regex("(?s)if jq -e '\\.accounts == true' > /dev/null <<< \"\\$config\"; then\\n.*\\nif \\[\\[ \"\\$INTAKE_AGENT\" != true \\]\\]; then\\n[^\\n]*\\n  exit \"\\$failed\"\\nfi\\n.*'\\.employeeImport == true'.*\"\\$API_URL/mcp\".*if \\[\\[ \"\\$code\" == 401 \\]\\]; then", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].run))
+      try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].if, null) == null &&
+      try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[2].if, null) == null &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[2].env.API_ID_TOKEN == "$${{ steps.api-token.outputs.id_token }}" &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[1].id == "api-token" &&
+      can(regex("(?s)if jq -e '\\.accounts == true' > /dev/null <<< \"\\$config\"; then\\n.*\\nif \\[\\[ \"\\$INTAKE_AGENT\" != true \\]\\]; then\\n[^\\n]*\\n  exit \"\\$failed\"\\nfi\\n.*'\\.employeeImport == true'.*-H @- --data '\\{\\}' \"\\$API_URL/mcp\" <<< \"X-Serverless-Authorization: Bearer \\$API_ID_TOKEN\".*if \\[\\[ \"\\$code\" == 401 \\]\\] && jq -e '\\.jsonrpc == \"2\\.0\" and \\.error\\.code == -32001'", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[2].run)) &&
+      !strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[2].run, "Authorization: Bearer $API_ID_TOKEN\" -")
     )
-    error_message = "The smoke test requires accounts: true in every stack; employeeImport: true and POST /mcp -> 401 only when the run deployed the intake agent."
+    error_message = "The smoke test requires accounts: true in every stack; employeeImport: true and the api's own 401 for POST /mcp with the deployer's ID token (X-Serverless-Authorization, on stdin) only when the run deployed the intake agent."
+  }
+
+  # #57: the api and tts may be private, so every api check goes through web
+  # (no GCP credentials needed, and it passes before and after the IAM apply),
+  # the signed-out voice call proves web -> api (the api's own 401), and GET /api/health/tts proves web -> api -> tts with both ID tokens (#67). The api and tts
+  # URLs are only reported, never failed.
+  assert {
+    condition = (
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "probe \"web GET /api/health (proxied to api)\" \"$WEB_URL/api/health\" ") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "probe \"web GET /web-health\" \"$WEB_URL/web-health\" ") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "probe_json \"web POST /api/voice signed out (api's own 401)\" \"$WEB_URL/api/voice\" 6 '5[0-9][0-9]|000' 401 '.code == \"AUTH_REQUIRED\"' -X POST ") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "probe_json \"web GET /api/health/tts (api -> tts)\" \"$WEB_URL/api/health/tts\" 6 '5[0-9][0-9]|000' 200 '.ok == true and .tts == \"ok\"' ") &&
+      !strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "audio/wav") &&
+      !strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "PROBE_TYPE") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[2].run, "config=$(curl -sS --fail --max-time 30 \"$WEB_URL/api/config\")") &&
+      [for m in regexall("\\$(API_URL|TTS_URL)/[^\" ]*", join("\n", [for st in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps : try(st.run, "")])) : m[0]] == ["API_URL", "TTS_URL", "API_URL"] &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run, "reach \"onboardai-api$NAME_SUFFIX\" \"$API_URL/api/health\"\nreach \"onboardai-tts$NAME_SUFFIX\" \"$TTS_URL/health\"\n") &&
+      !can(regex("(?s)reach\\(\\) \\{\\n(?:[^}]|\\}[^\\n])*(failed|exit|return 1)", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run))
+    )
+    error_message = "The smoke test must check /web-health, /api/health, POST /api/voice signed out (the api's own 401 AUTH_REQUIRED), GET /api/health/tts (tts == ok) and /api/config through web, call the api URL directly only for POST /mcp, and only report (never fail on) the api's and tts's own URLs."
+  }
+
+  # The voice check sends a valid voice request (server/voice-request.mjs: text
+  # of at most 700 characters, rate one of 0.85, 0.95, 1, 1.05), kept tiny.
+  assert {
+    condition = (
+      length(jsondecode(regex("/api/voice\" [^\\n]*--data '([^']+)'", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run)[0]).text) <= 20 &&
+      length(trimspace(jsondecode(regex("/api/voice\" [^\\n]*--data '([^']+)'", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run)[0]).text)) > 0 &&
+      contains([0.85, 0.95, 1, 1.05], jsondecode(regex("/api/voice\" [^\\n]*--data '([^']+)'", yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.smoke.steps[0].run)[0]).rate)
+    )
+    error_message = "POST /api/voice must send {\"text\": <1 to 20 characters>, \"rate\": 0.85|0.95|1|1.05}."
   }
 
   # The agent's toolchain never handles credentials: dependencies install

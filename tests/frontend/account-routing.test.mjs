@@ -9,13 +9,15 @@ import {
 const hr = { id: '1', username: 'H', role: 'hr', mustChangePassword: false };
 const emp = { id: '2', username: 'E', role: 'employee', mustChangePassword: false };
 
-test('accounts off keeps every page as it is', () => {
-  for (const path of ['/login', '/signup', '/hr', '/profile', '/mira'])
+test('accounts off: only the sign-in page exists, there is no guest fallback', () => {
+  for (const path of ['/', '/login'])
     assert.deepEqual(routeDecision({ accounts: false, path }), { type: 'render' });
+  for (const path of ['/signup', '/hr', '/profile', '/alya', '/dashboard', '/employee'])
+    assert.deepEqual(routeDecision({ accounts: false, path }), { type: 'redirect', to: '/login' });
 });
 test('landing page follows account.role', () => {
   assert.equal(landingPath(hr), '/hr');
-  assert.equal(landingPath(emp), '/mira');
+  assert.equal(landingPath(emp), '/dashboard');
 });
 test('signed-in users leave the login pages by role', () => {
   assert.deepEqual(routeDecision({ accounts: true, account: hr, path: '/login' }), {
@@ -24,30 +26,56 @@ test('signed-in users leave the login pages by role', () => {
   });
   assert.deepEqual(routeDecision({ accounts: true, account: emp, path: '/' }), {
     type: 'redirect',
-    to: '/mira',
+    to: '/dashboard',
   });
 });
-test('signup leads to sign-in', () => {
-  assert.deepEqual(routeDecision({ accounts: true, path: '/signup' }), {
+test('signed-out visitors to any app route go to /login', () => {
+  for (const path of [
+    '/signup',
+    '/dashboard',
+    '/onboarding',
+    '/alya',
+    '/support',
+    '/profile',
+    '/employee',
+    '/employee/0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f',
+    '/guest/employee',
+    '/hr',
+    '/hr-preview',
+    '/nowhere',
+  ])
+    assert.deepEqual(routeDecision({ accounts: true, path }), { type: 'redirect', to: '/login' });
+  for (const path of ['/', '/login'])
+    assert.deepEqual(routeDecision({ accounts: true, path }), { type: 'render' });
+});
+test('an employee only sees employee pages; HR only sees /hr', () => {
+  for (const path of ['/dashboard', '/onboarding', '/alya', '/support', '/profile'])
+    assert.deepEqual(routeDecision({ accounts: true, account: emp, path }), { type: 'render' });
+  assert.deepEqual(routeDecision({ accounts: true, account: emp, path: '/hr' }), {
     type: 'redirect',
-    to: '/login',
+    to: '/dashboard',
+  });
+  assert.deepEqual(routeDecision({ accounts: true, account: hr, path: '/hr' }), {
+    type: 'render',
+  });
+  assert.deepEqual(routeDecision({ accounts: true, account: hr, path: '/alya' }), {
+    type: 'redirect',
+    to: '/hr',
+  });
+  assert.deepEqual(routeDecision({ accounts: true, account: emp, path: '/signup' }), {
+    type: 'redirect',
+    to: '/dashboard',
   });
 });
 test('forced change shows before anything else', () => {
   const account = { ...emp, mustChangePassword: true };
-  for (const path of ['/login', '/mira', '/dashboard'])
+  for (const path of ['/login', '/alya', '/dashboard'])
     assert.equal(routeDecision({ accounts: true, account, path }).type, 'change-password');
 });
-test('My profile needs an account; guest pages do not', () => {
-  assert.equal(routeDecision({ accounts: true, path: '/profile' }).to, '/login');
-  assert.equal(routeDecision({ accounts: true, account: emp, path: '/profile' }).type, 'render');
-  assert.equal(routeDecision({ accounts: true, path: '/hr' }).type, 'render');
-  assert.equal(routeDecision({ accounts: true, path: '/employee' }).type, 'render');
-});
-test('gated paths wait for the session check', () => {
-  assert.equal(routeDecision({ accounts: null, path: '/login' }).type, 'loading');
+test('every route waits for the session check', () => {
+  for (const path of ['/login', '/hr', '/alya', '/dashboard'])
+    assert.equal(routeDecision({ accounts: null, path }).type, 'loading');
   assert.equal(routeDecision({ accounts: true, loading: true, path: '/hr' }).type, 'loading');
-  assert.equal(routeDecision({ accounts: null, path: '/mira' }).type, 'render');
 });
 test('app-wide account actions', () => {
   assert.deepEqual(afterAccountAction('sign-in', emp), {

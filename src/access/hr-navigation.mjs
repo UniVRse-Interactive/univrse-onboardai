@@ -1,16 +1,9 @@
-// HR workspace sections. Signed-in HR manages accounts and settings as well;
-// guest HR only sees People & Support and Company Documentation.
+// HR workspace sections. Every section needs a signed-in HR account.
 export const hrSections = [
-  { id: 'accounts', label: 'Employee accounts', icon: 'user', signedInOnly: true },
-  { id: 'people', label: 'People & Support', icon: 'people', signedInOnly: false },
-  { id: 'knowledge', label: 'Company Documentation', icon: 'book', signedInOnly: false },
-  { id: 'settings', label: 'Settings', icon: 'settings', signedInOnly: true },
+  { id: 'accounts', label: 'Employee accounts', icon: 'user' },
+  { id: 'people', label: 'People & Support', icon: 'people' },
+  { id: 'knowledge', label: 'Company Documentation', icon: 'book' },
+  { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
-export function visibleHrSections(signedIn) {
-  return hrSections.filter((section) => signedIn || !section.signedInOnly);
-}
-
-export function defaultHrSection(signedIn) {
-  return visibleHrSections(signedIn)[0].id;
-}
+export const defaultHrSection = () => hrSections[0].id;

@@ -107,23 +107,23 @@ class DocumentReference {
     return this.firestore.collection(`${this.path}/${name}`);
   }
   async get() {
-    await this.firestore._gate('get');
+    await this.firestore._gate('get', [this.path]);
     return this.firestore._snapshot(this);
   }
   async create(data) {
-    await this.firestore._gate('create');
+    await this.firestore._gate('create', [this.path]);
     this.firestore._apply([{ type: 'create', ref: this, data }]);
   }
   async set(data) {
-    await this.firestore._gate('set');
+    await this.firestore._gate('set', [this.path]);
     this.firestore._apply([{ type: 'set', ref: this, data }]);
   }
   async update(data) {
-    await this.firestore._gate('update');
+    await this.firestore._gate('update', [this.path]);
     this.firestore._apply([{ type: 'update', ref: this, data }]);
   }
   async delete() {
-    await this.firestore._gate('delete');
+    await this.firestore._gate('delete', [this.path]);
     this.firestore._apply([{ type: 'delete', ref: this }]);
   }
 }
@@ -162,7 +162,7 @@ class Query {
     });
   }
   async get() {
-    await this.firestore._gate('query');
+    await this.firestore._gate('query', [this.path]);
     return this.firestore._query(this);
   }
 }
@@ -203,7 +203,10 @@ class WriteBatch {
     return this;
   }
   async commit() {
-    await this.firestore._gate('commit');
+    await this.firestore._gate(
+      'commit',
+      this.operations.map((operation) => operation.ref.path),
+    );
     this.firestore._apply(this.operations);
   }
 }
@@ -242,12 +245,12 @@ class Transaction extends WriteBatch {
   async get(target) {
     this._read();
     if (target instanceof DocumentReference) {
-      await this.firestore._gate('get');
+      await this.firestore._gate('get', [target.path]);
       await this._lock(target.path);
       this.reads.set(target.path, this.firestore._version(target.path));
       return this.firestore._snapshot(target);
     }
-    await this.firestore._gate('query');
+    await this.firestore._gate('query', [target.path]);
     for (const doc of this.firestore._query(target.select()).docs) await this._lock(doc.ref.path);
     const snapshot = this.firestore._query(target);
     this.queries.push({ query: target, signature: this.firestore._signature(target) });
@@ -255,7 +258,10 @@ class Transaction extends WriteBatch {
   }
   async getAll(...refs) {
     this._read();
-    await this.firestore._gate('getAll');
+    await this.firestore._gate(
+      'getAll',
+      refs.map((ref) => ref.path),
+    );
     for (const ref of refs) await this._lock(ref.path);
     for (const ref of refs) this.reads.set(ref.path, this.firestore._version(ref.path));
     return refs.map((ref) => this.firestore._snapshot(ref));
@@ -292,7 +298,10 @@ export class FakeFirestore {
   }
   async getAll(...refs) {
     if (!refs.length) throw new Error('fake: getAll needs at least one document');
-    await this._gate('getAll');
+    await this._gate(
+      'getAll',
+      refs.map((ref) => ref.path),
+    );
     return refs.map((ref) => this._snapshot(ref));
   }
   async runTransaction(update) {
@@ -302,7 +311,10 @@ export class FakeFirestore {
       try {
         const result = await update(tx);
         // Faults here model a slow or failed commit while the locks are held.
-        await this._gate('transaction-commit');
+        await this._gate(
+          'transaction-commit',
+          tx.operations.map((operation) => operation.ref.path),
+        );
         const unchanged =
           [...tx.reads].every(([path, version]) => this._version(path) === version) &&
           tx.queries.every(({ query, signature }) => this._signature(query) === signature);
@@ -321,10 +333,12 @@ export class FakeFirestore {
   }
 
   // Test controls ---------------------------------------------------------
-  // Makes the next `times` operations (optionally only some kinds) fail with
-  // this gRPC code, never answer (hang), or succeed after delayMs.
-  fail(code, { times = 1, only = null, hang = false, delayMs = 0 } = {}) {
-    this.faults.push({ code, times, only, hang, delayMs });
+  // Makes the next `times` operations (optionally only some kinds, and with
+  // `match` only those touching a document or collection path that the RegExp
+  // matches) fail with this gRPC code, never answer (hang), or succeed after
+  // delayMs. A transaction's start has no path; its reads and commit do.
+  fail(code, { times = 1, only = null, match = null, hang = false, delayMs = 0 } = {}) {
+    this.faults.push({ code, times, only, match, hang, delayMs });
   }
   heal() {
     this.faults = [];
@@ -342,10 +356,15 @@ export class FakeFirestore {
   }
 
   // Internals -------------------------------------------------------------
-  async _gate(operation) {
+  async _gate(operation, paths = []) {
     this.calls[operation] = (this.calls[operation] || 0) + 1;
     if (this.terminated) throw new Error('The client has already been terminated.');
-    const fault = this.faults.find((f) => f.times > 0 && (!f.only || f.only.includes(operation)));
+    const fault = this.faults.find(
+      (f) =>
+        f.times > 0 &&
+        (!f.only || f.only.includes(operation)) &&
+        (!f.match || paths.some((path) => path.search(f.match) >= 0)),
+    );
     if (!fault) return;
     fault.times--;
     if (fault.hang) return new Promise(() => {});

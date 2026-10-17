@@ -129,3 +129,26 @@ test('a shown error clears when its field gets a valid value', async () => {
   );
   assert.deepEqual(clearResolvedErrors({}, before, bad), {});
 });
+
+test('Track defaults to Employee and only accepts the three tracks', () => {
+  assert.equal(emptyProfile().job.track, 'employee');
+  assert.equal(profileToForm(null).job.track, 'employee');
+  assert.equal(profileToForm({ job: { track: 'intern' } }).job.track, 'intern');
+  assert.equal(profileToForm({ job: { track: 'boss' } }).job.track, 'employee');
+  const f = valid();
+  f.job.track = 'contractor';
+  assert.deepEqual(validateProfileForm(f), []);
+  assert.equal(formToProfileInput(f).job.track, 'contractor');
+  f.job.track = '';
+  assert.equal(formToProfileInput(f).job.track, 'employee');
+  f.job.track = 'boss';
+  assert.deepEqual(validateProfileForm(f), [{ field: 'job.track', problem: 'invalid_track' }]);
+  assert.equal(
+    fieldErrors([{ field: 'job.track', problem: 'invalid_track' }]).errors['job.track'],
+    'Track must be Employee, Intern or Contractor.',
+  );
+});
+test('My profile shows the track by name', () => {
+  const rows = profileSections({ job: { track: 'intern' } })[0].rows;
+  assert.equal(rows.find((r) => r.key === 'track').value, 'Intern');
+});

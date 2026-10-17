@@ -202,6 +202,10 @@ services:
         condition: service_healthy
       tts:
         condition: service_healthy
+      # Started with the api, never waited on: an unhealthy agent must not stop it.
+      checklist-agent:
+        condition: service_started
+        required: false
     environment:
       <<: *local-data
       AI_MODE: ${AI_MODE:-document-search}
@@ -211,6 +215,13 @@ services:
       VERTEX_SEARCH_ENGINE_ID: ${VERTEX_SEARCH_ENGINE_ID:-}
       VERTEX_SEARCH_LOCATION: ${VERTEX_SEARCH_LOCATION:-global}
       TTS_SERVICE_URL: http://tts:8080
+      # The checklist agent; the api starts without it and the feature degrades.
+      CHECKLIST_AGENT_URL: ${CHECKLIST_AGENT_URL:-http://checklist-agent:8093}
+      # Voice (F6): Gemini TTS through the same ADC; kokoro (the tts service) by default locally.
+      VOICE_PROVIDER: ${VOICE_PROVIDER:-kokoro}
+      GEMINI_TTS_MODEL: ${GEMINI_TTS_MODEL:-gemini-3.8-flash-tts}
+      GEMINI_TTS_LOCATION: ${GEMINI_TTS_LOCATION:-global}
+      GEMINI_TTS_VOICE: ${GEMINI_TTS_VOICE:-}
       # One proxy hop in front of the api: the web container.
       TRUST_PROXY: '1'
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/application_default_credentials.json
@@ -228,6 +239,53 @@ services:
           'node',
           '-e',
           "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # Onboarding checklist agent (#51, F5): the ADK API server, on the compose
+  # network only (no published port; host 8093 stays free for `npm run
+  # checklist-agent`). It has no authentication. It writes to the Firestore
+  # emulator, never to cloud Firestore, and calls Gemini with your Application
+  # Default Credentials like the api. It needs GOOGLE_CLOUD_PROJECT (.env) for
+  # Gemini; without it the agent exits with a clear message and the api answers
+  # without checklist proposals (the feature degrades).
+  checklist-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.checklist-agent
+    image: onboardai-local-checklist-agent
+    init: true
+    restart: on-failure:5
+    depends_on:
+      firestore:
+        condition: service_healthy
+    environment:
+      # Firestore only: the agent gets no DATABASE_URL.
+      FIRESTORE_EMULATOR_HOST: firestore:8681
+      FIRESTORE_PROJECT_ID: demo-onboardai
+      FIRESTORE_DATABASE_ID: '(default)'
+      GOOGLE_GENAI_USE_VERTEXAI: 'TRUE'
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION:-global}
+      CHECKLIST_AGENT_MODEL: ${CHECKLIST_AGENT_MODEL:-gemini-3.8-flash}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/application_default_credentials.json
+    volumes:
+      - type: bind
+        source: ${LOCAL_ADC_FILE:-${HOME}/.config/gcloud/application_default_credentials.json}
+        target: /secrets/application_default_credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8093/list-apps', timeout=3).status == 200 else 1)",
         ]
       interval: 10s
       timeout: 5s

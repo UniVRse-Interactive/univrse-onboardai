@@ -57,6 +57,14 @@ override_resource {
 }
 
 override_resource {
+  target = google_service_account.checklist_agent[0]
+  values = {
+    email = "onboardai-checklist-staging@onboardai-test-123.iam.gserviceaccount.com"
+    name  = "projects/onboardai-test-123/serviceAccounts/onboardai-checklist-staging@onboardai-test-123.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
   target = google_service_account.intake_agent[0]
   values = {
     email = "onboardai-intake-staging@onboardai-test-123.iam.gserviceaccount.com"

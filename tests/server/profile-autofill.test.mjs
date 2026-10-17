@@ -758,7 +758,7 @@ test('logs name only the operation, file type, duration and outcome, never the f
   }
 });
 
-test('autofill uploads share the API POST limit of 30 requests per minute', async (t) => {
+test('autofill uploads share the API POST limit of 60 requests per minute', async (t) => {
   // Date is frozen so the limiter's one-minute window cannot roll over on a
   // slow machine (timers are not mocked).
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
@@ -766,9 +766,9 @@ test('autofill uploads share the API POST limit of 30 requests per minute', asyn
   await withAutofill({ autofill: { fetchImpl: vertex.fetchImpl } }, async (app) => {
     const hr = await app.hrBrowser(); // the sign-in is the first POST
     const statuses = [];
-    for (let i = 0; i < 30; i++)
+    for (let i = 0; i < 60; i++)
       statuses.push((await upload(hr, 'cv.txt', Buffer.alloc(0))).status);
-    assert.deepEqual(statuses, [...Array(29).fill(400), 429]);
+    assert.deepEqual(statuses, [...Array(59).fill(400), 429]);
   });
 });
 

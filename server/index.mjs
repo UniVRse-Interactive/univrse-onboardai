@@ -48,7 +48,18 @@ if (process.argv.includes('--production')) {
 } else {
   const { createServer } = await import('vite');
   // Share the HTTP listener for live updates instead of reserving a second port.
-  vite = await createServer({ server: { middlewareMode: true, hmr: { server } }, appType: 'spa' });
+  // The watcher skips files written while the app runs that are not browser
+  // source: .cache (voice model, local chat database) and agent-platform, where
+  // the checklist agent's Python environment (.venv) has HTML files that would
+  // otherwise reload the page.
+  vite = await createServer({
+    server: {
+      middlewareMode: true,
+      hmr: { server },
+      watch: { ignored: ['**/.cache/**', '**/agent-platform/**'] },
+    },
+    appType: 'spa',
+  });
   app.use(vite.middlewares);
 }
 const port = Number(process.env.PORT) || 3000;

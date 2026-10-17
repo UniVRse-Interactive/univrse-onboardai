@@ -392,7 +392,13 @@ test('local set-up also runs the Firestore migrations when Firestore is configur
     });
     assert.equal(code, 0, lines.join('\n'));
     assert.equal(created, 1);
-    assert.ok(lines.includes('Firestore is up to date.'), lines.join('\n'));
+    // Every Firestore migration file runs on a fresh emulator (#47 added the first).
+    const { firestoreMigrationFiles } = await import('../../server/firestore-migrations.mjs');
+    const files = firestoreMigrationFiles().length;
+    assert.ok(
+      lines.includes(files ? `Firestore migrated (${files} applied).` : 'Firestore is up to date.'),
+      lines.join('\n'),
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

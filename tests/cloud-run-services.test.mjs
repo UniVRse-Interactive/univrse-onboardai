@@ -13,8 +13,7 @@ import { createRemoteVoice } from '../server/remote-voice.mjs';
 import { parseApiServiceUrl } from '../server/api-proxy.mjs';
 import { parseTrustProxy } from '../server/service-runtime.mjs';
 import { encodeWav } from '../server/kokoro-voice.mjs';
-import { createGuestWorkspaceStore } from '../server/guest-workspace-store.mjs';
-import { workspaceLimits } from '../server/workspace-limits.mjs';
+import { accountCookieFor, signedInFetch, stubAccounts } from './server/signed-in.mjs';
 
 async function listen(handler) {
   const server = http.createServer(handler);
@@ -29,13 +28,16 @@ async function listen(handler) {
     },
   };
 }
+// Chat, conversations and voice need a signed-in account (issue #55): these
+// apps have a synthetic employee, and json() sends its cookie.
 const chatApp = (options = {}) => ({
   env: { AI_MODE: 'gemini-chat', NODE_ENV: 'production' },
   conversationService: { memory: { list: () => [] }, close() {} },
+  accountService: stubAccounts(),
   ...options,
 });
 const json = (url, path, body, headers = {}) =>
-  fetch(url + path, {
+  signedInFetch()(url + path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(body),
@@ -188,6 +190,7 @@ test('avatar GLB is streamed without Content-Length so Cloud Run accepts files o
     assert.equal(raw.headers['content-encoding'], 'gzip');
     assert.equal(raw.headers['content-type'], 'model/gltf-binary');
     assert.deepEqual(raw.body, glb);
+    assert.equal(await (await fetch(`${web.url}/alya`)).text(), '<html>app</html>');
     assert.equal(await (await fetch(`${web.url}/mira`)).text(), '<html>app</html>');
   } finally {
     await web.close();
@@ -199,7 +202,7 @@ test('origin check accepts the forwarded host behind the proxy and still rejects
   const unproxied = await listen(createApp(chatApp()));
   const asBrowser = (url, origin, forwardedHost) =>
     fetch(url + '/api/conversations', {
-      headers: { Origin: origin, 'X-Forwarded-Host': forwardedHost },
+      headers: { Origin: origin, 'X-Forwarded-Host': forwardedHost, Cookie: accountCookieFor() },
     });
   try {
     const same = await asBrowser(
@@ -221,26 +224,22 @@ test('origin check accepts the forwarded host behind the proxy and still rejects
   }
 });
 
-test('web to API: session cookie round-trips through the proxy and cross-site requests are rejected', async () => {
+test('web to API: the account cookie reaches the API through the proxy; signed-out and cross-site requests are rejected', async () => {
   const api = await listen(createApp(chatApp({ trustProxy: 2 })));
   const web = await listen(createWebApp({ apiUrl: api.url, distDir: tmpdir() }));
   try {
-    const first = await fetch(`${web.url}/api/conversations`, { headers: { Origin: web.url } });
-    assert.equal(first.status, 200);
-    const cookies = first.headers.getSetCookie();
-    assert.equal(cookies.length, 1);
-    assert.match(
-      cookies[0],
-      /^alya_session=[a-f0-9]{64}; Max-Age=\d+; Path=\/api; Expires=.*HttpOnly; Secure; SameSite=Strict/,
-    );
-    const token = cookies[0].split(';')[0];
-    const again = await fetch(`${web.url}/api/conversations`, {
-      headers: { Origin: web.url, Cookie: token },
+    // No anonymous session cookie any more (issue #55).
+    const signedOut = await fetch(`${web.url}/api/conversations`, { headers: { Origin: web.url } });
+    assert.equal(signedOut.status, 401);
+    assert.equal((await signedOut.json()).code, 'AUTH_REQUIRED');
+    assert.deepEqual(signedOut.headers.getSetCookie(), []);
+    const signedIn = await fetch(`${web.url}/api/conversations`, {
+      headers: { Origin: web.url, Cookie: accountCookieFor() },
     });
-    assert.equal(again.status, 200);
-    assert.equal(again.headers.getSetCookie()[0].split(';')[0], token, 'the same session is kept');
+    assert.equal(signedIn.status, 200);
+    assert.deepEqual(signedIn.headers.getSetCookie(), []);
     const cross = await fetch(`${web.url}/api/conversations`, {
-      headers: { Origin: 'https://evil.example' },
+      headers: { Origin: 'https://evil.example', Cookie: accountCookieFor() },
     });
     assert.equal(cross.status, 403);
   } finally {
@@ -249,91 +248,64 @@ test('web to API: session cookie round-trips through the proxy and cross-site re
   }
 });
 
-test('employee workspaces and document uploads work through the web proxy with bounded bodies', async () => {
-  const store = createGuestWorkspaceStore({ path: ':memory:' });
+test('the removed guest workspace API is a JSON 404 through the web proxy and creates nothing', async () => {
   const app = createApp({
     env: { AI_MODE: 'document-search', NODE_ENV: 'production' },
     trustProxy: 2,
-    guestStore: store,
+    accountService: stubAccounts(),
   });
   const api = await listen(app);
   const web = await listen(createWebApp({ apiUrl: api.url, distDir: tmpdir() }));
   try {
-    const first = await fetch(web.url + '/api/guest-workspace', {
-      headers: { Origin: web.url },
+    for (const [method, path, body, type] of [
+      ['GET', '/api/guest-workspace', undefined],
+      ['POST', '/api/guest-workspace/guests', '{}', 'application/json'],
+      ['POST', '/api/guest-workspace/documents', 'Working Hours', 'application/octet-stream'],
+      ['GET', '/api/guest-workspace/guests/x/config', undefined],
+    ])
+      for (const cookie of [undefined, accountCookieFor()]) {
+        const response = await fetch(web.url + path, {
+          method,
+          headers: {
+            Origin: web.url,
+            ...(type ? { 'Content-Type': type, 'X-File-Name': 'company-guide.txt' } : {}),
+            ...(cookie ? { Cookie: cookie } : {}),
+          },
+          body,
+        });
+        assert.equal(response.status, 404, `${method} ${path}`);
+        assert.deepEqual(await response.json(), {
+          code: 'NOT_FOUND',
+          error: 'This API route is unavailable.',
+        });
+        assert.deepEqual(response.headers.getSetCookie(), []);
+      }
+    // JSON bodies keep the smaller proxy limit.
+    const largeJson = await json(web.url, '/api/conversations', {
+      padding: 'x'.repeat(70 * 1024),
     });
-    assert.equal(first.status, 200);
-    const snapshot = await first.json();
-    const cookie = first.headers.getSetCookie()[0].split(';')[0];
-    assert.match(first.headers.getSetCookie()[0], /HttpOnly; Secure; SameSite=Strict/);
-    const headers = { Origin: web.url, Cookie: cookie };
-    const text =
-      'Working Hours\n' + 'Office hours are 10 AM to 6 PM Monday to Friday.\n'.repeat(1600);
-    assert.ok(Buffer.byteLength(text) > 64 * 1024);
-    const uploaded = await fetch(web.url + '/api/guest-workspace/documents', {
-      method: 'POST',
-      headers: {
-        ...headers,
-        'Content-Type': 'application/octet-stream',
-        'X-File-Name': 'company-guide.txt',
-      },
-      body: text,
-    });
-    assert.equal(uploaded.status, 201);
-    const again = await fetch(web.url + '/api/guest-workspace', { headers });
-    assert.equal((await again.json()).documents[0].title, 'company-guide.txt');
-    assert.equal(
-      (
-        await fetch(web.url + '/api/guest-workspace/guests/' + snapshot.lastGuestId + '/config', {
-          headers,
-        })
-      ).status,
-      200,
-    );
-    const cross = await json(
-      web.url,
-      '/api/guest-workspace/guests',
-      {},
-      {
-        ...headers,
-        Origin: 'https://other.example',
-      },
-    );
-    assert.equal(cross.status, 403);
-    const largeJson = await json(
-      web.url,
-      '/api/guest-workspace/guests',
-      {
-        padding: 'x'.repeat(70 * 1024),
-      },
-      headers,
-    );
     assert.equal(largeJson.status, 413, 'JSON retains the smaller proxy limit');
-    const oversized = await fetch(web.url + '/api/guest-workspace/documents', {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'big.txt' },
-      body: Buffer.alloc(workspaceLimits.bytes + 1, 'x'),
-    });
-    assert.equal(oversized.status, 413, 'uploads remain bounded by the shared file limit');
   } finally {
     await web.close();
     await api.close();
-    app.locals.closeChat();
+    await app.locals.closeChat();
   }
 });
 
 test('rate limit is keyed by the end user IP behind the proxy, not the proxy IP', async () => {
-  const behind = await listen(createApp({ env: {}, trustProxy: 2 }));
-  const noTrust = await listen(createApp({ env: {} }));
+  const behind = await listen(
+    createApp({ env: {}, trustProxy: 2, accountService: stubAccounts() }),
+  );
+  const noTrust = await listen(createApp({ env: {}, accountService: stubAccounts() }));
   // Cloud Run chain at the API: "<browser>, <web instance>"; the socket is Google's front end.
   const post = (url, client) =>
     json(url, '/api/voice', { text: '' }, { 'X-Forwarded-For': `${client}, 10.9.9.9` });
   try {
-    for (let i = 0; i < 30; i++) assert.equal((await post(behind.url, '203.0.113.1')).status, 400);
+    for (let i = 0; i < 60; i++) assert.equal((await post(behind.url, '203.0.113.1')).status, 400);
     assert.equal((await post(behind.url, '203.0.113.1')).status, 429);
     assert.equal((await post(behind.url, '203.0.113.2')).status, 400, 'another user is unaffected');
     // Without the setting every caller shares the proxy's bucket (the bug being fixed).
-    for (let i = 0; i < 30; i++) await post(noTrust.url, `198.51.100.${i}`);
+    for (let i = 0; i < 60; i++) await post(noTrust.url, `198.51.100.${i}`);
     assert.equal((await post(noTrust.url, '198.51.100.200')).status, 429);
   } finally {
     await behind.close();
@@ -358,7 +330,9 @@ test('API forwards validated voice requests to the TTS service and maps its fail
       res.end(wav);
     });
   });
-  const api = await listen(createApp({ env: { TTS_SERVICE_URL: tts.url } }));
+  const api = await listen(
+    createApp({ env: { TTS_SERVICE_URL: tts.url }, accountService: stubAccounts() }),
+  );
   try {
     const ok = await json(api.url, '/api/voice', {
       text: '  Hello there  ',
@@ -385,7 +359,9 @@ test('API forwards validated voice requests to the TTS service and maps its fail
     await tts.close();
   }
   // TTS service stopped: unavailable, not a crash.
-  const lonely = await listen(createApp({ env: { TTS_SERVICE_URL: tts.url } }));
+  const lonely = await listen(
+    createApp({ env: { TTS_SERVICE_URL: tts.url }, accountService: stubAccounts() }),
+  );
   try {
     const down = await json(lonely.url, '/api/voice', { text: 'Hello' });
     assert.equal(down.status, 503);

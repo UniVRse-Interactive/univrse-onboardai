@@ -1,12 +1,14 @@
 // npm run local / local:reset-hr / local:down / local:logs: runs the app in
-// Docker (compose.yaml) and shows the local HR login that server/local-setup.mjs
-// wrote to .cache/local-stack/hr-login.json. Local only.
+// Docker (compose.yaml: web, api, tts, the onboarding checklist agent and the
+// databases) and shows the local HR login that server/local-setup.mjs wrote to
+// .cache/local-stack/hr-login.json. Local only.
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { parseEnv } from 'node:util';
 
 export const setupDirectory = join('.cache', 'local-stack');
 export const loginFile = join(setupDirectory, 'hr-login.json');
@@ -100,6 +102,31 @@ async function readLogin(read, path) {
 
 export const placeholderFile = resolve(setupDirectory, 'no-adc.json');
 
+export const missingProjectMessage =
+  'GOOGLE_CLOUD_PROJECT is not set: add it to .env (Gemini on Vertex AI needs it)';
+const readDotEnv = (path = '.env') =>
+  existsSync(path) ? parseEnv(readFileSync(path, 'utf8')) : {};
+
+// The Google Cloud project for Gemini (the api's answers, autofill and voice,
+// and the checklist agent): the environment, then .env, then
+// `gcloud config get-value project`. Returns { project, source }, with a null
+// project when none of them has one.
+export function resolveProject({ env = process.env, dotEnv = readDotEnv, run = runCommand } = {}) {
+  const fromEnv = (env.GOOGLE_CLOUD_PROJECT || '').trim();
+  if (fromEnv) return { project: fromEnv, source: 'environment' };
+  let fromFile = '';
+  try {
+    fromFile = (dotEnv().GOOGLE_CLOUD_PROJECT || '').trim();
+  } catch {
+    // An unreadable .env is like a missing one.
+  }
+  if (fromFile) return { project: fromFile, source: '.env' };
+  const gcloud = run('gcloud', ['config', 'get-value', 'project']);
+  const value = gcloud.status === 0 ? (gcloud.stdout || '').trim().split('\n').at(-1).trim() : '';
+  if (value && value !== '(unset)') return { project: value, source: 'gcloud' };
+  return { project: null, source: null };
+}
+
 // Picks the Google credentials file to mount into the api container. Only
 // checks that a file exists; never reads it. Without one, a `{}` placeholder
 // keeps the bind mount valid. Returns { file, found }.
@@ -130,8 +157,8 @@ export const commands = {
   build: compose('build'),
   up: compose('up', '-d', '--wait', 'web'),
   reset: compose('run', '--rm', '-e', 'LOCAL_HR_RESET=1', 'setup'),
-  down: compose('stop', 'web', 'api', 'tts'),
-  logs: compose('logs', '-f', 'web', 'api', 'tts', 'setup'),
+  down: compose('stop', 'web', 'api', 'tts', 'checklist-agent'),
+  logs: compose('logs', '-f', 'web', 'api', 'tts', 'checklist-agent', 'setup'),
 };
 
 // Runs one command. Returns { exitCode }; messages go through out/err.
@@ -142,6 +169,7 @@ export async function runLocal(
     mkdirp = (path) => mkdir(path, { recursive: true }),
     read = readFile,
     adcOptions = {},
+    projectOptions = {},
     platform = process.platform,
     sleep,
     now,
@@ -167,12 +195,20 @@ export async function runLocal(
 
   if (command === 'down') {
     if (!docker(commands.down)) return fail('Could not stop the app containers.');
-    out('Stopped web, api and tts. PostgreSQL and the Firestore emulator are still running.');
+    out(
+      'Stopped web, api, tts and checklist-agent. PostgreSQL and the Firestore emulator are still running.',
+    );
     return { exitCode: 0 };
   }
   if (command === 'logs') return { exitCode: docker(commands.logs) ? 0 : 1 };
 
   if (command === 'start') {
+    // Without a project the api would start with an empty one and Gemini
+    // (answers, autofill, voice, the checklist agent) would fail later.
+    const { project, source } = resolveProject({ run, ...projectOptions });
+    if (!project) return fail(missingProjectMessage);
+    env = { ...env, GOOGLE_CLOUD_PROJECT: project };
+    out(`Gemini project: ${project} (from ${source}).`);
     // Built only the first time: rebuilding it would make Docker Compose
     // recreate the running Firestore container.
     if (!quiet(commands.inspectEmulator) && !docker(commands.buildEmulator))

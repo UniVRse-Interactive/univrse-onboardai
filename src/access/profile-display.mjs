@@ -1,4 +1,5 @@
 import { profileGroups } from './profile-validation.mjs';
+import { trackLabel } from './hr-journey.mjs';
 
 export function formatDateTime(iso) {
   if (!iso) return '';
@@ -35,7 +36,12 @@ export function profileSections(profile) {
       return {
         key: field.key,
         label: field.label,
-        value: field.kind === 'date' ? formatDay(value) : value,
+        value:
+          field.kind === 'date'
+            ? formatDay(value)
+            : field.kind === 'track'
+              ? trackLabel(profile?.[group.key]?.[field.key])
+              : value,
       };
     }),
   }));

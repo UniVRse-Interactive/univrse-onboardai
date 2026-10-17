@@ -18,7 +18,7 @@ For example, ask “What should I wear?” and then “What if I wear a tshirt?�
 
 ## Use it
 
-Open `/mira`. Send a question normally. **Saved chats** reopens earlier conversations; refresh or leave and return to continue the selected chat. **New chat** starts separate context. **Delete current chat** removes its visible history and LangGraph checkpoints after the on-screen confirmation.
+Open `/alya`. Send a question normally. **Saved chats** reopens earlier conversations; refresh or leave and return to continue the selected chat. **New chat** starts separate context. **Delete current chat** removes its visible history and LangGraph checkpoints after the on-screen confirmation.
 
 Without an account, memory is tied to an opaque HttpOnly browser cookie, not the website's editable profile name. A different browser/device has separate history, and clearing browser cookies loses access to that browser's history. When accounts are on (`DATABASE_URL`, see [Account access](account-access.md)) and the browser is signed in, chats belong to the account instead (owner `account:<accountId>`): they follow the employee to any browser and are saved in every answer mode, including `AI_MODE=document-search`, sample answers and single-turn Gemini. An expired or invalid account session gets `401 SESSION_EXPIRED` and never falls back to the anonymous cookie. New chats do not automatically reuse personal facts from other chats; reopen the original conversation to continue it.
 
@@ -28,11 +28,11 @@ Chats expire 30 days after their last update (an answer, feedback, a help reques
 
 One store holds everything the server persists: saved chats, each chat's answer-style settings, the support observations behind the summary (answers, feedback, voice starts, help requests), the support-summary recording setting and the LangGraph checkpoints. The browser-local checklist and profile are not part of it.
 
-| Setting                                                                                 | Store                                                                                                                                           |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FIRESTORE_DATABASE_ID` blank (local default)                                           | SQLite file `.cache/chat/conversations.sqlite`, or `CHAT_DATABASE_PATH`. No Google Cloud needed.                                                |
-| `FIRESTORE_DATABASE_ID=(default)` with `FIRESTORE_PROJECT_ID` or `GOOGLE_CLOUD_PROJECT` | Firestore (Native mode) with Application Default Credentials: on Cloud Run the api runtime service account, which needs `roles/datastore.user`. |
-| The same, plus `FIRESTORE_EMULATOR_HOST`                                                | The local Firestore emulator (`npm run db:up`, project `demo-onboardai`). Required when accounts are on outside Cloud Run.                      |
+| Setting                                                                                 | Store                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `FIRESTORE_DATABASE_ID` blank (local default)                                           | SQLite file `.cache/chat/conversations.sqlite`, or `CHAT_DATABASE_PATH`. No Google Cloud needed.                                                                                                                                     |
+| `FIRESTORE_DATABASE_ID=(default)` with `FIRESTORE_PROJECT_ID` or `GOOGLE_CLOUD_PROJECT` | Firestore (Native mode) with Application Default Credentials: on Cloud Run the api runtime service account, which holds `roles/datastore.user` on its own database only (`(default)` in production, `onboardai-staging` in staging). |
+| The same, plus `FIRESTORE_EMULATOR_HOST`                                                | The local Firestore emulator (`npm run db:up`, project `demo-onboardai`). Required when accounts are on outside Cloud Run.                                                                                                           |
 
 The Firestore project is `FIRESTORE_PROJECT_ID`, falling back to `GOOGLE_CLOUD_PROJECT`, so a local run can keep `GOOGLE_CLOUD_PROJECT` for Vertex AI while chats and employee profiles use the emulator. Against the emulator the client uses gRPC (its REST transport asks for Google credentials there).
 
@@ -61,7 +61,7 @@ Expired and deleted chats are hidden immediately. A sweep in the server then pur
 
 ### More than one api instance
 
-With Firestore, an answer leases its chat in the chat document (`turnToken`, `turnUntil`) for up to two minutes. Meanwhile a second answer, a delete, a settings change or feedback on that chat gets `CHAT_BUSY` on every instance, and a turn that has lost its lease cannot save. The lease ends when the answer is saved or fails. If an instance stops mid-answer, the chat is free again after two minutes. Nothing in the Firestore path depends on in-process state for correctness, so storage is ready for more instances. The remaining per-instance state is the API rate limit (30 POST requests per minute per IP, held in memory), which becomes a limit per instance. SQLite uses a local file and an in-process lock, so it only suits one instance.
+With Firestore, an answer leases its chat in the chat document (`turnToken`, `turnUntil`) for up to two minutes. Meanwhile a second answer, a delete, a settings change or feedback on that chat gets `CHAT_BUSY` on every instance, and a turn that has lost its lease cannot save. The lease ends when the answer is saved or fails. If an instance stops mid-answer, the chat is free again after two minutes. Nothing in the Firestore path depends on in-process state for correctness, so saved chats are ready for more instances. The api still runs as one instance because of the API rate limit (60 `POST` and `PATCH` requests per minute per IP, held in memory), which would become a limit per instance. The guest workspace store that once added to this was removed in #55. See [Conversation storage](cloud-run-services.md#conversation-storage); moving the rate limit off the instance is #58. The local SQLite chat store uses a local file and an in-process lock, so it only suits one instance.
 
 ### Storage failures
 
@@ -70,13 +70,17 @@ Firestore errors reach the browser only as fixed messages. Every Firestore call 
 | Code                     | HTTP | Cause                                                                                            |
 | ------------------------ | ---- | ------------------------------------------------------------------------------------------------ |
 | `STORAGE_NOT_CONFIGURED` | 503  | `FIRESTORE_DATABASE_ID` set without a project (`FIRESTORE_PROJECT_ID` or `GOOGLE_CLOUD_PROJECT`) |
-| `STORAGE_ACCESS_DENIED`  | 503  | Permission denied or no credentials: grant `roles/datastore.user`                                |
+| `STORAGE_ACCESS_DENIED`  | 503  | Permission denied or no credentials: grant `roles/datastore.user` on that database               |
 | `STORAGE_NOT_FOUND`      | 503  | The database does not exist: check `FIRESTORE_DATABASE_ID` and the project                       |
 | `STORAGE_RATE_LIMIT`     | 429  | Firestore quota reached                                                                          |
 | `STORAGE_TIMEOUT`        | 504  | No answer within 10 seconds                                                                      |
 | `STORAGE_UNAVAILABLE`    | 503  | Anything else, such as an outage, contention or a failed precondition                            |
 
 The 10-second limit stops the request waiting; it does not cancel the Firestore call. A saved answer that misses the limit can still commit, and its commit also ends the turn's lease. The browser then sees `STORAGE_TIMEOUT`, and retrying the question with the same request ID returns the saved answer without another Gemini request. A start-of-answer lease that commits after its limit holds the chat for up to two minutes.
+
+**Failures while an answer runs (issue #70).** LangGraph saves the graph's checkpoints in the background while later steps run, and before the fix a save that failed mid-answer (for example a Firestore timeout during a slow Gemini reply) became an unhandled promise rejection that ended the whole server process. The graph now uses `server/checkpoint-writes.mjs`, whose saves never reject. The first failed save of a turn is kept, later saves of that turn are skipped, and the turn fails with that error once the graph finishes: with Firestore, one of the storage codes above; with the local SQLite file, the general answer error. The question and answer are not saved, the chat's lease is released, the server keeps serving, and the next question works once storage recovers. A save that fails after its answer was cut off (the 60-second limit, or the browser closing the request) is logged as `Chat checkpoint save dropped after its answer ended` with the error name and code only.
+
+There is deliberately no process-wide `unhandledRejection` handler. A handler cannot tell which request an escaped rejection belonged to, so keeping the process alive would hide lost work instead of failing loudly; Cloud Run restarts a crashed instance and the crash is logged. It would also not work everywhere: once the Kokoro voice is loaded (the local all-in-one server and the tts service), its `phonemizer` dependency registers its own handler that rethrows every unhandled rejection.
 
 ## Configure Gemini
 
@@ -96,13 +100,13 @@ This makes one small structured-output Gemini request. It reports model/access s
 
 ## Company documents: Vertex AI Search
 
-Company passages come from Vertex AI Search (Discovery Engine). The team uploads files to the documents bucket and imports them into the `onboardai-docs` data store. Import is a separate step, not part of the deploy: see "Loading company documents" below. The data store uses the layout parser and layout-based chunks of 500 tokens, with ancestor headings included. The API only queries the search engine; it has no access to the bucket.
+Company passages come from Vertex AI Search (Discovery Engine). The team uploads files to the documents bucket and imports them into the `onboardai-docs` data store. Import is a separate step, not part of the deploy: see "Loading company documents" below. The data store uses the layout parser and layout-based chunks of 500 tokens, with ancestor headings included. The API only queries the search engine; it has no access to the bucket. Its runtime service account holds `roles/discoveryengine.viewer` on its own engine only (`onboardai-search` in production, `onboardai-search-staging` in staging), not on the project.
 
-| Setting                   | Meaning                                                                                               |
-| ------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `VERTEX_SEARCH_ENGINE_ID` | Search engine to query (`onboardai-search` in the cloud). Blank: the sample guide is used, see below. |
-| `VERTEX_SEARCH_LOCATION`  | Engine location, default `global`. `us` and `eu` use their regional endpoints.                        |
-| `GOOGLE_CLOUD_PROJECT`    | Project ID or number, shared with Gemini.                                                             |
+| Setting                   | Meaning                                                                                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VERTEX_SEARCH_ENGINE_ID` | Search engine to query (`onboardai-search` in production, `onboardai-search-staging` in staging). Blank: the sample guide is used, see below. |
+| `VERTEX_SEARCH_LOCATION`  | Engine location, default `global`. `us` and `eu` use their regional endpoints.                                                                |
+| `GOOGLE_CLOUD_PROJECT`    | Project ID or number, shared with Gemini.                                                                                                     |
 
 Each company question makes one search request. It is sent with a Bearer token from Application Default Credentials, with a 15-second limit and no automatic retries:
 
@@ -120,16 +124,16 @@ References show the **file name** and, when available, the section heading and p
 
 Search failures reach the browser only as fixed messages. Google error bodies, tokens and queries are not forwarded. The server log records the code, HTTP status and Google's reason, such as `PERMISSION_DENIED`.
 
-| Code                      | HTTP | Cause                                                                    |
-| ------------------------- | ---- | ------------------------------------------------------------------------ |
-| `SEARCH_NOT_CONFIGURED`   | 503  | Engine ID set without `GOOGLE_CLOUD_PROJECT`, or an invalid location     |
-| `SEARCH_AUTH_REQUIRED`    | 503  | No credentials, or Google answered 401                                   |
-| `SEARCH_ACCESS_DENIED`    | 503  | 403: the service account needs `roles/discoveryengine.viewer`            |
-| `SEARCH_NOT_FOUND`        | 503  | 404: wrong engine ID or location                                         |
-| `SEARCH_REQUEST_REJECTED` | 503  | 400 or 412: the engine or data store settings do not support the request |
-| `SEARCH_RATE_LIMIT`       | 429  | 429: search quota reached                                                |
-| `SEARCH_TIMEOUT`          | 504  | No answer within 15 seconds                                              |
-| `SEARCH_UNAVAILABLE`      | 503  | 5xx, network failure or an unreadable response                           |
+| Code                      | HTTP | Cause                                                                       |
+| ------------------------- | ---- | --------------------------------------------------------------------------- |
+| `SEARCH_NOT_CONFIGURED`   | 503  | Engine ID set without `GOOGLE_CLOUD_PROJECT`, or an invalid location        |
+| `SEARCH_AUTH_REQUIRED`    | 503  | No credentials, or Google answered 401                                      |
+| `SEARCH_ACCESS_DENIED`    | 503  | 403: the service account needs `roles/discoveryengine.viewer` on the engine |
+| `SEARCH_NOT_FOUND`        | 503  | 404: wrong engine ID or location                                            |
+| `SEARCH_REQUEST_REJECTED` | 503  | 400 or 412: the engine or data store settings do not support the request    |
+| `SEARCH_RATE_LIMIT`       | 429  | 429: search quota reached                                                   |
+| `SEARCH_TIMEOUT`          | 504  | No answer within 15 seconds                                                 |
+| `SEARCH_UNAVAILABLE`      | 503  | 5xx, network failure or an unreadable response                              |
 
 **Without `VERTEX_SEARCH_ENGINE_ID`** (the local default), `gemini-chat` and `document-search` use the built-in sample onboarding guide instead and make no search request. Its passages are labelled "Sample onboarding guide (confirm with HR)" and say they are unapproved. The server prints the knowledge source at start-up. `AI_MODE=gemini` (single-turn) and `demo` always use the sample tasks.
 
@@ -155,11 +159,11 @@ npm run docs:import -- ./company-docs --apply
 - **Defaults** can be overridden with flags or with `GOOGLE_CLOUD_PROJECT`, `DOCS_BUCKET` and `VERTEX_SEARCH_DATA_STORE_ID`. Names are validated before any command runs.
 - **Permissions:** `storage.objects.create` on the bucket and `discoveryengine.documents.import` on the data store. Project Owner has both.
 - **Apply mode** polls the import operation until it finishes, prints the success and failure counts and any error samples, and exits non-zero on failure. New documents can take a few minutes to appear in search.
-- **Public exposure:** the web and api services are public until IAP (#10) is in place, so indexed documents can be quoted to anyone who uses the chat. Upload only approved documents.
+- **Public exposure:** the web service is public until IAP (#10) is in place, so indexed documents can be quoted to anyone who uses the chat on the website. The api and tts services are private (#57): only their callers may invoke them (web's service account for the api, the api's for tts, on staging also the intake agent's for the api's `/mcp`) plus the deployer, see [Private api and tts](cloud-run-services.md#private-api-and-tts). Upload only approved documents.
 
 ## Information boundaries
 
-Chats owned by a signed-in account also search the company knowledge library that HR uploads (Firestore `companyDocuments`), interleaved with Vertex AI Search or the sample guide; see [Account access](account-access.md#account-chats-and-the-company-library). Anonymous and guest chats do not.
+Chats owned by a signed-in account exclusively query Vertex AI Search (or the sample guide when `VERTEX_SEARCH_ENGINE_ID` is unset) at runtime and never search in-memory Firestore `companyDocuments`; see [Account access](account-access.md#company-documentation). Every chat belongs to a signed-in account (issue #55).
 
 Only documents approved for the intended employees belong in the data store. Prompt instructions cannot reliably hide PNC information that the model has already received. Exclude restricted HR records, passwords, individual salary/medical details and other material employees should not access. Employee sign-in now exists (see [Account access](account-access.md)), but every signed-in employee searches the same company documents: for multiple employee roles, apply document permissions **before retrieval**. The anonymous browser-session isolation is not employee authentication.
 
@@ -179,6 +183,7 @@ The dependency audit currently reports seven advisory entries in the existing Ko
 | `server/firestore-chat-memory.mjs`      | Firestore chats, messages, support data, turn leases, expiry and deletion        |
 | `server/firestore-checkpointer.mjs`     | LangGraph checkpoints in Firestore, split into chunks above 900 KiB              |
 | `server/firestore-client.mjs`           | Lazy Firestore client, 10-second limit and safe storage error codes              |
+| `server/checkpoint-writes.mjs`          | Background checkpoint saves that fail their turn instead of the server process   |
 | `server/chat-errors.mjs`                | Chat and storage error messages shared by both stores                            |
 | `server/saved-conversations.mjs`        | SQLite history, ownership checks, retention and deletion (local default)         |
 | `server/api-routes.mjs`                 | Saved-chat endpoints, browser-session cookie and account-owned chats             |
@@ -203,8 +208,4 @@ Response times with Vertex AI Search have not been measured yet. The earlier mea
 
 Run `npm test` and `npm run build` to check the project. Conversation and search tests use synthetic documents, a fake search endpoint and injected model responses. They verify routing, request shape and persistence, not every real Gemini answer or search ranking. Regression tests confirm old lesson state cannot restrict new questions, and chat history is preserved. See [Answer styles](answer-styles.md) for the current presentation controls and limits.
 
-Visual answers and support summaries: see [Visual guides and HR summary](visual-guides-and-hr-summary.md). The separate visual panel reuses delivered answer text. Support statistics update without an additional Gemini request and remain scoped to the current browser session.
-
-## Uploaded guidance in the guest workspace
-
-The HR workspace can upload PDF, DOCX, TXT and Markdown guidance. Guests reuse the existing LangGraph workflow with a retriever scoped to that browser’s uploaded documents plus, when `VERTEX_SEARCH_ENGINE_ID` is set, the company document search. Company and upload passages alternate in their own rank order (at most six for Gemini, two quoted passages for document search). Uploads are ranked locally (`server/uploaded-document-search.mjs`) and never imported into the shared search data store. Without a search engine, guests answer from the uploads only; the built-in sample guide is not used there. Each guest has a separate memory owner. Document search is an explicit alternative, with saved history and feedback but no generated formats or conversational interpretation. Guest records are stored in their own SQLite file (`FIRESTORE_DATABASE_ID` does not apply), separately from the saved chats, and expire after 24 hours of workspace inactivity. See [Workspace details](account-access.md).
+Visual answers and support summaries: see [Visual guides and HR summary](visual-guides-and-hr-summary.md). Alya's presentation stage reuses the delivered answer text. Support statistics update without an additional Gemini request and belong to the signed-in account; HR sees them only summed over at least 3 employees (team insights).

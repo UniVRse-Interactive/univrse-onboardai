@@ -140,6 +140,59 @@ function visualSubject(text) {
 }
 
 export function simpleAnswer(text) {
+  const wording = text.replace(/\s+/g, ' ').trim();
+  const plainInstructions = new Map([
+    ['Share their Work Breakdown or task list.', 'Share your work breakdown or task list.'],
+    [
+      'Briefly explain the tasks completed during the week.',
+      'Briefly explain what you completed this week.',
+    ],
+    [
+      'Show the progress percentage (%) for each project or assigned task.',
+      'Show the progress percentage for each project or assigned task.',
+    ],
+    [
+      'Applications for leave must be made online and send via email.',
+      'Apply for leave online and send your application by email.',
+    ],
+    [
+      'All staff who want to leave must inform and update in advance the latest tasks to person in charge before the day or date him/her on leave.',
+      'Before taking leave, update the person covering your work on your latest tasks.',
+    ],
+    [
+      'Please discuss and arrange among each other before apply for leave.',
+      'Discuss arrangements with each other before applying for leave.',
+    ],
+  ]);
+  const exact = plainInstructions.get(wording.replace(/^[●•]\s*/, ''));
+  if (exact) return exact;
+  const schedule = wording.match(
+    /^The workweek is generally from Monday through Friday, with normal operating hours from (.+?) to (.+?), with one hour for lunch\.$/i,
+  );
+  if (schedule)
+    return `Work is usually Monday–Friday, ${schedule[1]} to ${schedule[2]}; lunch is one hour.`;
+  const friday = wording.match(
+    /^Only on Friday the Muslim male employees are allowed a two-hour lunch break from (.+?) to (.+?), whereas male non-muslim, and female employees are allocated a one-hour lunch break\.$/i,
+  );
+  if (friday)
+    return `On Friday only, Muslim male employees have a two-hour lunch break: ${friday[1]} to ${friday[2]}; non-Muslim male employees and female employees have a one-hour lunch break.`;
+  if (
+    /^The above working hours may be varied at Management’s absolute discretion\.$/i.test(wording)
+  )
+    return 'Management may change these working hours.';
+  if (/^The current Company dress code is smart casual\.$/i.test(wording))
+    return 'The dress code is smart casual.';
+  const clothing = wording.match(
+    /^Employees should be neatly and properly dress(?:ed|es) during office hours,\s*(.+) are not allowed in the office on weekdays\.$/i,
+  );
+  if (clothing)
+    return `Dress neatly during office hours. ${clothing[1][0].toUpperCase() + clothing[1].slice(1)} are not allowed on weekdays.`;
+  if (
+    /^For female employees, culottes \(women[’']s knee-length trousers, cut with very full legs to resemble a skirt\), short, [‘']hot pants[’'] or revealing dress are also not to be worn in the office\.$/i.test(
+      wording,
+    )
+  )
+    return 'Female employees must also avoid culottes (wide-legged, knee-length trousers), shorts, hot pants and revealing dresses in the office.';
   // Narrow, complete grammatical rewrites only. Unrecognised policy wording
   // stays intact; never clip a sentence or drop a qualification for brevity.
   if (
@@ -166,6 +219,71 @@ export function simpleAnswer(text) {
     )
     .replace(/^As part of its business activities, UniVRse provides /, 'UniVRse provides ')
     .replace(/^UniVRse Interactive Sdn Bhd focuses on /, 'UniVRse focuses on ');
+}
+
+export function presentationGuide(message) {
+  const guide = visualAnswer(message);
+  if (!guide) return null;
+  const items = guide.items.map((item) => ({ ...item, body: item.plain }));
+  return { ...guide, items, text: items.map((item) => item.body).join('\n\n') };
+}
+
+// Topic headings stay stable as the spoken point changes. They are labels,
+// not shortened policy sentences or invented instructions.
+export function visualTopicTitle(message) {
+  const topics = [
+    [/\b(wear|dress|attire|clothes|clothing|outfit|smart casual)\b/i, 'Office attire'],
+    [/\b(lunch|breaks?)\b/i, 'Break times'],
+    [
+      /\b(working hours|office hours|hours of work|workweek|work schedule|what time)\b/i,
+      'Working hours',
+    ],
+    [/\b(meetings?|agenda|work updates?)\b/i, 'Meeting preparation'],
+    [/\b(leave|holidays?|absence|time off)\b/i, 'Leave & time off'],
+    [/\b(password|accounts?|log ?in|laptop|software|email|IT access)\b/i, 'Tools & access'],
+    [/\b(expenses?|claims?|receipts?|mileage|reimbursement)\b/i, 'Expenses & claims'],
+    [/\b(first.day|first.week|orientation|induction)\b/i, 'Getting started'],
+    [/\b(safety|emergency|evacuation|fire)\b/i, 'Workplace safety'],
+    [/\b(HR|manager|team|support|contact)\b/i, 'People & support'],
+    [/\b(company|mission|vision|values|business)\b/i, 'About the company'],
+  ];
+  for (const context of [
+    message.referenceQuestion,
+    message.passages?.map((passage) => passage.heading).join(' '),
+    message.text,
+  ]) {
+    const match = topics.find(([pattern]) => pattern.test(context || ''));
+    if (match) return match[1];
+  }
+  return 'Company guidance';
+}
+
+// Brief labels identify each point without truncating its actual instruction.
+export function visualPointLabel(item) {
+  const body = item.body || '';
+  const labels = [
+    [/\bFemale employees must also avoid\b/i, 'Additional rules'],
+    [/\b(not allowed|not permitted|prohibited)\b/i, 'What to avoid'],
+    [/\b(unless|except|only if|approval)\b/i, 'Conditions to check'],
+    [/\b(HR|Human Resources)\b/i, 'Who can help'],
+    [/\bsmart casual\b/i, 'Dress code'],
+    [/\b(clean|neat|neatly)\b/i, 'Everyday clothing'],
+    [/\bFriday\b/i, 'Friday arrangements'],
+    [/\b(lunch|break)\b/i, 'Your break'],
+    [/\b(Monday|workweek|working hours|operating hours)\b/i, 'Regular hours'],
+    [/\b(change|vary|discretion)\b/i, 'Possible changes'],
+    [/\b(password|account|log ?in|software|IT)\b/i, 'Access & setup'],
+    [/\b(English|language)\b/i, 'Meeting language'],
+    [/\b(work updates?|progress reports?)\b/i, 'Prepare your update'],
+    [/\b(questions?|suggestions?|discussion)\b/i, 'Questions & ideas'],
+    [/\b(agenda|prepare|bring|read)\b/i, 'What to prepare'],
+    [/\b(receipt|claim|mileage)\b/i, 'Claims & receipts'],
+    [/\b(leave|holiday|absence)\b/i, 'Leave guidance'],
+  ];
+  return (
+    labels.find(([pattern]) => pattern.test(body))?.[1] ||
+    (item.title && item.title.length <= 26 ? item.title : `Key point ${item.index + 1}`)
+  );
 }
 
 function visualIcon(text) {

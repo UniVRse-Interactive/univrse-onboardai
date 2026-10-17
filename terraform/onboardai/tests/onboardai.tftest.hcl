@@ -85,6 +85,14 @@ override_resource {
   }
 }
 
+# The run.app URL Cloud Run gives web; the uptime checks use its host.
+override_resource {
+  target = google_cloud_run_v2_service.service["web"]
+  values = {
+    uri = "https://onboardai-web-abc123xyz-as.a.run.app"
+  }
+}
+
 run "wif_trusts_only_main_of_this_repository" {
   command = apply
 
@@ -144,7 +152,7 @@ run "deployer_holds_only_resource_level_roles" {
 
   assert {
     condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("resource\\s+\"google_(folder|organization)_iam_", file("${path.module}/${f}")))])
-    error_message = "No folder- or organization-level IAM. The project-level roles are pinned in api_runtime_holds_exactly_four_project_roles; every other grant must be on a single resource."
+    error_message = "No folder- or organization-level IAM. The project-level roles are pinned in api_runtime_holds_exactly_three_project_roles; every other grant must be on a single resource."
   }
 
   assert {
@@ -191,15 +199,51 @@ run "deployer_holds_only_resource_level_roles" {
   }
 }
 
-run "api_runtime_holds_exactly_four_project_roles" {
+run "api_runtime_holds_exactly_three_project_roles" {
   command = apply
 
-  # The three it was applied with, and Cloud SQL Client on its own accounts
-  # instance since #45 (tests/accounts_production.tftest.hcl checks the
-  # condition).
+  # Gemini, Firestore, Cloud SQL Client (since #45; tests/
+  # accounts_production.tftest.hcl checks its condition), and Discovery Engine
+  # Editor (to import/delete HR-uploaded documents in the data store).
   assert {
-    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/discoveryengine.viewer", "roles/datastore.user", "roles/cloudsql.client"]) && length(google_project_iam_member.api_runtime) == 4
-    error_message = "onboardai-api-run holds exactly roles/aiplatform.user, roles/discoveryengine.viewer, roles/datastore.user and roles/cloudsql.client on the project."
+    condition     = toset(keys(google_project_iam_member.api_runtime)) == toset(["roles/aiplatform.user", "roles/datastore.user", "roles/cloudsql.client", "roles/discoveryengine.editor"]) && length(google_project_iam_member.api_runtime) == 4
+    error_message = "onboardai-api-run holds exactly roles/aiplatform.user, roles/datastore.user, roles/cloudsql.client and roles/discoveryengine.editor on the project."
+  }
+
+  # #56: Firestore in (default) only, by project ID or number, like staging's
+  # grant on its own database.
+  assert {
+    condition = (
+      google_project_iam_member.api_runtime["roles/datastore.user"].condition[0].expression == "resource.name == \"projects/onboardai-test-123/databases/(default)\" || resource.name == \"projects/123456789012/databases/(default)\"" &&
+      google_project_iam_member.api_runtime["roles/datastore.user"].condition[0].title == "(default) database only" &&
+      !strcontains(google_project_iam_member.api_runtime["roles/datastore.user"].condition[0].expression, "staging") &&
+      !strcontains(google_project_iam_member.api_runtime["roles/datastore.user"].condition[0].expression, "startsWith")
+    )
+    error_message = "Production's roles/datastore.user is limited to exactly the (default) database (by project ID or number), never onboardai-staging."
+  }
+
+  assert {
+    condition     = length(google_project_iam_member.api_runtime["roles/aiplatform.user"].condition) == 0
+    error_message = "Gemini (roles/aiplatform.user) stays unconditioned; Vertex AI has no narrower grant."
+  }
+
+  assert {
+    condition = (
+      length(google_discovery_engine_search_engine_iam_member.api_searches_engine) == 1 &&
+      google_discovery_engine_search_engine_iam_member.api_searches_engine[0].engine_id == "onboardai-search" &&
+      google_discovery_engine_search_engine_iam_member.api_searches_engine[0].collection_id == "default_collection" &&
+      google_discovery_engine_search_engine_iam_member.api_searches_engine[0].location == "global" &&
+      google_discovery_engine_search_engine_iam_member.api_searches_engine[0].role == "roles/discoveryengine.viewer" &&
+      google_discovery_engine_search_engine_iam_member.api_searches_engine[0].member == "serviceAccount:${google_service_account.runtime["api"].email}"
+    )
+    error_message = "onboardai-api-run searches through roles/discoveryengine.viewer on onboardai-search alone."
+  }
+
+  # Adding a condition replaces a binding: the new one must be written before
+  # the old one is removed, or the api loses the role in between.
+  assert {
+    condition     = strcontains(regex("(?s)\\nresource \"google_project_iam_member\" \"api_runtime\" \\{\\n.*?\\n\\}\\n", file("${path.module}/identity.tf")), "\n  lifecycle {\n    create_before_destroy = true\n  }\n")
+    error_message = "google_project_iam_member.api_runtime needs lifecycle { create_before_destroy = true }."
   }
 
   assert {
@@ -210,20 +254,23 @@ run "api_runtime_holds_exactly_four_project_roles" {
     error_message = "Every project-level binding is for onboardai-api-run, on this project."
   }
 
-  # Exactly three project-level IAM resource blocks of any flavour: the
-  # api's roles (above), and staging's intake agent runtime and Agent Engine
-  # deploy roles (intake_agent.tf, #30), which have no instance in production.
+  # Exactly four project-level IAM resource blocks of any flavour: the
+  # api's roles (above), staging's intake agent runtime and Agent Engine
+  # deploy roles (intake_agent.tf, #30), and the checklist agent's runtime
+  # roles (checklist_agent.tf, #51), which have no instance in production
+  # unless var.checklist_agent_production is set.
   assert {
     condition = (
-      sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 3 &&
+      sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 4 &&
       alltrue([
-        for name in ["api_runtime", "intake_agent_runtime", "deployer_deploys_agents"] :
+        for name in ["api_runtime", "intake_agent_runtime", "deployer_deploys_agents", "checklist_agent_runtime"] :
         sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"${name}\"", file("${path.module}/${f}")))]) == 1
       ]) &&
       length(google_project_iam_member.intake_agent_runtime) == 0 &&
+      length(google_project_iam_member.checklist_agent_runtime) == 0 &&
       length(google_project_iam_member.deployer_deploys_agents) == 0
     )
-    error_message = "The only project-level IAM resources are google_project_iam_member.api_runtime and staging's intake_agent_runtime and deployer_deploys_agents (no binding, policy, audit config or custom role); production has only api_runtime."
+    error_message = "The only project-level IAM resources are google_project_iam_member.api_runtime, the checklist agent's checklist_agent_runtime and staging's intake_agent_runtime and deployer_deploys_agents (no binding, policy, audit config or custom role); production has only api_runtime."
   }
 
   assert {
@@ -292,7 +339,7 @@ run "cloud_run_matches_service_contract" {
 
   assert {
     condition     = google_cloud_run_v2_service.service["api"].template[0].scaling[0].max_instance_count == 1
-    error_message = "onboardai-api must be capped at one instance (SQLite on local disk)."
+    error_message = "onboardai-api must be capped at one instance: the guest workspace store is SQLite on each instance's disk and the request limit is per instance (#58 lifts it)."
   }
 
   assert {
@@ -329,9 +376,10 @@ run "cloud_run_matches_service_contract" {
     error_message = "tts needs 2Gi for Kokoro (measured peak about 1 GiB; 1.1 GiB was OOM-killed)."
   }
 
+  # #57: only web is public; services_are_private_except_web checks the rest.
   assert {
-    condition     = length(google_cloud_run_v2_service_iam_member.public_invoker) == 3 && alltrue([for m in google_cloud_run_v2_service_iam_member.public_invoker : m.member == "allUsers" && m.role == "roles/run.invoker"])
-    error_message = "All three services are public (user decision for the demo)."
+    condition     = keys(google_cloud_run_v2_service_iam_member.public_invoker) == ["web"] && alltrue([for m in google_cloud_run_v2_service_iam_member.public_invoker : m.member == "allUsers" && m.role == "roles/run.invoker" && m.name == "onboardai-web"])
+    error_message = "Only onboardai-web is public (allUsers roles/run.invoker); the api and tts are private (#57)."
   }
 
   assert {
@@ -360,6 +408,60 @@ run "cloud_run_matches_service_contract" {
   }
 }
 
+# #57: web is the only public service. Each runtime account may invoke the one
+# service it calls (web the api, the api tts) and nothing else; allUsers is
+# nowhere else. Ingress stays all: Cloud Run IAM does the gating.
+run "services_are_private_except_web" {
+  command = apply
+
+  assert {
+    condition = (
+      length(google_cloud_run_v2_service_iam_member.runtime_invoker) == 2 &&
+      google_cloud_run_v2_service_iam_member.runtime_invoker["web-to-api"].name == "onboardai-api" &&
+      google_cloud_run_v2_service_iam_member.runtime_invoker["web-to-api"].member == "serviceAccount:onboardai-web-run@onboardai-test-123.iam.gserviceaccount.com" &&
+      google_cloud_run_v2_service_iam_member.runtime_invoker["api-to-tts"].name == "onboardai-tts" &&
+      google_cloud_run_v2_service_iam_member.runtime_invoker["api-to-tts"].member == "serviceAccount:onboardai-api-run@onboardai-test-123.iam.gserviceaccount.com" &&
+      alltrue([
+        for key, m in google_cloud_run_v2_service_iam_member.runtime_invoker :
+        m.role == "roles/run.invoker" && m.location == google_cloud_run_v2_service.service[{ "web-to-api" = "api", "api-to-tts" = "tts" }[key]].location && m.project == google_cloud_run_v2_service.service[{ "web-to-api" = "api", "api-to-tts" = "tts" }[key]].project
+      ])
+    )
+    error_message = "onboardai-web-run may invoke onboardai-api and onboardai-api-run may invoke onboardai-tts, with roles/run.invoker, and nothing else."
+  }
+
+  # Every run.invoker grant in production, by service: web for everyone, the
+  # api for web's account, tts for the api's account. (The deployer's Cloud
+  # Run Developer, which also includes run.routes.invoke, is checked in
+  # deployer_holds_only_resource_level_roles.)
+  assert {
+    condition = toset(concat(
+      [for m in google_cloud_run_v2_service_iam_member.public_invoker : "${m.name} ${m.member}"],
+      [for m in google_cloud_run_v2_service_iam_member.runtime_invoker : "${m.name} ${m.member}"],
+      [for m in google_cloud_run_v2_service_iam_member.intake_agent_invokes_api : "${m.name} ${m.member}"],
+      )) == toset([
+      "onboardai-web allUsers",
+      "onboardai-api serviceAccount:onboardai-web-run@onboardai-test-123.iam.gserviceaccount.com",
+      "onboardai-tts serviceAccount:onboardai-api-run@onboardai-test-123.iam.gserviceaccount.com",
+    ]) && length(google_cloud_run_v2_service_iam_member.intake_agent_invokes_api) == 0
+    error_message = "Production's invokers: allUsers on web, onboardai-web-run on the api, onboardai-api-run on tts, and no intake agent."
+  }
+
+  # allUsers appears in one place in the module, the web-only public binding.
+  assert {
+    condition = (
+      sum([for f in fileset(path.module, "*.tf") : length(regexall("\"allUsers\"|\"allAuthenticatedUsers\"", file("${path.module}/${f}")))]) == 1 &&
+      strcontains(file("${path.module}/cloud_run.tf"), "  member   = \"allUsers\"\n") &&
+      strcontains(file("${path.module}/cloud_run.tf"), "  public_services = [\"web\"]\n")
+    )
+    error_message = "allUsers (or allAuthenticatedUsers) may appear only in public_invoker, and public_services must be [\"web\"]."
+  }
+
+  assert {
+    condition     = alltrue([for s in google_cloud_run_v2_service.service : s.ingress == "INGRESS_TRAFFIC_ALL"]) && alltrue([for flags in output.cloud_run_deploy_flags : strcontains(flags, "--ingress=all")])
+    error_message = "Ingress stays all on every service (Terraform and deploy flags): IAM, not ingress, makes the api and tts private."
+  }
+}
+
 run "firestore_keeps_its_data" {
   command = apply
 
@@ -382,6 +484,12 @@ run "firestore_keeps_its_data" {
     condition     = output.firestore_database_id == "(default)"
     error_message = "FIRESTORE_DATABASE_ID is (default)."
   }
+
+  # #56: production's data must be recoverable for 7 days.
+  assert {
+    condition     = google_firestore_database.default.point_in_time_recovery_enablement == "POINT_IN_TIME_RECOVERY_ENABLED"
+    error_message = "Production Firestore keeps point-in-time recovery on (7 days of versions)."
+  }
 }
 
 run "documents_bucket_is_private_and_readable_only_by_discovery_engine" {
@@ -402,20 +510,23 @@ run "documents_bucket_is_private_and_readable_only_by_discovery_engine" {
     error_message = "The documents bucket keeps versions and is never force-destroyed."
   }
 
-  # One bucket grant in the whole module: the Discovery Engine service agent,
-  # object read, on this bucket. The API holds no bucket role.
+  # Two bucket grants in the whole module: the Discovery Engine service agent
+  # (objectViewer) and onboardai-api-run (objectUser, to upload/delete HR docs).
   assert {
-    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_storage_bucket_iam_", file("${path.module}/${f}")))]) == 1
-    error_message = "Exactly one bucket IAM resource may exist (Discovery Engine reads the documents)."
+    condition     = sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_storage_bucket_iam_", file("${path.module}/${f}")))]) == 2
+    error_message = "Exactly two bucket IAM resources may exist (Discovery Engine reads the documents; onboardai-api-run manages HR uploads)."
   }
 
   assert {
     condition = (
       google_storage_bucket_iam_member.discovery_engine_reads_docs.bucket == google_storage_bucket.docs.name &&
       google_storage_bucket_iam_member.discovery_engine_reads_docs.role == "roles/storage.objectViewer" &&
-      google_storage_bucket_iam_member.discovery_engine_reads_docs.member == "serviceAccount:service-123456789012@gcp-sa-discoveryengine.iam.gserviceaccount.com"
+      google_storage_bucket_iam_member.discovery_engine_reads_docs.member == "serviceAccount:service-123456789012@gcp-sa-discoveryengine.iam.gserviceaccount.com" &&
+      google_storage_bucket_iam_member.api_manages_docs.bucket == google_storage_bucket.docs.name &&
+      google_storage_bucket_iam_member.api_manages_docs.role == "roles/storage.objectUser" &&
+      google_storage_bucket_iam_member.api_manages_docs.member == "serviceAccount:${google_service_account.runtime["api"].email}"
     )
-    error_message = "The Discovery Engine service agent gets roles/storage.objectViewer on the documents bucket only."
+    error_message = "The Discovery Engine service agent gets roles/storage.objectViewer and onboardai-api-run gets roles/storage.objectUser on the documents bucket only."
   }
 
   assert {
@@ -506,10 +617,10 @@ run "alerts_are_quiet_and_reach_every_address" {
 
   assert {
     condition = alltrue([
-      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency] :
+      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency, google_monitoring_alert_policy.uptime] :
       toset(p.notification_channels) == toset([for c in google_monitoring_notification_channel.email : c.name]) && length(p.conditions) == 1
     ])
-    error_message = "Both policies have one condition and notify every channel."
+    error_message = "Every policy has one condition and notifies every channel."
   }
 
   # Quiet: no absence conditions, missing data (scale to zero) never fires.
@@ -520,7 +631,7 @@ run "alerts_are_quiet_and_reach_every_address" {
 
   assert {
     condition = alltrue([
-      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency] :
+      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency, google_monitoring_alert_policy.uptime] :
       p.conditions[0].condition_threshold[0].evaluation_missing_data == "EVALUATION_MISSING_DATA_INACTIVE"
     ])
     error_message = "Missing data must count as no violation."
@@ -529,7 +640,7 @@ run "alerts_are_quiet_and_reach_every_address" {
   # The Monitoring API rejects evaluation_missing_data on a zero duration.
   assert {
     condition = alltrue([
-      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency] :
+      for p in [google_monitoring_alert_policy.server_errors, google_monitoring_alert_policy.api_latency, google_monitoring_alert_policy.uptime] :
       alltrue([
         for c in p.conditions :
         alltrue([
@@ -571,6 +682,87 @@ run "alerts_are_quiet_and_reach_every_address" {
       google_monitoring_alert_policy.api_latency.conditions[0].condition_threshold[0].threshold_value == 20000
     )
     error_message = "The latency alert fires when onboardai-api's p95 over 5 minutes is above 20 s (20000 ms)."
+  }
+}
+
+# #56: two HTTPS checks on web's run.app host, /web-health and /api/health
+# through web (so the api check outlives a public api, #57), and one alert when
+# a check fails from 2 of its 3 locations. Cost: the fewest locations, every
+# 5 minutes.
+run "uptime_checks_watch_web_and_the_api_through_web" {
+  command = apply
+
+  assert {
+    condition = (
+      toset(keys(google_monitoring_uptime_check_config.health)) == toset(["web", "api"]) &&
+      google_monitoring_uptime_check_config.health["web"].http_check[0].path == "/web-health" &&
+      google_monitoring_uptime_check_config.health["api"].http_check[0].path == "/api/health" &&
+      google_monitoring_uptime_check_config.health["web"].display_name == "OnboardAi: onboardai-web /web-health" &&
+      google_monitoring_uptime_check_config.health["api"].display_name == "OnboardAi: onboardai-api /api/health through onboardai-web"
+    )
+    error_message = "Two uptime checks: onboardai-web /web-health, and onboardai-api /api/health through onboardai-web."
+  }
+
+  assert {
+    condition = alltrue([
+      for c in google_monitoring_uptime_check_config.health :
+      c.monitored_resource[0].type == "uptime_url" &&
+      c.monitored_resource[0].labels == tomap({ project_id = "onboardai-test-123", host = "onboardai-web-abc123xyz-as.a.run.app" }) &&
+      c.http_check[0].request_method == "GET" &&
+      c.http_check[0].port == 443 &&
+      c.http_check[0].use_ssl == true &&
+      c.http_check[0].validate_ssl == true &&
+      c.http_check[0].accepted_response_status_codes[0].status_class == "STATUS_CLASS_2XX" &&
+      length(c.content_matchers) == 1 &&
+      c.content_matchers[0].content == "\"ok\":true" &&
+      c.content_matchers[0].matcher == "CONTAINS_STRING"
+    ])
+    error_message = "Both checks GET over validated HTTPS on the web service's run.app host (from its uri), expect 2xx and the {\"ok\":true} body."
+  }
+
+  assert {
+    condition = alltrue([
+      for c in google_monitoring_uptime_check_config.health :
+      contains(["300s", "600s", "900s"], c.period) &&
+      toset(c.selected_regions) == toset(["ASIA_PACIFIC", "EUROPE", "USA_OREGON"]) &&
+      length(c.selected_regions) == 3 &&
+      c.checker_type == "STATIC_IP_CHECKERS" &&
+      tonumber(trimsuffix(c.timeout, "s")) <= 60 &&
+      c.user_labels == tomap({ app = "onboardai", managed-by = "terraform" })
+    ])
+    error_message = "Cost: each check runs at most every 5 minutes from three locations (one region each, the fewest the API accepts), with production's labels."
+  }
+
+  assert {
+    condition = (
+      google_monitoring_alert_policy.uptime.display_name == "OnboardAi: uptime checks failing (/web-health, /api/health)" &&
+      google_monitoring_alert_policy.uptime.severity == "CRITICAL" &&
+      google_monitoring_alert_policy.uptime.user_labels == tomap({ app = "onboardai", managed-by = "terraform" }) &&
+      startswith(google_monitoring_alert_policy.uptime.documentation[0].subject, "OnboardAi: ")
+    )
+    error_message = "The uptime alert is production's: OnboardAi: title and subject, CRITICAL, production's labels."
+  }
+
+  assert {
+    condition = (
+      strcontains(google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].filter, "resource.type = \"uptime_url\"") &&
+      strcontains(google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].filter, "metric.type = \"monitoring.googleapis.com/uptime_check/check_passed\"") &&
+      strcontains(google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].filter, format("metric.label.check_id = one_of(%s)", join(", ", [for c in google_monitoring_uptime_check_config.health : "\"${c.uptime_check_id}\""])))
+    )
+    error_message = "The uptime alert watches check_passed of exactly this stack's two checks."
+  }
+
+  assert {
+    condition = (
+      google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].aggregations[0].per_series_aligner == "ALIGN_NEXT_OLDER" &&
+      google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].aggregations[0].cross_series_reducer == "REDUCE_COUNT_FALSE" &&
+      google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].aggregations[0].group_by_fields == tolist(["metric.label.check_id"]) &&
+      tonumber(trimsuffix(google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].aggregations[0].alignment_period, "s")) >= tonumber(trimsuffix(google_monitoring_uptime_check_config.health["web"].period, "s")) &&
+      google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].comparison == "COMPARISON_GT" &&
+      google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].threshold_value == 1 &&
+      google_monitoring_alert_policy.uptime.conditions[0].condition_threshold[0].duration == "300s"
+    )
+    error_message = "The uptime alert fires per check when at least 2 of its 3 locations' latest results (over at least one period) have failed for 5 minutes."
   }
 }
 
@@ -678,19 +870,26 @@ run "production_keeps_its_names_labels_and_grants" {
       google_service_account.deployer.display_name == "OnboardAi: GitHub Actions deployer" &&
       google_service_account.deployer.description == "Impersonated by the deploy workflow on main through Workload Identity Federation. Pushes images and deploys the three OnboardAi services. Has no key." &&
       google_cloud_run_v2_service.service["web"].description == "OnboardAi web: serves the built frontend and avatar, proxies /api/* to onboardai-api." &&
-      google_monitoring_alert_policy.api_latency.display_name == "OnboardAi: onboardai-api p95 latency above 20 s"
+      google_monitoring_alert_policy.api_latency.display_name == "OnboardAi: onboardai-api p95 latency above 20 s" &&
+      google_monitoring_alert_policy.server_errors.display_name == "OnboardAi: sustained 5xx responses (api, tts)"
     )
     error_message = "Production display names and descriptions are the ones it was applied with."
   }
 
+  # #56 narrowed production's api to staging's pattern: every Firestore,
+  # Discovery Engine or Cloud SQL role it holds on the project is conditioned
+  # (Gemini is not), and it searches through its engine grant.
   assert {
-    condition     = alltrue([for role, m in google_project_iam_member.api_runtime : length(m.condition) == 0 if role != "roles/cloudsql.client"])
-    error_message = "The api roles production was applied with carry no IAM condition (adding one would replace the binding); only the new roles/cloudsql.client (#45) has one."
+    condition = alltrue([
+      for role, m in google_project_iam_member.api_runtime :
+      length(m.condition) == (contains(["roles/aiplatform.user", "roles/discoveryengine.editor"], role) ? 0 : 1)
+    ]) && !contains(keys(google_project_iam_member.api_runtime), "roles/discoveryengine.viewer")
+    error_message = "Production's api holds Gemini and Discovery Engine Editor unconditioned and its Firestore and Cloud SQL roles with an IAM condition."
   }
 
   assert {
-    condition     = length(google_discovery_engine_search_engine_iam_member.api_searches_engine) == 0
-    error_message = "Production searches through its project-level role; the engine-level grant is staging's."
+    condition     = length(google_discovery_engine_search_engine_iam_member.api_searches_engine) == 1
+    error_message = "Production searches through the engine-level grant on onboardai-search, like staging on its own engine."
   }
 
   assert {

@@ -6,6 +6,7 @@ import { chatStores } from './server/chat-stores.mjs';
 import { createConversationService } from '../server/gemini-chat-workflow.mjs';
 import { createAnswerGuide } from '../server/answer-guide-metadata.mjs';
 import { createApp } from '../server/api-routes.mjs';
+import { accountCookieFor, stubAccounts } from './server/signed-in.mjs';
 import { summariseSupport, employeeOverview } from '../server/employee-support-tracking.mjs';
 import { reportText } from '../src/avatar/hr-support-report.mjs';
 
@@ -198,19 +199,27 @@ for (const store of chatStores)
   });
 
 for (const store of chatStores)
-  test(`${store.name}: employee APIs retain feedback ownership but do not expose reports to employee or HR guest sessions`, async () => {
+  test(`${store.name}: employee APIs retain feedback ownership but do not expose reports to employee or HR sessions`, async () => {
     const engine = service(store),
-      app = createApp({ env: { AI_MODE: 'gemini-chat' }, conversationService: engine });
+      app = createApp({
+        env: { AI_MODE: 'gemini-chat' },
+        conversationService: engine,
+        accountService: stubAccounts(),
+      });
     const server = app.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const base = `http://127.0.0.1:${server.address().port}`;
     try {
-      const identity = async () => {
-        const response = await fetch(base + '/api/conversations');
-        return response.headers.get('set-cookie').split(';')[0];
-      };
-      const cookie = await identity(),
-        other = await identity();
+      // Two signed-in employees (issue #55: no anonymous browser sessions).
+      const cookie = accountCookieFor('a'),
+        other = accountCookieFor('b');
+      // A signed-out browser gets nothing.
+      const signedOut = await fetch(base + '/api/support-summary/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recording: false }),
+      });
+      assert.equal(signedOut.status, 401);
       const created = await fetch(base + '/api/conversations', {
           method: 'POST',
           headers: { cookie },
@@ -279,7 +288,7 @@ for (const store of chatStores)
       assert.deepEqual(await helped.json(), { saved: true });
       const settings = await post('/api/support-summary/settings', { recording: false });
       assert.deepEqual(await settings.json(), { recording: false });
-      for (const identity of [cookie, other]) {
+      for (const identity of [cookie, other, accountCookieFor('hr')]) {
         const response = await fetch(base + '/api/employee-support-summary', {
           headers: { cookie: identity, 'X-Role': 'hr' },
         });
