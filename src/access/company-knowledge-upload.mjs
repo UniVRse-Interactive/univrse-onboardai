@@ -109,10 +109,9 @@ export function replaceSuccessMessage(result) {
 }
 
 const extensionPattern = /\.(?:pdf|docx|txt|md)$/;
-const versionToken = new RegExp(
-  '(?:^|[\\s\\-_.])(?:v\\d+|version \\d+|rev \\d+|final|draft|\\d{4}[-_.]\\d{2}(?:[-_.]\\d{2})?)$',
-);
-const bracketToken = /\s*\(\d+\)$/;
+// Underscores are already spaces when this runs, so a date may use a space too.
+const versionToken =
+  /(?:(?:^|[\s\-.])(?:v\d+|version \d+|rev \d+|final|draft|\d{4}[-. ]\d{2}(?:[-. ]\d{2})?)|\s*\(\d+\))$/;
 
 // A title reduced to what stays the same between versions of a document:
 // lower case, one space between words, no file extension and no one trailing
@@ -121,7 +120,7 @@ export function normaliseTitle(value) {
   const clean = (text) => text.replace(/[\s_]+/g, ' ').trim();
   const base = clean(String(value ?? '').toLowerCase()).replace(extensionPattern, '');
   const trimmed = clean(base);
-  const stripped = clean(trimmed.replace(versionToken, '').replace(bracketToken, ''));
+  const stripped = clean(trimmed.replace(versionToken, ''));
   return stripped || trimmed;
 }
 

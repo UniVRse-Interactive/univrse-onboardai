@@ -12,7 +12,13 @@ import {
   versionLine,
 } from '../../src/access/company-knowledge-upload.mjs';
 import { createKnowledgeApi } from '../../src/access/company-knowledge-api.mjs';
-import { askHrOffer, noAnswerNote } from '../../src/access/support-flow.mjs';
+import {
+  answerExtras,
+  askHrOffer,
+  noAnswerNote,
+  noCoverageText,
+  staleAskHrText,
+} from '../../src/access/support-flow.mjs';
 import { answerPresentation } from '../../src/avatar/answer-presentation.mjs';
 
 test('normaliseTitle drops case, extension and spacing', () => {
@@ -184,4 +190,88 @@ test('the stale reply text still gets the uncertain visual', () => {
   const hr = scenes.find((scene) => scene.body.includes('check with HR'));
   assert.equal(hr.label, 'Check company guidance');
   assert.equal(hr.eyebrow, 'CONFIRM WITH YOUR COMPANY');
+});
+
+// Round 2: messages built through answerExtras, as AlyaChatPage does.
+const STALE_TEXT =
+  "The company documents I have on this are out of date, so I won't rely on them. Please check with HR for the latest guidance.";
+const staleGuardrail = { verdict: 'stale', askHr: true };
+const staleBody = {
+  answer: STALE_TEXT,
+  mode: 'gemini-memory',
+  passages: [],
+  source: 'No confirmed company source',
+  coverage: 'none',
+  category: 'onboarding',
+  proposedAction: null,
+  guardrail: staleGuardrail,
+  card: null,
+};
+const asMessage = (extras) => ({ role: 'assistant', text: STALE_TEXT, ...extras });
+
+test('stale note from the live POST body (answerExtras(body, null))', () => {
+  const message = asMessage(answerExtras(staleBody, null));
+  assert.equal(noAnswerNote(message), staleAskHrText);
+  assert.equal(askHrOffer(message), 'no-answer');
+});
+
+test('stale note from a saved message with guardrail at the top level', () => {
+  const saved = {
+    id: 'r-a',
+    role: 'assistant',
+    text: STALE_TEXT,
+    result: { ...staleBody },
+    coverage: 'none',
+    category: 'onboarding',
+    proposedAction: null,
+    guardrail: staleGuardrail,
+  };
+  const message = asMessage(answerExtras(saved, saved.result));
+  assert.equal(noAnswerNote(message), staleAskHrText);
+  assert.equal(askHrOffer(message), 'no-answer');
+});
+
+test('stale note from a saved message whose guardrail is only in result', () => {
+  const saved = {
+    role: 'assistant',
+    text: STALE_TEXT,
+    result: { ...staleBody },
+    coverage: 'none',
+    category: 'onboarding',
+    proposedAction: null,
+  };
+  const message = asMessage(answerExtras(saved, saved.result));
+  assert.equal(noAnswerNote(message), staleAskHrText);
+  assert.equal(askHrOffer(message), 'no-answer');
+});
+
+test('a normal no-coverage body keeps the old note and gets no guardrail', () => {
+  const body = { answer: 'x', coverage: 'none', category: 'onboarding', proposedAction: null };
+  const extras = answerExtras(body, null);
+  assert.equal('guardrail' in extras, false);
+  const message = asMessage(extras);
+  assert.equal(noAnswerNote(message), `${noCoverageText}. HR may be able to help.`);
+  assert.equal(askHrOffer(message), 'no-answer');
+});
+
+test('the whole stale reply gets the uncertain presentation', () => {
+  const ask = (text) =>
+    answerPresentation({ text, reply: text, referenceQuestion: 'How much leave do I get?' });
+  const sequence = ask(STALE_TEXT);
+  assert.ok(sequence.scenes.length >= 2);
+  assert.ok(sequence.scenes.every((scene) => scene.label === 'Check company guidance'));
+  assert.equal(ask(STALE_TEXT.replace("won't", 'won’t')).scenes[0].label, 'Check company guidance');
+});
+
+test('normaliseTitle strips only one trailing version token', () => {
+  assert.equal(normaliseTitle('Leave Policy (2) final'), 'leave policy (2)');
+  assert.equal(normaliseTitle('Leave Policy final (2)'), 'leave policy final');
+  assert.equal(normaliseTitle('Leave Policy (2)'), 'leave policy');
+  assert.equal(normaliseTitle('Leave Policy final'), 'leave policy');
+});
+
+test('normaliseTitle strips underscore-separated dates', () => {
+  assert.equal(normaliseTitle('leave_policy 2026_03'), 'leave policy');
+  assert.equal(normaliseTitle('leave_policy_2026_03_15.pdf'), 'leave policy');
+  assert.equal(normaliseTitle('Leave Policy 2026-03'), 'leave policy');
 });

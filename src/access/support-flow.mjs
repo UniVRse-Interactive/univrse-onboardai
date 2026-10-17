@@ -117,6 +117,8 @@ export function answerExtras(source, result) {
   const re = read('reexplainOf');
   if (quick) out.quickQuestionId = quick;
   if (re) out.reexplainOf = re;
+  const guardrail = read('guardrail');
+  if (guardrail && typeof guardrail === 'object') out.guardrail = guardrail;
   return out;
 }
 
