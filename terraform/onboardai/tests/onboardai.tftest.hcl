@@ -407,8 +407,8 @@ run "cloud_run_matches_service_contract" {
   }
 
   assert {
-    condition     = toset(keys(google_project_service.required)) == toset(["run.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "secretmanager.googleapis.com", "aiplatform.googleapis.com", "discoveryengine.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "monitoring.googleapis.com", "sqladmin.googleapis.com"]) && alltrue([for s in google_project_service.required : s.disable_on_destroy == false])
-    error_message = "Exactly the required APIs are managed (no Drive API; sqladmin since #45), and none is disabled on destroy."
+    condition     = toset(keys(google_project_service.required)) == toset(["run.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "secretmanager.googleapis.com", "aiplatform.googleapis.com", "discoveryengine.googleapis.com", "firestore.googleapis.com", "storage.googleapis.com", "monitoring.googleapis.com", "sqladmin.googleapis.com", "cloudscheduler.googleapis.com"]) && alltrue([for s in google_project_service.required : s.disable_on_destroy == false])
+    error_message = "Exactly the required APIs are managed (no Drive API; sqladmin since #45; cloudscheduler since #79), and none is disabled on destroy."
   }
 
   assert {
@@ -591,25 +591,11 @@ run "vertex_ai_search_matches_contract" {
     error_message = "The serving config must be the one in contract v2."
   }
 
+  # #79: the bucket-wide import command is gone. The reconcile job (and the
+  # api's own per-file import) are the only ways documents reach the index.
   assert {
-    condition = (
-      strcontains(output.import_documents_command, "\"https://discoveryengine.googleapis.com/v1/projects/123456789012/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents:import\"") &&
-      strcontains(output.import_documents_command, "-H \"Authorization: Bearer $(gcloud auth print-access-token)\"") &&
-      strcontains(output.import_documents_command, "-H \"X-Goog-User-Project: onboardai-test-123\"") &&
-      startswith(output.import_documents_command, "curl -sS -X POST")
-    )
-    error_message = "The import command must POST documents:import on onboardai-docs with a gcloud token and X-Goog-User-Project."
-  }
-
-  assert {
-    condition = jsondecode(regex("-d '([^']+)'$", output.import_documents_command)[0]) == {
-      gcsSource = {
-        inputUris  = ["gs://onboardai-test-123-onboardai-docs/*"]
-        dataSchema = "content"
-      }
-      reconciliationMode = "INCREMENTAL"
-    }
-    error_message = "The import body must be gcsSource.inputUris [gs://<bucket>/*], dataSchema content, reconciliationMode INCREMENTAL."
+    condition     = output.docs_reconcile_run_command == "gcloud run jobs execute onboardai-docs-reconcile --project=onboardai-test-123 --region=asia-southeast1 --wait"
+    error_message = "docs_reconcile_run_command must execute the production reconcile job with --wait."
   }
 }
 
@@ -632,10 +618,21 @@ run "alerts_are_quiet_and_reach_every_address" {
     error_message = "Every policy has one condition and notifies every channel."
   }
 
-  # Quiet: no absence conditions, missing data (scale to zero) never fires.
+  # Quiet: no absence conditions on the services, missing data (scale to zero)
+  # never fires. The one exception (#79) is the reconcile job's SLA: a job that
+  # should run every hour and has not succeeded for 3 h / 6 h
+  # (docs_reconcile_monitoring.tf; tests/docs_reconcile.tftest.hcl pins it).
   assert {
-    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("condition_absent|EVALUATION_MISSING_DATA_ACTIVE", file("${path.module}/${f}")))])
-    error_message = "No alert may fire on missing data (a service scaled to zero sends none)."
+    condition     = alltrue([for f in fileset(path.module, "*.tf") : !can(regex("condition_absent|EVALUATION_MISSING_DATA_ACTIVE", file("${path.module}/${f}"))) || f == "docs_reconcile_monitoring.tf"])
+    error_message = "No alert may fire on missing data (a service scaled to zero sends none), except the reconcile job's SLA in docs_reconcile_monitoring.tf."
+  }
+
+  assert {
+    condition = (
+      length(regexall("condition_absent \\{", file("${path.module}/docs_reconcile_monitoring.tf"))) == 1 &&
+      !can(regex("EVALUATION_MISSING_DATA_ACTIVE", file("${path.module}/docs_reconcile_monitoring.tf")))
+    )
+    error_message = "docs_reconcile_monitoring.tf has exactly one absence condition (the SLA) and no ACTIVE missing-data setting."
   }
 
   assert {
