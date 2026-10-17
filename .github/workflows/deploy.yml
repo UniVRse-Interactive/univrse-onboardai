@@ -291,8 +291,9 @@ jobs:
   # hands its resource name to the deploy job (CHECKLIST_AGENT_ENGINE). Same
   # shape as the intake agent job above, in the same Agent Engine region
   # (INTAKE_AGENT_LOCATION). It deploys on staging, and on production only
-  # when the repository variable CHECKLIST_AGENT_ENABLED is true (set it after
-  # staging is verified and var.checklist_agent_production is applied), and
+  # when the repository variable CHECKLIST_AGENT_ENABLED is true (set it on the
+  # production environment after var.checklist_agent_production, true by
+  # default since #81, is applied), and
   # only when the commit has the deploy command (package.json script
   # checklist-agent:deploy). Otherwise every step after the decision is
   # skipped with a notice, the job succeeds with deployed=false and no engine,
@@ -561,6 +562,34 @@ jobs:
             echo "::warning::The migration succeeded, but its last line had not reached Cloud Logging yet; read the full log in Cloud Logging (log view $view, execution ${execution:-(unknown)})."
           fi
 
+      # Points the document reconciliation job (#79) at the api image this run
+      # deploys, so it reconciles with the same code the api runs. It never
+      # executes the job: the Cloud Scheduler job starts it every hour. Terraform
+      # creates the job, so a deploy that merges before the apply skips this step
+      # with a notice. A job the deployer cannot read looks the same as a missing
+      # one to Cloud Run (403 "or resource may not exist"), so both skip; any
+      # other error is a warning and does not stop the deploy, because the job
+      # then keeps the image it had.
+      - name: Update the document reconciliation job
+        run: |
+          set -euo pipefail
+          job="onboardai-docs-reconcile$NAME_SUFFIX"
+          log="$RUNNER_TEMP/reconcile-job.log"
+          if ! gcloud run jobs describe "$job" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --format='value(metadata.name)' > /dev/null 2> "$log"; then
+            first=$(grep -m 1 '^ERROR' "$log" || head -n 1 "$log")
+            if grep -qiE 'could not be found|not found|may not exist|run\.jobs\.get' "$log"; then
+              echo "::notice title=Reconcile job skipped::Cloud Run job $job does not exist yet (or the deployer cannot read it), so its image was not updated. Apply terraform/onboardai ($DEPLOY_ENV) to create it; the next deploy updates it."
+            else
+              echo "::warning title=Reconcile job not updated::Could not read Cloud Run job $job, so its image was not updated: $first"
+            fi
+            exit 0
+          fi
+          if ! gcloud run jobs update "$job" --project="$GCP_PROJECT_ID" --region="$GCP_REGION" --image="$REGISTRY/onboardai$NAME_SUFFIX/api:$GITHUB_SHA" --quiet 2> "$log"; then
+            echo "::warning title=Reconcile job not updated::gcloud run jobs update $job failed; it keeps its previous image: $(grep -m 1 '^ERROR' "$log" || head -n 1 "$log")"
+            exit 0
+          fi
+          echo "Cloud Run job $job now runs the api image $GITHUB_SHA."
+
       - name: Deploy
         id: deploy
         run: |
@@ -601,6 +630,9 @@ jobs:
           # --set-env-vars replaces the whole set, so variables an earlier
           # revision carried and this list lacks are dropped.
           api_env="NODE_ENV=production,AI_MODE=$AI_MODE,GEMINI_MODEL=$GEMINI_MODEL,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,GOOGLE_CLOUD_LOCATION=$VERTEX_LOCATION,VERTEX_SEARCH_LOCATION=$VERTEX_SEARCH_LOCATION,VERTEX_SEARCH_ENGINE_ID=$VERTEX_SEARCH_ENGINE_ID,FIRESTORE_DATABASE_ID=$FIRESTORE_DATABASE_ID,DOCS_BUCKET=$GCP_PROJECT_ID-onboardai-docs$NAME_SUFFIX,VERTEX_SEARCH_DATA_STORE_ID=onboardai-docs$NAME_SUFFIX,TTS_SERVICE_URL=$tts_url"
+          # Labels the api's company-document sync log lines (#79): staging or
+          # production. Anything else reads as local.
+          api_env+=",ONBOARDAI_ENVIRONMENT=$DEPLOY_ENV"
           # Voice (#52): the api calls Gemini TTS as its own identity; the
           # voice is passed only when set (the backend has a default).
           api_env+=",VOICE_PROVIDER=$VOICE_PROVIDER,GEMINI_TTS_MODEL=$GEMINI_TTS_MODEL,GEMINI_TTS_LOCATION=$GEMINI_TTS_LOCATION"

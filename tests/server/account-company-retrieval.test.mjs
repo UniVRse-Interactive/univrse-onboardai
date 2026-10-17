@@ -4,7 +4,7 @@
 // Synthetic documents and fake Gemini models only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { startAccountsApp, fakeRetrieve } from './account-harness.mjs';
 import { createCompanyKnowledge } from '../../server/company-knowledge.mjs';
 import { createVertexDocumentSync, gcsObjectName } from '../../server/company-documents.mjs';
@@ -139,6 +139,10 @@ test('retrieve() and quote() always and only query companyRetrieve without calli
 test('createVertexDocumentSync uploads to GCS + triggers documents:import and deletes from GCS + documents.delete', async () => {
   const calls = [];
   const docId = '11111111-2222-3333-4444-555555555555';
+  const hashId = createHash('sha256')
+    .update(`gs://test-proj-onboardai-docs/${docId}/Notes.txt`)
+    .digest('hex')
+    .slice(0, 32);
   assert.equal(gcsObjectName(docId, 'Handbook.pdf'), `${docId}/Handbook.pdf`);
   assert.equal(gcsObjectName(docId, 'Notes.md'), `${docId}/Notes.txt`);
 
@@ -149,9 +153,14 @@ test('createVertexDocumentSync uploads to GCS + triggers documents:import and de
       VERTEX_SEARCH_DATA_STORE_ID: 'onboardai-docs',
     },
     getAccessToken: async () => 'fake-token',
+    logEvent: () => {},
     fetchImpl: async (url, init = {}) => {
       calls.push({ url, method: init.method || 'GET', body: init.body });
-      if ((init.method || 'GET') === 'GET' && url.includes('/documents?pageSize=1000')) {
+      const method = init.method || 'GET';
+      // The document's own ID (sha256 of its URI) is not indexed: 404, then the list.
+      if (method === 'DELETE' && url.endsWith(`/documents/${hashId}`))
+        return new Response('{}', { status: 404 });
+      if (method === 'GET' && url.includes('/documents?pageSize=1000')) {
         return new Response(
           JSON.stringify({
             documents: [
@@ -204,7 +213,7 @@ test('createVertexDocumentSync uploads to GCS + triggers documents:import and de
       ],
       [
         'DELETE',
-        `https://discoveryengine.googleapis.com/v1/projects/test-proj/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents/${docId}`,
+        `https://discoveryengine.googleapis.com/v1/projects/test-proj/locations/global/collections/default_collection/dataStores/onboardai-docs/branches/default_branch/documents/${hashId}`,
       ],
       [
         'GET',

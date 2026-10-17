@@ -27,6 +27,10 @@ locals {
     # Cloud SQL, the Cloud Run Cloud SQL connection and the Cloud SQL Auth
     # Proxy (accounts.tf, #45). Enabled by staging's state until #45 (main.tf).
     "sqladmin.googleapis.com",
+    # Cloud Scheduler starts the document reconciliation job every hour
+    # (docs_reconcile.tf, #79). Only production's state manages APIs, so
+    # staging's apply needs it enabled first (README, Document reconciliation).
+    "cloudscheduler.googleapis.com",
   ]
 
   # Project-level roles of the api runtime account. With the intake agent's
@@ -157,17 +161,6 @@ locals {
   # Full names use the project number, like the API returns them.
   data_store_name     = "projects/${data.google_project.this.number}/locations/${google_discovery_engine_data_store.docs.location}/collections/${local.search_collection_id}/dataStores/${google_discovery_engine_data_store.docs.data_store_id}"
   serving_config_name = "projects/${data.google_project.this.number}/locations/${google_discovery_engine_search_engine.docs.location}/collections/${google_discovery_engine_search_engine.docs.collection_id}/engines/${google_discovery_engine_search_engine.docs.engine_id}/servingConfigs/default_search"
-
-  # Imports every file in the documents bucket into onboardai-docs. INCREMENTAL
-  # adds and updates documents and never deletes; dataSchema content means
-  # unstructured files (PDF, DOCX, HTML, TXT and so on) parsed by the layout parser.
-  import_request = jsonencode({
-    gcsSource = {
-      inputUris  = ["gs://${google_storage_bucket.docs.name}/*"]
-      dataSchema = "content"
-    }
-    reconciliationMode = "INCREMENTAL"
-  })
 
   # Service contract v1: Artifact Registry repository and image path.
   repository_id = "onboardai${local.name_suffix}"

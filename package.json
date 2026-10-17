@@ -16,6 +16,7 @@
     "check:voice": "node scripts/check-gemini-voice.mjs",
     "check:search": "node scripts/check-vertex-ai-search.mjs",
     "docs:import": "node scripts/import-company-documents.mjs",
+    "docs:reconcile": "node scripts/reconcile-company-documents.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:up": "docker compose up -d --wait",

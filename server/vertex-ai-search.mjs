@@ -4,6 +4,8 @@ import { createAccessTokenProvider } from './vertex-ai.mjs';
 // the documents imported into the data store. REST only; no extra client library.
 export const SEARCH_TIMEOUT_MS = 15000;
 export const SEARCH_PAGE_SIZE = 5;
+// The most results one search may ask for (the allowlisted path asks for 10).
+const MAX_PAGE_SIZE = 50;
 // One chunk either side keeps conditions and exceptions that straddle a chunk boundary.
 const NEIGHBOUR_CHUNKS = 1;
 // Layout chunks are about 500 tokens; this only bounds unexpected oversized chunks.
@@ -41,10 +43,16 @@ export function vertexSearchUrl(config) {
   return `https://${host}/v1/${servingConfigName(config)}:search`;
 }
 
-export function searchRequestBody(query) {
+// pageSize: SEARCH_PAGE_SIZE unless the caller asks for another whole number
+// of results (the retrieval allowlist asks for 10, see
+// active-company-documents.mjs).
+export function searchRequestBody(query, { pageSize } = {}) {
   return {
     query,
-    pageSize: SEARCH_PAGE_SIZE,
+    pageSize:
+      Number.isInteger(pageSize) && pageSize >= 1 && pageSize <= MAX_PAGE_SIZE
+        ? pageSize
+        : SEARCH_PAGE_SIZE,
     contentSearchSpec: {
       searchResultMode: 'CHUNKS',
       chunkSpec: { numPreviousChunks: NEIGHBOUR_CHUNKS, numNextChunks: NEIGHBOUR_CHUNKS },
@@ -172,11 +180,19 @@ export function sectionOf(chunk) {
 }
 
 const contentOf = (chunk) => text(chunk?.content).slice(0, MAX_CHUNK_CHARACTERS);
+// The data store document ID in a chunk name (.../documents/{id}/chunks/{chunk}).
+const vertexIdOf = (chunk) => /\/documents\/([^/]+)\/chunks\//.exec(text(chunk?.name))?.[1] || null;
 
 // Converts a chunk-mode search response into passages in rank order. Each passage
 // is the matching chunk with its neighbours; a chunk already included in a
 // higher-ranked passage is not repeated. The same response always yields the
 // same passages in the same order, so the workflow's numeric IDs are stable.
+//
+// Each passage also carries two internal fields for the retrieval allowlist
+// (active-company-documents.mjs): `uri`, the document's gs:// URI as the
+// search returned it (or null), and `vertexId`, the data store document ID
+// from the chunk name (or null). They never leave the server: the workflow and
+// document search copy only the fields they show.
 export function passagesFromSearch(data) {
   const seen = new Set(),
     passages = [];
@@ -213,6 +229,8 @@ export function passagesFromSearch(data) {
       heading: sectionOf(chunk),
       text: parts.join('\n\n'),
       excerpt: main,
+      uri: text(chunk.documentMetadata?.uri) || null,
+      vertexId: vertexIdOf(chunk),
     });
   }
   return passages;
@@ -241,8 +259,8 @@ async function googleReason(response) {
   }
 }
 
-// Returns search(query, { signal }) -> passages. One bounded request per call and
-// no automatic retries, matching the Gemini client.
+// Returns search(query, { signal, pageSize }) -> passages. One bounded request
+// per call and no automatic retries, matching the Gemini client.
 export function createVertexSearch({
   config,
   fetchImpl = fetch,
@@ -250,19 +268,19 @@ export function createVertexSearch({
   timeoutMs = SEARCH_TIMEOUT_MS,
   log = (message) => console.warn(message),
 }) {
-  return async function search(query, { signal } = {}) {
+  return async function search(query, { signal, pageSize } = {}) {
     // A ref'd timer, not AbortSignal.timeout(): that timer is unref'd, so a pending
     // search would not keep the process alive and could be dropped mid-flight.
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), timeoutMs);
     try {
-      return await run(query, signal, deadline.signal);
+      return await run(query, signal, deadline.signal, pageSize);
     } finally {
       clearTimeout(timer);
     }
   };
 
-  async function run(query, signal, timeout) {
+  async function run(query, signal, timeout, pageSize) {
     if (!config?.engine || searchConfigProblem(config))
       throw new CompanySearchError('SEARCH_NOT_CONFIGURED');
     const question = text(query);
@@ -296,7 +314,7 @@ export function createVertexSearch({
       response = await fetchImpl(vertexSearchUrl(config), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(searchRequestBody(question)),
+        body: JSON.stringify(searchRequestBody(question, { pageSize })),
         signal: bounded,
       });
       if (!response.ok) {

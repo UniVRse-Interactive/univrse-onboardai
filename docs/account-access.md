@@ -17,10 +17,10 @@ and knowledge gaps are described in [Onboarding journey and support](onboarding-
 
 ## Roles
 
-| Role       | Created by                                             | Can                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ---------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hr`       | `npm run hr:create` on the server (no forced change)   | Everything an employee can, plus list, read, create, edit and delete employees, reset their passwords, disable or enable them, verify onboarding paperwork, enter first-day details, work confirmed support requests, read team insights and knowledge gaps (never named per-employee summaries) and manage departments and prefixes in Settings and upload, replace and remove the company documentation files. HR accounts are not editable or deletable through the API; `npm run hr:reset-password` recovers one. |
-| `employee` | HR; the server assigns the ID and a temporary password | Change their own password, read their own profile, keep saved chats that follow them across browsers, work through their onboarding footprint and ask HR to follow up on an answer.                                                                                                                                                                                                                                                                                                                                   |
+| Role       | Created by                                             | Can                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `hr`       | `npm run hr:create` on the server (no forced change)   | Everything an employee can, plus list, read, create, edit and delete employees, reset their passwords, disable or enable them, verify onboarding paperwork, enter first-day details, work confirmed support requests, read team insights and knowledge gaps (never named per-employee summaries) and manage departments and prefixes in Settings and upload, replace (with a new version) and remove the company documentation files. HR accounts are not editable or deletable through the API; `npm run hr:reset-password` recovers one. |
+| `employee` | HR; the server assigns the ID and a temporary password | Change their own password, read their own profile, keep saved chats that follow them across browsers, work through their onboarding footprint and ask HR to follow up on an answer.                                                                                                                                                                                                                                                                                                                                                        |
 
 An account created or reset by HR must choose a new password before anything else works.
 
@@ -282,7 +282,7 @@ ProfileSummary  { fullName, preferredName, jobTitle, department, startDate }
 | `POST /api/hr/departments`                                     | HR                              | `{ name, prefix }`                                                                                        | 201 `{ department: Department }`                                                                                                                                         | 400 `DEPARTMENT_INVALID`; 409 `DEPARTMENT_NAME_TAKEN`, `DEPARTMENT_PREFIX_TAKEN`                                                                                                                                  |
 | `PATCH /api/hr/departments/:id`                                | HR                              | `{ name?, prefix?, archived? }`                                                                           | 200 `{ department: Department, updatedProfiles }`                                                                                                                        | 400 `DEPARTMENT_INVALID`; 404 `DEPARTMENT_NOT_FOUND`; 409 as POST; 503 `PROFILE_STORAGE_UNAVAILABLE`, 504 `PROFILE_STORAGE_TIMEOUT`                                                                               |
 | `GET /api/hr/company-knowledge`                                | HR                              | none                                                                                                      | 200 `KnowledgeSnapshot`; see [Company Documentation](#company-documentation)                                                                                             | 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                              |
-| `POST /api/hr/company-knowledge/documents?category=…[&name=…]` | HR                              | raw file (`application/octet-stream`, `X-File-Name`), see [Company Documentation](#company-documentation) | 201 `{ id, duplicate: false }` or 200 `{ id, duplicate: true }`                                                                                                          | see [Company Documentation](#company-documentation)                                                                                                                                                               |
+| `POST /api/hr/company-knowledge/documents?category=…[&name=…]` | HR                              | raw file (`application/octet-stream`, `X-File-Name`), see [Company Documentation](#company-documentation) | 201 `{ id, duplicate: false, replaced: null }` or 200 `{ id, duplicate: true, replaced: null }`; `&replaces=<id>`: see [Company Documentation](#company-documentation)   | see [Company Documentation](#company-documentation)                                                                                                                                                               |
 | `PATCH /api/hr/company-knowledge/documents/:id`                | HR                              | `{ category }`, see [Company Documentation](#company-documentation)                                       | 200 `{ document }`                                                                                                                                                       | 400 `DOCUMENT_TOPIC_REQUIRED`; 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 409 `COMPANY_DOCUMENT_DUPLICATE`; 503/504 as above                                                                                             |
 | `DELETE /api/hr/company-knowledge/documents/:id`               | HR                              | none                                                                                                      | 204: the document is removed from GCS, Vertex AI Search and Firestore (see [Company Documentation](#company-documentation))                                              | 404 `WORKSPACE_DOCUMENT_NOT_FOUND`; 503 `COMPANY_KNOWLEDGE_UNAVAILABLE`, 504 `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                          |
 
@@ -544,8 +544,9 @@ listed but never reaches chats.
 ```text
 KnowledgeSnapshot {
   topics: [{ id, title, description, icon }]   the five onboarding areas, in order (below)
-  documents: [{ id, title, fileName, category, characters, bytes, created: ms since epoch }],
-                                     oldest first; never the text
+  documents: [{ id, title, fileName, category, characters, bytes, created: ms since epoch,
+                version: 1 | 2 | ..., connectedAt: ISO 8601 }],
+                                     oldest first; never the text; never a retired entry
   limits: { files: 40, bytes: 5242880, characters: 250000, totalCharacters: 1500000 }
 }
 ```
@@ -565,12 +566,51 @@ KnowledgeSnapshot {
   body is the raw file, `Content-Type: application/octet-stream`, with the file name in
   `X-File-Name: encodeURIComponent(fileName)`. `category` is an area id or `additional`. The
   document's title is its own: `name` (trimmed, 1-80 characters, one line) when given, else the
-  file name without its extension (cut to 80 characters); never the area's title, so Alya cites
-  each document by its title. An upload always adds: a new document is
-  `201 { id, duplicate: false }`. Identical text already stored in the same area is
-  `200 { id, duplicate: true }` (no new document, nothing synced); in another area it is `409`.
-  A JSON body is `415 FILE_UPLOAD_REQUIRED`. If the GCS upload or the import fails, the new
-  metadata is removed again and the answer is `503 COMPANY_KNOWLEDGE_UNAVAILABLE`.
+  file name without its extension (cut to 80 characters); never the area's title. The title is
+  what HR sees; Alya's sources show the **file name** (`Leave Policy 2026.docx`), with the
+  section and page. Without `replaces` an upload always adds: a new document is
+  `201 { id, duplicate: false, replaced: null }` (version 1). Identical text already stored in the
+  same area is `200 { id, duplicate: true, replaced: null }` (no new document, nothing synced); in
+  another area it is `409`. A JSON body is `415 FILE_UPLOAD_REQUIRED`. If the GCS upload or the
+  import fails, the new metadata is removed again and the answer is
+  `503 COMPANY_KNOWLEDGE_UNAVAILABLE` (`504 COMPANY_KNOWLEDGE_TIMEOUT` when a request ran out of
+  time).
+- **Replace** (`POST /api/hr/company-knowledge/documents?category=<category>[&name=<title>]&replaces=<id>`,
+  the same raw body, route, proxy path and 5 MiB limit): the file becomes the next version of
+  document `<id>`, which must be a current document. `category` is still required (the page sends
+  the replaced document's area; another area files the new version there). Without `name` the new
+  version keeps the replaced document's title, not the new file name.
+
+  ```text
+  201 { id: <newId>, duplicate: false, replaced: { id: <oldId>, cleanup: "done" | "pending" } }
+  200 { id: <oldId>, duplicate: true, replaced: null }   the text is the replaced document's own
+  400 DOCUMENT_TOPIC_REQUIRED | DOCUMENT_NAME_INVALID | FILE_NAME_INVALID
+  404 WORKSPACE_DOCUMENT_NOT_FOUND       replaces is not a document ID, or not a current document
+  409 COMPANY_DOCUMENT_DUPLICATE         the text equals another (not the replaced) document
+  409 COMPANY_DOCUMENT_ALREADY_REPLACED  another HR browser replaced it first:
+      "This document was just replaced. Refresh the library and try again."
+  413 FILE_TOO_LARGE | WORKSPACE_TEXT_LIMIT   the text limit leaves the replaced document out
+  415 FILE_UPLOAD_REQUIRED
+  503 COMPANY_KNOWLEDGE_UNAVAILABLE | 504 COMPANY_KNOWLEDGE_TIMEOUT   nothing changed
+  ```
+
+  The file-count limit (`WORKSPACE_DOCUMENT_LIMIT`) never applies to a replace. The server works
+  in three steps: (1) one Firestore transaction checks the library (without the replaced
+  document), creates the new entry (`version` + 1, `supersedes: <oldId>`, `status: active`) and
+  sets the old one to `status: retired`; (2) it uploads and imports the new version; if that
+  fails, a second transaction deletes the new entry and makes the old one active again, the new
+  GCS object is deleted, and the answer is the 503 or 504 with the old version still in place;
+  (3) it deletes the old GCS object and Vertex AI Search document (as a delete does), then the old
+  entry. The old entry goes even when that clean-up fails: the answer is then `cleanup: "pending"`
+  and [document reconciliation](document-reconciliation.md) finishes it; HR does nothing. A
+  successful replace writes one `company_document_replaced` audit row (`target_id` empty,
+  `detail` `{ documentId: <newId>, replacedId: <oldId>, category }`, ids only); a duplicate or a
+  refused replace writes none. Chat uses only active entries (the
+  [retrieval allowlist](chat-and-memory.md#which-documents-chat-may-use-retrieval-allowlist)), so
+  step 1 takes the old version out of chat: on the instance that handled the replace once it
+  answers, and on others within 30 seconds. The new version is searchable once its import has
+  indexed it (about a minute); until then neither version answers that topic.
+
 - **Move** (`PATCH /api/hr/company-knowledge/documents/:id` with `{ "category": "<area id or additional>" }`,
   HR, same-origin): `200 { document }` with the document as in the snapshot. Moving to the area it is
   already in changes nothing. Otherwise the move writes a `company_document_moved` audit row
@@ -580,17 +620,48 @@ KnowledgeSnapshot {
   changes only the metadata; the indexed file stays as it is.
 - **Delete** (`DELETE /api/hr/company-knowledge/documents/:id`, HR, same-origin): `204`. With the
   sync on, the server deletes the GCS object (a `404` counts as gone), then the Vertex AI Search
-  document with the same id and any other indexed document with the object's `gs://` URI, and
-  only then the Firestore metadata. It never re-imports the bucket. If GCS or Vertex AI Search
-  fails, the answer is `503 COMPANY_KNOWLEDGE_UNAVAILABLE` and the document stays listed, so HR
-  can delete it again. An unknown id is `404 WORKSPACE_DOCUMENT_NOT_FOUND` before any cloud call.
+  document by its ID, the first 32 hex characters of SHA-256 of the object's `gs://` URI (a `404`
+  counts as gone). Only after that `404` does it list the data store, every page, and delete any
+  other document with the same URI. Only then does it delete the Firestore metadata. It never
+  re-imports the bucket. Any failure is an error, never ignored: a failed or non-2xx GCS delete,
+  Vertex AI Search delete or list answers `503 COMPANY_KNOWLEDGE_UNAVAILABLE`, or
+  `504 COMPANY_KNOWLEDGE_TIMEOUT` when a request ran out of time, and the document stays listed so
+  HR can delete it again (a retry tolerates the `404`s of what is already gone). An unknown or
+  retired id is `404 WORKSPACE_DOCUMENT_NOT_FOUND` before any cloud call. Once the entry is
+  gone the document leaves chat, even if a copy is still indexed: on the instance that handled the
+  delete as soon as it answers, and on others within 30 seconds.
 - **Storage**: Firestore `companyDocuments/{id}`, metadata only: `category`, `title`, `fileName`,
   `characters` (of the extracted text, at most 250,000), `bytes` (the file's size), `fingerprint`
-  (SHA-256 of the extracted text), `connectedBy` (the HR account ID) and `connectedAt` (ISO 8601).
-  At most forty documents and 1,500,000 characters in total; checks and writes run in one
-  transaction. Documents stored before the metadata-only change may still hold a `text` field,
-  which nothing reads. Documents stored before issue #35 have no `fileName` (listed as `''`) and
-  still list. Log lines never contain file names or text.
+  (SHA-256 of the extracted text), `connectedBy` (the HR account ID), `connectedAt` (ISO 8601, the
+  upload of this version), `status` (`active` or `retired`), `version` (1, then + 1 per replace),
+  `supersedes` (on a replacement: the replaced document's ID, kept for audit) and `retiredAt`
+  (ISO 8601, set while a replaced version is retired). Entries stored before replace existed read
+  as `active`, version 1. A retired entry is not part of the library: the snapshot, the file
+  limit, the text limit and the duplicate checks leave it out, and move, delete and replace answer
+  404 or 409 for it. At most forty documents and 1,500,000 characters in total; checks and writes
+  run in one transaction. Documents stored before the metadata-only change may still hold a `text`
+  field, which nothing reads. Documents stored before issue #35 have no `fileName` (listed as
+  `''`) and still list. `listSummaries()` (for the retrieval allowlist) reads only `fileName`,
+  `title`, `category`, `status`, `version`, `connectedAt` and `retiredAt` with one select query.
+- **Sync log lines**: every GCS and Vertex AI Search request of the sync, successful or not, and
+  each replace rollback and clean-up, writes one JSON line on standard output (Cloud Run reads it
+  as `jsonPayload` with its `severity`):
+
+  ```text
+  {"severity":"INFO|WARNING","event":"onboardai_docs_sync","environment":"staging|production|local",
+   "operation":"gcs.upload|gcs.delete|discoveryengine.import|discoveryengine.delete|discoveryengine.list|replace.rollback|replace.cleanup",
+   "outcome":"ok|failed","status":200,"reason":null,"documentId":"<firestore id>|null"}
+  ```
+
+  `severity` is `INFO` for `ok` and `WARNING` for `failed`. `status` is the HTTP status, or `null`
+  for a timeout, a network error, missing credentials or a `replace.*` step without one. `reason`
+  is `null` when ok, else `http`, `timeout` or `network` (a Firestore failure in a replace step is
+  `network`, or `timeout` on its deadline). A `404` on a delete is `ok` (already gone).
+  `replace.cleanup` `failed` is the `cleanup: "pending"` case; `replace.rollback` `failed` means
+  the rollback itself did not fully succeed. `environment` comes from `ONBOARDAI_ENVIRONMENT`
+  (`staging` or `production`; anything else is `local`). No line holds a file name, title, URI,
+  bucket name or text. Firestore failures still log `Firestore request failed: {...}` text lines.
+
 - **Errors** (besides the session and route tables; file errors are the shared upload reader's):
 
   | Status              | Code                                                                                                                                                                                                               | When                                                           |
@@ -599,14 +670,20 @@ KnowledgeSnapshot {
   | 400                 | `DOCUMENT_TOPIC_REQUIRED`                                                                                                                                                                                          | `category` is not an area ID or `additional`                   |
   | 400                 | `DOCUMENT_NAME_INVALID`                                                                                                                                                                                            | `name` is empty, over 80 characters or has a line break        |
   | 400/413/415/422/503 | `FILE_NAME_INVALID`, `FILE_EMPTY`, `FILE_TOO_LARGE`, `FILE_TYPE_UNSUPPORTED`, `FILE_INVALID`, `FILE_NO_TEXT`, `FILE_TEXT_TOO_LONG`, `FILE_UNREADABLE`, `FILE_READ_TIMEOUT`, password-protected, `FILE_READER_BUSY` | The reader refused the file (see `read-uploaded-document.mjs`) |
+  | 404                 | `WORKSPACE_DOCUMENT_NOT_FOUND`                                                                                                                                                                                     | `replaces` is not a current document                           |
   | 409                 | `COMPANY_DOCUMENT_DUPLICATE`                                                                                                                                                                                       | The same text is already stored in another area                |
+  | 409                 | `COMPANY_DOCUMENT_ALREADY_REPLACED`                                                                                                                                                                                | Replace: another HR browser replaced that document first       |
   | 409                 | `WORKSPACE_DOCUMENT_LIMIT`                                                                                                                                                                                         | Forty documents already                                        |
   | 413                 | `WORKSPACE_TEXT_LIMIT`                                                                                                                                                                                             | Over 1,500,000 characters in total                             |
   | 503                 | `COMPANY_KNOWLEDGE_UNAVAILABLE`                                                                                                                                                                                    | Firestore, GCS or Vertex AI Search failed                      |
-  | 504                 | `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                                                                        | No answer within 10 seconds (Firestore and the sync together)  |
+  | 504                 | `COMPANY_KNOWLEDGE_TIMEOUT`                                                                                                                                                                                        | Firestore (10 s) or a sync request (15 s each) ran out of time |
 
 - **Web service**: `server/api-proxy.mjs` forwards this path as an upload with a 5 MiB limit and
-  answers `413 FILE_TOO_LARGE` for a larger file.
+  answers `413 FILE_TOO_LARGE` for a larger file; it matches the path without its query, so
+  `?replaces=` uploads take the same route.
+- **Drift**: the three stores are written one after another, so a failure between them can leave
+  an object or an indexed document without an entry. `npm run docs:reconcile` reports and repairs
+  that drift; see [Document reconciliation](document-reconciliation.md).
 
 ### Account chats and the company library
 
@@ -673,9 +750,12 @@ chat belongs to an account.
 - `server/employee-ids.mjs`: the prefix rule, the reserved `HR` prefix and the Employee ID format.
 - `server/employee-profiles.mjs`: profile validation and Firestore storage, and removal of an
   account's profile and import drafts.
-- `server/company-knowledge.mjs`: the HR company library (snapshot, upload, move, remove) and the
-  library search for account chats.
-- `server/company-documents.mjs`: Firestore `companyDocuments` and the library rules.
+- `server/company-knowledge.mjs`: the HR company library (snapshot, upload, replace, move,
+  remove, the `onChange` hook) and the library search for account chats.
+- `server/company-documents.mjs`: Firestore `companyDocuments`, the library and replace rules,
+  and the GCS + Vertex AI Search sync with its `onboardai_docs_sync` lines.
+- `server/discovery-engine-documents.mjs`: object names, `gs://` URIs, Vertex document IDs and
+  the Discovery Engine and GCS URLs, shared with the document scripts.
 - `server/onboarding-document-topics.mjs`: the five onboarding areas HR files documents under.
 - `server/profile-autofill.mjs`: profile autofill (file checks, the Gemini request, answer checks).
 - `server/database-migrations.mjs`, `server/migrations/*.sql`: the migration runner and SQL
@@ -693,6 +773,6 @@ chat belongs to an account.
   (frontend; see [File guide](file-guide.md)).
 - `tests/server/account-*.test.mjs`, `password-hashing.test.mjs`, `employee-profiles.test.mjs`,
   `employee-ids.test.mjs`, `departments.test.mjs`, `profile-autofill.test.mjs`, `employee-delete.test.mjs`,
-  `company-knowledge.test.mjs`, `onboarding-*.test.mjs`, `support-requests.test.mjs`,
+  `company-knowledge.test.mjs`, `company-document-*.test.mjs`, `onboarding-*.test.mjs`, `support-requests.test.mjs`,
   `quick-questions.test.mjs`, `signed-out.test.mjs`: account tests, using pg-mem (the real migrations), an in-memory
   Firestore fake and a fake Vertex AI endpoint with synthetic documents.

@@ -43,8 +43,10 @@ import { createCheckGrader } from './check-grader.mjs';
 import { accountErrors } from './account-errors.mjs';
 import { accountSettings } from './account-settings.mjs';
 import { createAccountBackends, createAccountService } from './account-service.mjs';
-import { createCompanyDocumentStore } from './company-documents.mjs';
+import { createCompanyDocumentStore, deploymentEnvironment } from './company-documents.mjs';
 import { createCompanyKnowledge, isAccountOwner } from './company-knowledge.mjs';
+import { createActiveDocuments } from './active-company-documents.mjs';
+import { guardrailFieldOf } from './answer-freshness.mjs';
 import { createFirestoreClient } from './firestore-client.mjs';
 import {
   accountCookie,
@@ -160,22 +162,50 @@ export function createApp({
             getAccessToken: vertexToken,
           })
         : null;
+  // With Vertex AI Search, chat and document search use only passages of
+  // active companyDocuments entries (the retrieval allowlist, issue #79). A
+  // change on this instance drops the allowlist's cache at once (onChange);
+  // other instances refresh it within 30 seconds.
+  const vertexSearch = knowledgeMode(env) === 'vertex-ai-search';
+  const active =
+    vertexSearch && library
+      ? createActiveDocuments({
+          documents: library,
+          bucket: env.DOCS_BUCKET,
+          environment: deploymentEnvironment(env),
+        })
+      : null;
+  // checkKnowledgeConfig stops the api and the local server before this; an
+  // app built without the bucket withholds every company passage.
+  if ((memoryChat || documentSearch) && vertexSearch && !String(env.DOCS_BUCKET || '').trim())
+    console.error(
+      'Company knowledge: VERTEX_SEARCH_ENGINE_ID is set without DOCS_BUCKET, so no passage can be matched to an active company document and chat withholds them all.',
+    );
   const knowledge = library
     ? createCompanyKnowledge({
         documents: library,
         companyRetrieve: retrieve,
+        active,
+        onChange: active ? () => active.invalidate() : null,
       })
     : null;
   // retrieve(query, options, owner): runtime retrieval for gemini-chat and
-  // document-search always and only queries Vertex AI Search (`retrieve`).
+  // document-search always and only queries Vertex AI Search (`retrieve`) or
+  // the sample guide. Vertex AI Search passages go through the allowlist;
+  // without one (no company library) none is used.
+  const withheld = async () => [];
   const chatRetrieve = (query, options, owner) =>
     knowledge && isAccountOwner(owner)
       ? knowledge.retrieve(query, { signal: options?.signal })
-      : retrieve(query, options);
+      : vertexSearch
+        ? withheld()
+        : retrieve(query, options);
   const quoteRetrieve = (query, options, owner) =>
     knowledge && isAccountOwner(owner)
       ? knowledge.quote(query, { signal: options?.signal })
-      : retrieve(query, options);
+      : vertexSearch
+        ? withheld()
+        : retrieve(query, options);
   let conversations = typeof conversationService === 'function' ? null : conversationService;
   const chatService = () =>
     (conversations ||=
@@ -482,7 +512,9 @@ export function createApp({
   });
   // Assistant messages carry coverage, category, quickQuestionId, reexplainOf
   // and proposedAction at the top level, next to feedback (null when unknown,
-  // as for answers saved before them).
+  // as for answers saved before them), and `guardrail` when a guardrail
+  // decided the turn (issue #79: { verdict: 'stale', askHr: true }; no field
+  // otherwise).
   app.get('/api/conversations/:id', chatOwner, async (req, res) => {
     try {
       const chat = await chatService().memory.read(req.chatOwner, req.params.id);
@@ -495,6 +527,7 @@ export function createApp({
                 ...Object.fromEntries(
                   journeyMessageFields.map((key) => [key, m[key] ?? m.result?.[key] ?? null]),
                 ),
+                ...guardrailFieldOf(m),
                 ...(m.proposedAction?.status === 'pending' &&
                 m.proposedAction.expiresAt <= journeyNow().toISOString()
                   ? { proposedAction: { ...m.proposedAction, status: 'expired' } }

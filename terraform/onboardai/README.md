@@ -9,20 +9,21 @@ same code: **production** (deployed from `main`, described below) and
 [Staging](#staging)). Each has its own state in Cloud Storage (see
 [State](#state)).
 
-| Creates                                | Name                                                                                                                                                                                      |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, discoveryengine, firestore, storage, monitoring, sqladmin                                                     |
-| Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image                                                                                                               |
-| Cloud Run services (placeholder image) | `onboardai-web` (public), `onboardai-api` and `onboardai-tts` (private, see [Private api and tts](#private-api-and-tts))                                                                  |
-| Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                                                                                                                             |
-| Deployer service account (no key)      | `onboardai-deployer`                                                                                                                                                                      |
-| Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                                                                                                                        |
-| Project roles of `onboardai-api-run`   | `roles/aiplatform.user`, `roles/datastore.user` (on `(default)` only), `roles/cloudsql.client` (on `onboardai-db` only)                                                                   |
-| Documents bucket                       | `<project>-onboardai-docs`: uniform access, public access prevention, versioning                                                                                                          |
-| Vertex AI Search (`global`)            | data store `onboardai-docs` (layout parser, 500-token chunks), Enterprise engine `onboardai-search`; `onboardai-api-run` searches it through `roles/discoveryengine.viewer` on the engine |
-| Firestore                              | `(default)`, Native mode, `asia-southeast1`, delete protection on, point-in-time recovery (7 days)                                                                                        |
-| Employee accounts (#45)                | Cloud SQL `onboardai-db`, secrets `onboardai-db-password` and `onboardai-database-url`, migration job `onboardai-db-migrate` and its log view                                             |
-| Cloud Monitoring                       | one email channel per `alert_emails` entry; alerts on 5xx (api, tts), api p95 latency and failing uptime checks (`/web-health`, `/api/health` through web)                                |
+| Creates                                | Name                                                                                                                                                                                                                                               |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| APIs (never disabled on destroy)       | run, artifactregistry, iam, iamcredentials, sts, secretmanager, aiplatform, discoveryengine, firestore, storage, monitoring, sqladmin, cloudscheduler                                                                                              |
+| Artifact Registry Docker repository    | `onboardai` in `asia-southeast1`, keeps the newest 5 versions of each image                                                                                                                                                                        |
+| Cloud Run services (placeholder image) | `onboardai-web` (public), `onboardai-api` and `onboardai-tts` (private, see [Private api and tts](#private-api-and-tts))                                                                                                                           |
+| Runtime service accounts               | `onboardai-web-run`, `onboardai-api-run`, `onboardai-tts-run`                                                                                                                                                                                      |
+| Deployer service account (no key)      | `onboardai-deployer`                                                                                                                                                                                                                               |
+| Workload Identity Federation           | pool `onboardai-github`, provider `github-actions`                                                                                                                                                                                                 |
+| Project roles of `onboardai-api-run`   | `roles/aiplatform.user`, `roles/datastore.user` (on `(default)` only), `roles/cloudsql.client` (on `onboardai-db` only)                                                                                                                            |
+| Documents bucket                       | `<project>-onboardai-docs`: uniform access, public access prevention, versioning                                                                                                                                                                   |
+| Vertex AI Search (`global`)            | data store `onboardai-docs` (layout parser, 500-token chunks), Enterprise engine `onboardai-search`; `onboardai-api-run` searches it through `roles/discoveryengine.viewer` on the engine                                                          |
+| Firestore                              | `(default)`, Native mode, `asia-southeast1`, delete protection on, point-in-time recovery (7 days)                                                                                                                                                 |
+| Employee accounts (#45)                | Cloud SQL `onboardai-db`, secrets `onboardai-db-password` and `onboardai-database-url`, migration job `onboardai-db-migrate` and its log view                                                                                                      |
+| Document reconciliation (#79)          | Cloud Run job `onboardai-docs-reconcile` (api image, report mode), Cloud Scheduler job of the same name (hourly), trigger account `onboardai-docs-trigger`, 3 log-based metrics, 4 alerts; see [Document reconciliation](#document-reconciliation) |
+| Cloud Monitoring                       | one email channel per `alert_emails` entry; alerts on 5xx (api, tts), api p95 latency and failing uptime checks (`/web-health`, `/api/health` through web)                                                                                         |
 
 **Who owns what.** Terraform owns each service's shape: identity, CPU, memory,
 scaling, concurrency, timeout, startup probe, ingress and public access, and
@@ -88,23 +89,23 @@ terraform plan        # review: everything is "to add"
 terraform apply
 ```
 
-### 2. Upload and import the documents
+### 2. Upload the documents
 
-Upload the onboarding documents (PDF, DOCX, HTML, TXT and similar) to the top
-level of the documents bucket, then import them into the data store:
+HR uploads the company documents on the Company Documentation page of the
+app. The api writes each file to the documents bucket under
+`<document id>/<file name>`, records it in Firestore and imports that one file
+into the data store. Nothing needs importing by hand, and Terraform output no
+longer carries a bucket-wide import command (`import_documents_command` is
+retired, #79): importing the whole bucket would put orphaned and replaced
+files back into the index.
 
-```sh
-gcloud storage cp ./company-docs/* "gs://$(terraform output -raw docs_bucket_name)/"
-terraform output -raw import_documents_command    # review, then run it
-```
-
-The import is a REST call, not Terraform. Discovery Engine reads
-`gs://<bucket>/*` as its service agent, which holds `roles/storage.objectViewer`
-on that bucket only. `INCREMENTAL` adds new documents and updates changed ones;
-it never deletes. The call returns a long-running operation. Poll it with the
-same two headers on `https://discoveryengine.googleapis.com/v1/<operation name>`.
-Run the import again after every upload. To remove a document, delete it from
-the data store as well as from the bucket.
+For a folder of operator-owned files, use the backend's guarded tool
+(`npm run docs:import -- <folder> --prefix <name>/`, dry run unless `--apply`;
+it refuses the bucket root and HR's `<document id>/` folders). To check that
+the bucket, Firestore and the index agree, and to repair them, run the
+reconciliation job ([Document reconciliation](#document-reconciliation)).
+Discovery Engine reads the bucket as its service agent, which holds
+`roles/storage.objectViewer` on that bucket only.
 
 The API searches the serving config in output `vertex_search_serving_config`:
 `projects/48074397808/locations/global/collections/default_collection/engines/onboardai-search/servingConfigs/default_search`.
@@ -448,6 +449,104 @@ active versions per stack (USD 0.06 each a month after six free).
    schema, and the smoke test requires `accounts: true`. Create the first
    production HR account by hand afterwards ([First HR account](#first-hr-account)).
 
+## Document reconciliation
+
+Company documents (#79) live in three places that the api writes one after
+another, with no shared transaction: Firestore `companyDocuments` (what HR
+published), the documents bucket (the files) and the Vertex AI Search data
+store (what chat can find). A failed upload, delete or replace can leave them
+out of step. A Cloud Run job compares the three every hour and prints the
+drift as structured log lines; with apply mode it also repairs what is safe
+to repair. The script is `scripts/reconcile-company-documents.mjs` and its
+rules, item kinds and exit codes are in `docs/document-reconciliation.md`.
+
+**Resources** (`docs_reconcile.tf`, `docs_reconcile_monitoring.tf`; staging
+appends `-staging`):
+
+| Resource                 | Name and settings                                                                                                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloud Run job            | `onboardai-docs-reconcile`: the api image, `node scripts/reconcile-company-documents.mjs`, runs as `onboardai-api-run`, 1 task, 900 s, no retries, no secret, no Cloud SQL |
+| Cloud Scheduler job      | `onboardai-docs-reconcile`: `7 * * * *` UTC in production, `37 * * * *` in staging; POST to the job's `:run` with an OAuth token of the trigger account                    |
+| Trigger account          | `onboardai-docs-trigger` (30 characters in staging, the limit): no key, `roles/run.invoker` on the job only                                                                |
+| Deployer grant           | `roles/run.developer` on the job only, so `deploy.yml` can update its image                                                                                                |
+| Log-based metrics        | `onboardai_docs_sync_failures`, `onboardai_docs_reconcile_items`, `onboardai_docs_reconcile_unrepaired` (staging: suffix `-staging`)                                       |
+| Alerts (existing emails) | sync failing; reconciliation run failed; reconciliation SLA missed (3 h production, 6 h staging); index drift not repaired                                                 |
+
+**Report mode.** The job starts in `report` in both environments
+(`local.docs_reconcile_mode`, pinned in `tests/docs_reconcile.tftest.hcl`): it
+reads, prints what it would do and changes nothing, and exits 0 even when it
+finds drift (the drift is in the counts). Apply mode is a later PR: it flips
+the map in `docs_reconcile.tf`, which adds `--apply` to the job's args and
+nothing else, goes through staging first, and needs the user's OK on the
+production plan. Do not set it earlier.
+
+**No new grant.** The job runs as the api runtime account and the module adds
+no project-level binding. The api's existing roles cover report mode:
+`roles/discoveryengine.editor` (project; `documents.list`; also `import`,
+`delete` and `operations.get` for apply mode), `roles/storage.objectUser` on
+its own bucket (`objects.list`; `delete` for apply mode) and
+`roles/datastore.user` limited to its own database (reads). Narrowing the
+editor role is issue #80. The script refuses (exit 2, nothing read) a data
+store, bucket or database of the other environment.
+
+**What alerts.** All four go to the existing email channels.
+
+- _Sync failing_: the api logged a failed Cloud Storage or Discovery Engine
+  request (`onboardai_docs_sync`, outcome `failed`) in the last 5 minutes.
+  ERROR in production, WARNING in staging.
+- _Run failed_: an execution of the job failed (exit 1 to 4). ERROR / WARNING.
+- _SLA missed_: no successful execution for 3 h (production) or 6 h (staging).
+  This is an absence alert, so it **arms only after the first successful
+  execution**: run the job once by hand after the first apply. ERROR / WARNING.
+- _Drift not repaired_: a run reported items that are not `unmanaged`, not
+  `pending` and not `done`. WARNING in both. Production's 4 legacy
+  `onboarding/*.pdf` files are `unmanaged`: they neither fail the run nor
+  alert. In report mode every real drift is unrepaired, so this alert stays
+  open until the drift is fixed or the job runs in apply mode. It is aligned
+  over 65 minutes, so hourly runs keep one incident open. Staging's known
+  drift (5 index orphans and 1 object orphan) opens it on the first run.
+
+Not built yet: an ingestion SLA alert (a document searchable 15 minutes after
+upload) and an alert on Discovery Engine's own `api_errors` log, which today
+holds only the app's expected 404s.
+
+**Run it once by hand** (read-only while the job is in report mode):
+
+```sh
+terraform output -raw docs_reconcile_run_command    # gcloud run jobs execute ... --wait
+```
+
+The result is in Cloud Logging, in the job's logs: the last line is the
+summary (`event` `onboardai_docs_reconcile`, with `exitCode`, `reason` and the
+counts) and each item is a line with `event` `onboardai_docs_reconcile_item`.
+No line carries a file name, title or URI.
+
+**Rollout order** (the apply gate holds: the user sees every plan and says OK):
+
+1. **Enable the Cloud Scheduler API once, by hand, with the user's OK**:
+   `gcloud services enable cloudscheduler.googleapis.com --project=<project>`.
+   Only production's state manages APIs (`main.tf`), and production is applied
+   from `main` only, so staging's apply cannot enable it and the staging
+   Scheduler job cannot be created (403) until it is on. Enabling an API
+   changes nothing else. The `terraform plan` of staging works without it.
+2. Merge the PR into `staging`. The staging deploy ships the script and the
+   `ONBOARDAI_ENVIRONMENT` variable; the "Update the document reconciliation
+   job" step skips with a notice, because the job does not exist yet.
+3. Apply staging with the user's OK on the plan (about 3 metrics, 4 alerts,
+   the job, the trigger account, 2 job grants and the Scheduler job to add;
+   see the PR for the exact plan).
+4. Point the job at the current api image: the next deploy does it, or run
+   `gcloud run jobs update onboardai-docs-reconcile-staging --image=<api image>`.
+   Until then the job runs the placeholder image and fails, so P2 fires; do
+   step 5 right after.
+5. Run it once by hand (`docs_reconcile_run_command`), read the summary line,
+   and check the report against what is known. This also arms the SLA alert.
+6. Promote `staging` to `main`, apply production the same way (its plan also
+   adopts the Scheduler API as a create, which is a no-op enable), point the
+   job at the image, run it once, and show the user the report.
+7. Later, in separate PRs through staging: the apply-mode PR for staging, then
+   production's, after the user decides what happens to the 4 legacy PDFs.
+
 ## Roll back
 
 A failed deploy or smoke test prints the exact commands in the job log and the
@@ -595,15 +694,20 @@ show "Memory limit exceeded".
   reads `sub`: the conditions use `repository_id`, `repository_owner_id`,
   `ref`, `workflow_ref` and `event_name`, and the deployer binding uses
   `attribute.repository_id`.
-- The production deployer holds no project-level role. It holds Cloud Run
+- The production deployer holds one project-level role, `roles/aiplatform.user`
+  (#81), to deploy the checklist agent; it exists while
+  `checklist_agent_production` is true (the default). Agent Engine has no
+  resource-level grant for creating a reasoning engine, so the role also
+  reaches every other Vertex AI resource in the project, staging's agents
+  included. Its other grants are: Cloud Run
   Developer on the three OnboardAi services and on the migration job
   `onboardai-db-migrate`, Logs View Accessor on the log view
   `onboardai-db-migrate` (that job's log entries only), Artifact Registry Writer on
   the `onboardai` repository, Service Account User on the three runtime
   accounts, and nothing else. It cannot create services, change IAM policies,
   read any other log, or touch any other Cloud Run service in the project.
-  The staging deployer also holds `roles/aiplatform.user` on the project to
-  deploy the intake agent (see [The intake agent (staging)](#the-intake-agent-staging)).
+  The staging deployer holds the same project-level role, also for the intake
+  agent (see [The intake agent (staging)](#the-intake-agent-staging)).
 - Production has no API key. Its only Secret Manager secrets are the accounts
   database's password and `DATABASE_URL` (#45), generated by Terraform and
   written with write-only arguments, so neither is in state, the repository
@@ -623,6 +727,13 @@ show "Memory limit exceeded".
   Cloud Run Developer role includes the invoke permission (the smoke test uses
   it for `POST /mcp`; the deployer is reachable only from the deploy
   workflow). See [Private api and tts](#private-api-and-tts).
+- The document reconciliation job (#79) runs as `onboardai-api-run` and adds no
+  grant. Its trigger account `onboardai-docs-trigger` has no key and holds
+  `roles/run.invoker` on that job only; the deployer holds
+  `roles/run.developer` on it, as on the migration job. Cloud Scheduler mints
+  the trigger account's OAuth token through its own service agent, which holds
+  the token-creation permission for service accounts of the same project, so
+  the account needs no further grant.
 - The repository is public, so its Actions logs are public too, and they show
   the project ID and the service URLs. Neither is a credential. To hide the
   project ID, make `GCP_PROJECT_ID` a repository secret instead and change
@@ -716,10 +827,10 @@ terraform workspace select default              # back to production
 `staging` workspace, or passing it in `default`, fails the plan at the
 workspace guard before anything is planned.
 
-Then upload documents and import them as in step 2, in the `staging`
-workspace: `terraform output -raw docs_bucket_name` and
-`terraform output -raw import_documents_command` print the staging bucket and
-the staging data store.
+Then upload documents on the staging app's Company Documentation page as in
+step 2. `terraform output -raw docs_bucket_name` prints the staging bucket and
+`terraform output -raw docs_reconcile_run_command` the command that checks the
+staging bucket, database and index against each other.
 
 ### Set up GitHub for staging
 
@@ -926,12 +1037,18 @@ agent, in the same region (`deploy.yml` `INTAKE_AGENT_LOCATION`, equal to
 `onboardai-checklist<suffix>` with `roles/aiplatform.user` and
 `roles/datastore.user` (limited by an IAM condition to the environment's own
 Firestore database), and lets the deployer act as it. Staging always has them.
-Production only with `checklist_agent_production = true`; apply that after
-staging is verified, then set the GitHub variable `CHECKLIST_AGENT_ENABLED=true`
-on production. The `checklist_agent` job of `deploy.yml` deploys the agent with
+Production has them too: `checklist_agent_production` defaults to `true` (#81),
+so a plan from `main` creates them; set it to `false` to remove them. After the
+apply, set the GitHub variable `CHECKLIST_AGENT_ENABLED=true` on the
+`production` environment, which is what makes the deploy job create the agent. The `checklist_agent` job of `deploy.yml` deploys the agent with
 `npm run checklist-agent:deploy` and hands the engine to the api as
 `CHECKLIST_AGENT_ENGINE`; it skips with a notice while the commit has no such
 script, or on production while the variable is not true.
+
+In production the same variable also gives the deployer
+(`onboardai-deployer`) `roles/aiplatform.user` on the project, because Agent
+Engine has no resource-level grant for creating a reasoning engine (see
+[Security](#security)).
 
 The api speaks with Gemini TTS using its own `roles/aiplatform.user`; no new
 grant. `deploy.yml` passes `VOICE_PROVIDER` (default `gemini`),

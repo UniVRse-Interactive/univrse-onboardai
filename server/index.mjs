@@ -6,17 +6,23 @@ import { createApp } from './api-routes.mjs';
 import { avatarRoute } from './avatar-route.mjs';
 import { createWindowsVoice } from './optional-windows-voice.mjs';
 import { createSharedVoice } from './kokoro-voice.mjs';
-import { describeKnowledgeSource } from './company-document-retriever.mjs';
+import {
+  checkKnowledgeConfig,
+  describeKnowledgeSource,
+  KnowledgeConfigError,
+} from './company-document-retriever.mjs';
 import { describeChatStorage } from './chat-store.mjs';
 import { AccountsConfigError, describeAccounts } from './account-settings.mjs';
 if (existsSync('.env')) process.loadEnvFile('.env');
 // With DATABASE_URL set, refuse to start without the Firestore settings that
-// keep local personal data in the emulator (see account-settings.mjs).
+// keep local personal data in the emulator (see account-settings.mjs), and
+// with Vertex AI Search, without DOCS_BUCKET (the retrieval allowlist).
 let accountsLine;
 try {
   accountsLine = describeAccounts(process.env);
+  checkKnowledgeConfig(process.env);
 } catch (error) {
-  if (!(error instanceof AccountsConfigError)) throw error;
+  if (!(error instanceof AccountsConfigError || error instanceof KnowledgeConfigError)) throw error;
   console.error(`OnboardAi cannot start: ${error.message}`);
   process.exit(1);
 }

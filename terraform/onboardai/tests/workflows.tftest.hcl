@@ -19,6 +19,14 @@ override_module {
 # Well-formed stand-ins for the apply run below: the provider validates service
 # account names, and the config job checks the deployer's email.
 override_resource {
+  target = google_service_account.checklist_agent[0]
+  values = {
+    email = "onboardai-checklist@onboardai-test-123.iam.gserviceaccount.com"
+    name  = "projects/onboardai-test-123/serviceAccounts/onboardai-checklist@onboardai-test-123.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
   target = google_service_account.deployer
   values = {
     email = "onboardai-deployer@onboardai-test-123.iam.gserviceaccount.com"
@@ -545,13 +553,14 @@ run "migrations_run_everywhere_and_the_agent_only_on_staging" {
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env.INTAKE_AGENT_DEPLOYED == "$${{ needs.agent.outputs.deployed }}" &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.env.INTAKE_AGENT_ENGINE == "$${{ needs.agent.outputs.engine }}" &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.outputs.intake_agent == "$${{ steps.deploy.outputs.intake_agent }}" &&
-      [for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.name] == ["Authenticate to Google Cloud", "Set up gcloud", "Record the revisions serving now (rollback targets)", "Migrate the databases", "Deploy", "Print rollback commands"] &&
+      [for s in yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps : s.name] == ["Authenticate to Google Cloud", "Set up gcloud", "Record the revisions serving now (rollback targets)", "Migrate the databases", "Update the document reconciliation job", "Deploy", "Print rollback commands"] &&
       yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].id == "migrate" &&
       try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[3].if, null) == null &&
       try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].if, null) == null &&
-      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[5].env.MIGRATE_OUTCOME == "$${{ steps.migrate.outcome }}"
+      try(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[5].if, null) == null &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[6].env.MIGRATE_OUTCOME == "$${{ steps.migrate.outcome }}"
     )
-    error_message = "deploy needs [images, agent, checklist_agent], takes the agent job's deployed and engine, and runs 'Migrate the databases' (id migrate) in every stack, with no condition, right before the Deploy step."
+    error_message = "deploy needs [images, agent, checklist_agent], takes the agent job's deployed and engine, and runs 'Migrate the databases' (id migrate) in every stack, with no condition, then 'Update the document reconciliation job', right before the Deploy step."
   }
 
   # The deploy job outlasts two full migration attempts (timeout x
@@ -723,5 +732,55 @@ run "ci_applies_migrations_to_throwaway_databases" {
       if try(s.if, "") == "needs.changes.outputs.images != 'false' && matrix.service == 'api'" && try(s.run, "") == "docker run --rm --platform linux/amd64 onboardai-api:ci npm run --silent db:migrations:check"
     ]) == 1
     error_message = "The api Docker check must run npm run db:migrations:check inside the built api image (the migration job's image)."
+  }
+}
+
+# #79: the deploy points the document reconciliation job at the api image it
+# deploys, never executes it, and skips with a notice while Terraform has not
+# created the job. The api labels its sync log lines with the stack.
+run "deploy_updates_the_reconcile_job_to_the_api_image" {
+  command = plan
+
+  # Same image tag as the api service and the migration job; names are the
+  # job's name in Terraform (tests/docs_reconcile.tftest.hcl) with NAME_SUFFIX.
+  assert {
+    condition = (
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].name == "Update the document reconciliation job" &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].run, "job=\"onboardai-docs-reconcile$NAME_SUFFIX\"\n") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].run, "gcloud run jobs update \"$job\" --project=\"$GCP_PROJECT_ID\" --region=\"$GCP_REGION\" --image=\"$REGISTRY/onboardai$NAME_SUFFIX/api:$GITHUB_SHA\" --quiet") &&
+      local.docs_reconcile_job_name == "onboardai-docs-reconcile"
+    )
+    error_message = "The deploy must run gcloud run jobs update on onboardai-docs-reconcile$NAME_SUFFIX with --image $REGISTRY/onboardai$NAME_SUFFIX/api:$GITHUB_SHA, the tag the api service gets."
+  }
+
+  # Never executes the job, and never creates or deletes it.
+  assert {
+    condition = (
+      !can(regex("gcloud run jobs (execute|create|delete|replace)[^\\n]*reconcile", file("${path.module}/../../.github/workflows/deploy.yml"))) &&
+      length(regexall("gcloud run jobs execute", file("${path.module}/../../.github/workflows/deploy.yml"))) == 1 &&
+      !strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].run, "jobs execute")
+    )
+    error_message = "The deploy never executes, creates or deletes the reconcile job: the only gcloud run jobs execute is the migration's, and the scheduler starts the reconcile job."
+  }
+
+  # A missing job skips with a notice and does not fail the deploy.
+  assert {
+    condition = (
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].run, "gcloud run jobs describe \"$job\"") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].run, "could not be found|not found|may not exist|run\\.jobs\\.get") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].run, "::notice title=Reconcile job skipped::") &&
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].run, "::warning title=Reconcile job not updated::") &&
+      !strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[4].run, "::error")
+    )
+    error_message = "A reconcile job that is missing (not applied yet) skips with a ::notice; any other error is a ::warning; neither fails the deploy."
+  }
+
+  # The api names its stack in its sync log lines (C-ENV): staging or production.
+  assert {
+    condition = (
+      strcontains(yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).jobs.deploy.steps[5].run, "api_env+=\",ONBOARDAI_ENVIRONMENT=$DEPLOY_ENV\"\n") &&
+      yamldecode(file("${path.module}/../../.github/workflows/deploy.yml")).env.DEPLOY_ENV == "$${{ github.ref == 'refs/heads/staging' && 'staging' || 'production' }}"
+    )
+    error_message = "The api env must carry ONBOARDAI_ENVIRONMENT=$DEPLOY_ENV (staging or production)."
   }
 }

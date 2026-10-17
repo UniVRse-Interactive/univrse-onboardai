@@ -181,8 +181,7 @@ run "staging_names_carry_the_suffix" {
       output.vertex_search_serving_config == "projects/123456789012/locations/global/collections/default_collection/engines/onboardai-search-staging/servingConfigs/default_search" &&
       output.firestore_database_id == "onboardai-staging" &&
       output.docs_bucket_name == "onboardai-test-123-onboardai-docs-staging" &&
-      strcontains(output.import_documents_command, "/dataStores/onboardai-docs-staging/branches/default_branch/documents:import\"") &&
-      strcontains(output.import_documents_command, "\"gs://onboardai-test-123-onboardai-docs-staging/*\"")
+      output.docs_reconcile_run_command == "gcloud run jobs execute onboardai-docs-reconcile-staging --project=onboardai-test-123 --region=asia-southeast1 --wait"
     )
     error_message = "Staging outputs point at staging resources only."
   }
