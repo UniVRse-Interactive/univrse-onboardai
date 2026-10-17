@@ -12,9 +12,10 @@ export function createKnowledgeApi(base, request) {
     base: root,
     // GET: { topics, documents, limits }
     snapshot: (options = {}) => request(root, { method: 'GET', ...options }),
-    // POST: 201 { id, duplicate: false } or 200 { id, duplicate: true }
-    upload: (file, { category, name }, signal) => {
-      const { url, ...options } = buildUploadRequest(root, { category, name }, file);
+    // POST: 201 { id, duplicate: false, replaced } or 200 { id, duplicate: true, replaced: null }
+    // `replaces` is a current document id: the file becomes its next version.
+    upload: (file, { category, name, replaces }, signal) => {
+      const { url, ...options } = buildUploadRequest(root, { category, name, replaces }, file);
       return request(url, { ...options, signal });
     },
     // PATCH { category } -> { document }

@@ -17,6 +17,17 @@ export function askHrOffer(message) {
   return null;
 }
 
+export const staleAskHrText =
+  'These company documents are out of date. HR can confirm the current guidance.';
+
+// The sentence above the Ask HR button for a 'no-answer' offer. A stale
+// turn (guardrail.verdict === 'stale') names the out-of-date documents.
+export function noAnswerNote(message) {
+  return message?.guardrail?.verdict === 'stale'
+    ? staleAskHrText
+    : `${noCoverageText}. HR may be able to help.`;
+}
+
 // "Still unclear" brings the other explanations forward.
 export function reexplainForward(message) {
   return isAnswer(message) && message.feedback === 'unclear';
