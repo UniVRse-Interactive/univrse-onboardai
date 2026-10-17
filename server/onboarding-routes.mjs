@@ -1,4 +1,7 @@
 import { agentActionErrors } from './agent-actions.mjs';
+import { ChatError } from './chat-errors.mjs';
+import { TOOL_ACCESS_STEP_IDS, createTaskVerificationStore } from './task-verification.mjs';
+import { mountTaskVerificationRoutes } from './task-verification-routes.mjs';
 
 // HTTP routes of the onboarding journey (issues #47-#50, contract v1.1 in
 // docs/onboarding-journey.md). They are added to the account routers of
@@ -7,7 +10,8 @@ import { agentActionErrors } from './agent-actions.mjs';
 //
 //   me (role employee):  /api/me/onboarding*, /api/me/quick-questions,
 //                        /api/me/first-day, /api/me/support-requests*,
-//                        /api/me/agent-actions/:id
+//                        /api/me/agent-actions/:id, /api/me/task-verifications*,
+//                        /api/me/company-policy-handbook
 //   hr (role hr):        /api/hr/support-requests*, /api/hr/knowledge-gaps,
 //                        /api/hr/team-insights, /api/hr/employees/:id/onboarding*,
 //                        /api/hr/employees/:id/first-day
@@ -20,16 +24,33 @@ export function mountOnboardingRoutes({
   support,
   gaps,
   actions = null,
+  taskVerificationStore = null,
 }) {
   const account = (req) => req.accountSession.account;
+  const verifications =
+    taskVerificationStore || createTaskVerificationStore({ firestore: journey.firestore });
 
   me.get('/onboarding', employee, async (req, res) => {
     res.json(await journey.myOnboarding(account(req)));
   });
+  // Steps proven by an activity (alignment) or by a coordinator (tool access) are
+  // finished only through that verification, never by a direct request here.
+  const gated = (stepId) =>
+    TOOL_ACCESS_STEP_IDS.includes(stepId) || stepId.startsWith('alignment.');
+  const requireNotGated = (req) => {
+    if (gated(req.params.stepId))
+      throw new ChatError(
+        409,
+        'VERIFICATION_REQUIRED',
+        'This task is completed by its activity or by verification, not by confirming it directly.',
+      );
+  };
   me.post('/onboarding/steps/:stepId/complete', employee, async (req, res) => {
+    requireNotGated(req);
     res.json(await journey.completeStep(account(req), req.params.stepId));
   });
   me.post('/onboarding/steps/:stepId/reopen', employee, async (req, res) => {
+    requireNotGated(req);
     res.json(await journey.reopenStep(account(req), req.params.stepId));
   });
   // Alya's briefing of a step was listened to or read (contract v1.5).
@@ -73,6 +94,8 @@ export function mountOnboardingRoutes({
     if (!actions) throw agentActionErrors.notPending();
     res.json(await actions.decide(account(req), req.params.id, req.body));
   });
+
+  mountTaskVerificationRoutes({ me, hr, employee, hrOnly, journey, store: verifications });
 
   hr.get('/support-requests', hrOnly, async (req, res) => {
     res.json(await support.hrList());

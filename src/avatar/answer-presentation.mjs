@@ -106,7 +106,7 @@ export function answerPresentation(message, reply = answerReply(message)) {
         ),
       ];
       const unknown =
-        /\b(cannot confirm|can['’]t confirm|do not have|don['’]t have|couldn['’]t find|no matching|not (?:yet )?(?:available|confirmed|specified)|check with HR)\b/i.test(
+        /\b(cannot confirm|can['’]t confirm|do not have|don['’]t have|couldn['’]t find|no matching|not (?:yet )?(?:available|confirmed|specified)|check with HR|out of date|won['’]t rely)\b/i.test(
           body,
         );
       let matches = topics.filter((topic) => topic.match.test(body));

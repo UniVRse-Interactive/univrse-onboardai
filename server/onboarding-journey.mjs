@@ -762,5 +762,29 @@ export function createOnboardingJourney({
     employeeFirstDay,
     putEmployeeFirstDay,
     withOnboarding,
+    // The shared Firestore handle (also used by the task-verification store).
+    firestore: database,
+    // A passed verification (quiz, matching) marks the step done for the employee.
+    verifyStep: async (account, stepId) =>
+      markPassed(account, (await employeeFacts(account)).track, stepId),
+    // An authorised coordinator confirms an employee's tool access.
+    verifyEmployeeStep: async (actor, id, stepId) => {
+      const { track } = await employeeTrack(id);
+      if (!findStep(await template(track), stepId)) throw journeyErrors.stepNotFound();
+      return accounts.recordEmployeeChange(
+        actor,
+        id,
+        'onboarding_step_verified',
+        () =>
+          changeStep(
+            id,
+            track,
+            stepId,
+            (step, entry) => (entry?.status === 'done' ? entry : { status: 'done' }),
+            { source: 'hr', actorId: actor.account.id },
+          ),
+        { stepId, status: 'done' },
+      );
+    },
   };
 }

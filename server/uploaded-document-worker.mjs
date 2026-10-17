@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads';
 
-const { extension, maxCharacters, truncate } = workerData;
+const { extension, maxCharacters, truncate, validateOnly } = workerData;
 const buffer = Buffer.from(workerData.buffer);
 const fail = (code, error) => {
   throw Object.assign(new Error(error), { code });
@@ -60,6 +60,11 @@ try {
           'Upload a PDF of up to 150 pages, or divide it into shorter guides.',
         );
       for (let i = 1; i <= document.numPages; i++) {
+        if (validateOnly) {
+          const page = await document.getPage(i);
+          page.cleanup();
+          continue;
+        }
         const page = await document.getPage(i),
           content = await page.getTextContent();
         text +=
@@ -82,16 +87,16 @@ try {
     .replace(/\r\n?/g, '\n')
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
     .trim();
-  if (text.length < 20)
+  if (!validateOnly && text.length < 20)
     fail(
       'FILE_NO_TEXT',
       'No readable guidance was found. Scanned PDFs need a text-based PDF or DOCX copy.',
     );
-  if (text.length > maxCharacters) {
+  if (!validateOnly && text.length > maxCharacters) {
     if (truncate) text = text.slice(0, maxCharacters);
     else fail('FILE_TEXT_TOO_LONG', 'Upload a shorter guide; this file contains too much text.');
   }
-  parentPort.postMessage({ type: 'document-result', text });
+  parentPort.postMessage({ type: 'document-result', text: validateOnly ? '' : text });
 } catch (error) {
   const known = typeof error.code === 'string' && error.code.startsWith('FILE_');
   parentPort.postMessage({

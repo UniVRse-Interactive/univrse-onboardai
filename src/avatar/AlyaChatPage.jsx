@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import AlyaPresentationStage from './AlyaPresentationStage';
+import OnboardingChecklist, { useOnboardingChecklist } from './OnboardingChecklist';
 import Icon from '../portal/Icon';
 import { createServerSpeech } from './answer-audio-player';
 import { answerReply, presentAnswer } from './chat-answer-presentation.mjs';
@@ -35,7 +36,7 @@ import {
   askHrOffer,
   chatExtras,
   helpfulStepId,
-  noCoverageText,
+  noAnswerNote,
   reexplainForward,
   requestStatusWord,
   takeHandoff,
@@ -249,7 +250,7 @@ function Message({
               <div className="alya-ask-hr">
                 <p>
                   {offer === 'no-answer'
-                    ? `${noCoverageText}. HR may be able to help.`
+                    ? noAnswerNote(message)
                     : 'Still not clear after a second explanation? HR can follow up with you.'}
                 </p>
                 <button type="button" disabled={disabled} onClick={() => onAskHr(message)}>
@@ -303,6 +304,7 @@ function Message({
 }
 
 export default function AlyaChatPage({ navigate }) {
+  const checklist = useOnboardingChecklist();
   // Alya's briefing on a step (v1.5): { stepId, step, messageId, phase, completion, error }.
   //   phase: loading | presenting | recording | done | acting | completed
   const [briefing, setBriefing] = useState(null);
@@ -994,6 +996,8 @@ export default function AlyaChatPage({ navigate }) {
     <div className="alya-page alya-live-page">
       <div className="alya-conversation-shell alya-live-shell">
         <AlyaPresentationStage
+          checklist={checklist}
+          navigate={navigate}
           messages={messages.filter((m) => !m.plain)}
           selectedAnswerId={selectedAnswerId}
           onSelectAnswer={(id) => {
@@ -1021,6 +1025,7 @@ export default function AlyaChatPage({ navigate }) {
               : null
           }
         />
+        <OnboardingChecklist checklist={checklist} navigate={navigate} collapsible />
         <div className="alya-answer-space">
           <div className="alya-view-panels">
             <section className="alya-chat-panel" id="alya-chat-view" aria-label="Chat with Alya">

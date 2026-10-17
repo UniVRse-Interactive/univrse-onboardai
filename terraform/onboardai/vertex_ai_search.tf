@@ -1,11 +1,12 @@
 # Vertex AI Search over the company documents (contract v2):
-#   documents bucket --(manual import, output import_documents_command)--> data
-#   store onboardai-docs --> engine onboardai-search <-- onboardai-api searches
+#   documents bucket --(the api imports each upload; the reconcile job repairs
+#   drift, docs_reconcile.tf)--> data store onboardai-docs --> engine
+#   onboardai-search <-- onboardai-api searches
 #   projects/<number>/locations/global/collections/default_collection/engines/onboardai-search/servingConfigs/default_search
 # Staging has its own bucket, data store and engine, each ID suffixed -staging,
 # with the same configuration.
-# The team uploads files to the bucket; importing them is a manual REST call,
-# not Terraform. The API reads no file from the bucket and holds no bucket role.
+# HR uploads files through the api, which writes the bucket and imports each
+# file; Terraform does neither. The API reads no file from the bucket.
 
 # --- Documents bucket ----------------------------------------------------------
 

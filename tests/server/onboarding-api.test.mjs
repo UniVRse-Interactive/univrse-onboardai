@@ -1,6 +1,7 @@
 // The onboarding footprint API (issue #47): pg-mem, the in-memory Firestore
 // fake and synthetic people only.
 import test from 'node:test';
+import { ALIGNMENT_ACTIVITIES, TOOL_ACCESS_STEP_IDS } from '../../server/task-verification.mjs';
 import assert from 'node:assert/strict';
 import { startAccountsApp, syntheticProfile } from './account-harness.mjs';
 import { builtInTemplate } from '../../server/onboarding-content.mjs';
@@ -30,8 +31,8 @@ test('every new route needs a session; employee routes refuse HR and HR routes r
     const anonymous = app.browser();
     const employeeRoutes = [
       ['get', '/api/me/onboarding'],
-      ['post', '/api/me/onboarding/steps/alignment.mission-values/complete'],
-      ['post', '/api/me/onboarding/steps/alignment.mission-values/reopen'],
+      ['post', '/api/me/onboarding/steps/role-tools.email-signature/complete'],
+      ['post', '/api/me/onboarding/steps/role-tools.email-signature/reopen'],
       ['get', '/api/me/onboarding/steps/policies.workplace-conduct/check'],
       ['post', '/api/me/onboarding/steps/policies.workplace-conduct/check'],
       ['get', '/api/me/quick-questions'],
@@ -97,36 +98,43 @@ test('a new employee sees 0% with the first Documentation step next; self steps 
     assert.deepEqual(app.firestore.paths('onboardingProgress/'), []);
 
     // Alya's briefing comes first (contract v1.5).
-    const gated = await browser.post('/api/me/onboarding/steps/alignment.mission-values/complete');
+    const gated = await browser.post(
+      '/api/me/onboarding/steps/role-tools.email-signature/complete',
+    );
     assert.deepEqual([gated.status, gated.body.code], [409, 'BRIEFING_REQUIRED']);
     const briefed = await browser.post(
-      '/api/me/onboarding/steps/alignment.mission-values/briefing',
+      '/api/me/onboarding/steps/role-tools.email-signature/briefing',
       { completion: 'listened' },
     );
     assert.equal(briefed.status, 200);
     assert.deepEqual(
       [
-        step(briefed.body, 'alignment.mission-values').briefed,
-        step(briefed.body, 'alignment.mission-values').status,
+        step(briefed.body, 'role-tools.email-signature').briefed,
+        step(briefed.body, 'role-tools.email-signature').status,
       ],
       [true, 'todo'],
     );
-    const done = await browser.post('/api/me/onboarding/steps/alignment.mission-values/complete');
+    const done = await browser.post('/api/me/onboarding/steps/role-tools.email-signature/complete');
     assert.equal(done.status, 200);
-    assert.equal(step(done.body, 'alignment.mission-values').status, 'done');
-    assert.equal(step(done.body, 'alignment.mission-values').source, 'employee');
-    assert.equal(step(done.body, 'alignment.mission-values').updatedAt, '2026-10-15T01:00:00.000Z');
-    assert.equal(area(done.body, 'alignment').percent, 25);
-    assert.equal(done.body.percent, 5);
+    assert.equal(step(done.body, 'role-tools.email-signature').status, 'done');
+    assert.equal(step(done.body, 'role-tools.email-signature').source, 'employee');
+    assert.equal(
+      step(done.body, 'role-tools.email-signature').updatedAt,
+      '2026-10-15T01:00:00.000Z',
+    );
+    assert.equal(area(done.body, 'role-tools').percent, 9);
+    assert.equal(done.body.percent, 2);
     // Completing it again changes nothing.
-    const again = await browser.post('/api/me/onboarding/steps/alignment.mission-values/complete');
+    const again = await browser.post(
+      '/api/me/onboarding/steps/role-tools.email-signature/complete',
+    );
     assert.deepEqual(again.body, done.body);
     const stored = app.firestore.read(`onboardingProgress/${employee.account.id}`);
     assert.deepEqual(stored, {
       accountId: employee.account.id,
       updatedAt: '2026-10-15T01:00:00.000Z',
       steps: {
-        'alignment.mission-values': {
+        'role-tools.email-signature': {
           status: 'done',
           updatedAt: '2026-10-15T01:00:00.000Z',
           source: 'employee',
@@ -141,16 +149,16 @@ test('a new employee sees 0% with the first Documentation step next; self steps 
     const phone = app.browser();
     await browser.post('/api/auth/sign-out');
     assert.equal((await phone.signIn('PC-0001', 'employee-own-pass-1')).status, 200);
-    assert.equal((await phone.get('/api/me/onboarding')).body.percent, 5);
+    assert.equal((await phone.get('/api/me/onboarding')).body.percent, 2);
 
     // Undo a self step.
-    const undone = await phone.post('/api/me/onboarding/steps/alignment.mission-values/reopen');
-    assert.equal(step(undone.body, 'alignment.mission-values').status, 'todo');
+    const undone = await phone.post('/api/me/onboarding/steps/role-tools.email-signature/reopen');
+    assert.equal(step(undone.body, 'role-tools.email-signature').status, 'todo');
     assert.equal(undone.body.percent, 0);
     // Reopening keeps the briefing.
-    assert.equal(step(undone.body, 'alignment.mission-values').briefed, true);
+    assert.equal(step(undone.body, 'role-tools.email-signature').briefed, true);
     assert.deepEqual(app.firestore.read(`onboardingProgress/${employee.account.id}`).steps, {
-      'alignment.mission-values': {
+      'role-tools.email-signature': {
         briefedAt: '2026-10-15T01:00:00.000Z',
         briefedBy: 'listened',
       },
@@ -381,12 +389,43 @@ test('the track picks the template; 3 of 4 required steps in every area complete
     assert.equal(step(start, 'documentation.confidentiality-agreement').completion, 'hr_verify');
     const template = builtInTemplate('contractor');
     // Complete enough required steps in every area to meet the 70% threshold.
+    const completedSelf = [];
     for (const a of template.areas) {
       const requiredSteps = a.steps.filter((t) => t.required);
       const needed = Math.ceil(requiredSteps.length * 0.7);
       for (const s of requiredSteps.slice(0, needed)) {
-        if (s.completion === 'self')
+        if (s.completion === 'self' && s.id.startsWith('alignment.')) {
+          // Alignment tasks complete only through their activity.
+          const direct = await browser.post(`/api/me/onboarding/steps/${s.id}/complete`);
+          assert.equal(direct.status, 409);
+          const slug = s.id.replace('alignment.', '');
+          const activity = {
+            'products-customers': ALIGNMENT_ACTIVITIES.products,
+            'mission-values': ALIGNMENT_ACTIVITIES.values,
+            'org-structure': ALIGNMENT_ACTIVITIES.teams,
+            'role-contribution': ALIGNMENT_ACTIVITIES.roleContribution,
+          }[slug];
+          const answers = Object.fromEntries(
+            activity.questions.map((q) => [
+              q.id,
+              q.type === 'match'
+                ? Object.fromEntries(q.pairs.map((p) => [p.id, p.correct]))
+                : q.multiple
+                  ? q.correct
+                  : q.correct[0],
+            ]),
+          );
+          await browser.post(`/api/me/task-verifications/alignment/${slug}`, { answers });
+        } else if (s.completion === 'self' && TOOL_ACCESS_STEP_IDS.includes(s.id)) {
+          await browser.post('/api/me/task-verifications/role-tools/tool-access', {
+            workEmail: 'person@example.com',
+            toolId: s.id,
+          });
+          await hr.post(`/api/hr/employees/${id}/task-verifications/tool-access/${s.id}`, {});
+        } else if (s.completion === 'self') {
           await browser.post(`/api/me/onboarding/steps/${s.id}/complete`);
+          completedSelf.push([a.id, s.id]);
+        }
         if (s.completion === 'hr_verify') {
           await browser.post(`/api/me/onboarding/steps/${s.id}/complete`);
           await hr.patch(`/api/hr/employees/${id}/onboarding/steps/${s.id}`, { status: 'done' });
@@ -412,16 +451,15 @@ test('the track picks the template; 3 of 4 required steps in every area complete
       ['contractor', { percent: 75, waitingOnHr: 0, complete: true }],
     );
     // Undoing one self step drops that area to 2 of 4: no longer complete.
-    const undone = await browser.post(
-      '/api/me/onboarding/steps/alignment.products-customers/reopen',
-    );
+    const [reopenedArea, reopenedStep] = completedSelf[0];
+    const undone = await browser.post(`/api/me/onboarding/steps/${reopenedStep}/reopen`);
     assert.deepEqual(
       [
-        area(undone.body, 'alignment').meetsThreshold,
+        area(undone.body, reopenedArea).meetsThreshold,
         undone.body.complete,
         undone.body.nextStep.id,
       ],
-      [false, false, 'alignment.products-customers'],
+      [false, false, reopenedStep],
     );
     // The optional step completes and reopens like a self step and changes no progress.
     const optional = await browser.post(
@@ -545,7 +583,7 @@ test('AI proficiency self-assessment: deterministic path mapping, step sync, non
     assert.equal(assessed.body.aiProficiency.level, 5);
     assert.equal(assessed.body.aiProficiency.learningPathId, 'intermediate');
     assert.equal(assessed.body.aiProficiency.trainingCompleted, false);
-    assert.equal(step(assessed.body.onboarding, 'role-tools.ai-readiness-training').status, 'todo');
+    assert.equal(step(assessed.body.onboarding, 'role-tools.ai-readiness-training').status, 'done');
 
     // 4. Complete training -> step becomes done.
     const completed = await browser.post('/api/me/ai-proficiency/complete-training', {

@@ -1,0 +1,277 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  buildUploadRequest,
+  errorNeedsRefresh,
+  findSameTitleDocument,
+  formatUploadedDate,
+  knowledgeErrorMessage,
+  normaliseTitle,
+  replaceSuccessMessage,
+  sameTitlePrompt,
+  versionLine,
+} from '../../src/access/company-knowledge-upload.mjs';
+import { createKnowledgeApi } from '../../src/access/company-knowledge-api.mjs';
+import {
+  answerExtras,
+  askHrOffer,
+  noAnswerNote,
+  noCoverageText,
+  staleAskHrText,
+} from '../../src/access/support-flow.mjs';
+import { answerPresentation } from '../../src/avatar/answer-presentation.mjs';
+
+test('normaliseTitle drops case, extension and spacing', () => {
+  assert.equal(normaliseTitle('  Employee   Handbook.PDF '), 'employee handbook');
+  assert.equal(normaliseTitle('Employee_Handbook.docx'), 'employee handbook');
+  assert.equal(normaliseTitle('notes.md'), 'notes');
+});
+
+test('normaliseTitle strips one trailing version token', () => {
+  for (const title of [
+    'Handbook v2',
+    'Handbook V12',
+    'Handbook version 3',
+    'Handbook rev 4',
+    'Handbook (2)',
+    'Handbook(2)',
+    'Handbook final',
+    'Handbook DRAFT',
+    'Handbook 2026-03',
+    'Handbook 2026-03-14',
+    'Handbook_2026.03.14.pdf',
+    'Handbook-v2.docx',
+  ])
+    assert.equal(normaliseTitle(title), 'handbook', title);
+  assert.equal(normaliseTitle('Handbook final v2'), 'handbook final');
+});
+
+test('normaliseTitle keeps words that merely end like a token', () => {
+  assert.equal(normaliseTitle('Wfinal'), 'wfinal');
+  assert.equal(normaliseTitle('Leave policy 2'), 'leave policy 2');
+  assert.equal(normaliseTitle('v2'), 'v2');
+});
+
+const docs = [
+  { id: 'a', title: 'Leave Policy', created: 1 },
+  { id: 'b', title: 'leave policy v2', fileName: 'x.pdf', created: 2 },
+  { id: 'c', title: '', fileName: 'Benefits Guide.pdf', created: 3 },
+];
+
+test('findSameTitleDocument matches within the given list and prefers the newest', () => {
+  assert.equal(findSameTitleDocument(docs, { fileName: 'Leave policy (3).pdf' }).id, 'b');
+  assert.equal(findSameTitleDocument(docs, { fileName: 'benefits guide final.docx' }).id, 'c');
+  assert.equal(findSameTitleDocument(docs, { name: 'Leave Policy', fileName: 'z.pdf' }).id, 'b');
+  assert.equal(findSameTitleDocument(docs, { name: 'Other', fileName: 'Leave Policy.pdf' }), null);
+  assert.equal(findSameTitleDocument([], { fileName: 'Leave Policy.pdf' }), null);
+  assert.equal(findSameTitleDocument(undefined, { fileName: 'a.pdf' }), null);
+});
+
+test('the other area titles are never consulted', () => {
+  const area = docs.filter((d) => d.id === 'c');
+  assert.equal(findSameTitleDocument(area, { fileName: 'Leave Policy.pdf' }), null);
+});
+
+test('date and prompt wording', () => {
+  assert.equal(formatUploadedDate({ connectedAt: '2026-03-03T10:00:00Z' }), '3 March 2026');
+  assert.equal(
+    formatUploadedDate({ connectedAt: null, created: Date.UTC(2025, 11, 25) }),
+    '25 December 2025',
+  );
+  assert.equal(formatUploadedDate({ connectedAt: 'junk' }), '');
+  assert.equal(
+    sameTitlePrompt({ title: 'Leave Policy', connectedAt: '2026-03-03T10:00:00Z' }),
+    "Replace 'Leave Policy' (uploaded 3 March 2026) with this file, or add it as a separate document?",
+  );
+  assert.equal(
+    versionLine({ version: 3, connectedAt: '2026-03-03T10:00:00Z' }),
+    'Version 3 · Uploaded 3 March 2026',
+  );
+  assert.equal(
+    versionLine({ created: Date.UTC(2026, 0, 2) }),
+    'Version 1 · Uploaded 2 January 2026',
+  );
+});
+
+test('replace request carries replaces and category, and no name by default', () => {
+  const file = { name: 'New.pdf' };
+  const request = buildUploadRequest(
+    '/api/hr/company-knowledge/',
+    { category: 'policies', replaces: 'id-1' },
+    file,
+  );
+  assert.equal(request.method, 'POST');
+  assert.equal(request.url, '/api/hr/company-knowledge/documents?category=policies&replaces=id-1');
+  assert.equal(request.headers['X-File-Name'], 'New.pdf');
+  assert.equal(request.rawBody, file);
+  const named = buildUploadRequest(
+    '/b',
+    { category: 'additional', name: 'Safety', replaces: 'x' },
+    file,
+  );
+  assert.equal(named.url, '/b/documents?category=additional&name=Safety&replaces=x');
+  assert.ok(!buildUploadRequest('/b', { category: 'c' }, file).url.includes('replaces'));
+});
+
+test('the adapter passes replaces through', async () => {
+  const calls = [];
+  const api = createKnowledgeApi(
+    '/api/hr/company-knowledge',
+    async (url, o) => (calls.push(url), {}),
+  );
+  await api.upload({ name: 'a.pdf' }, { category: 'policies', replaces: 'id-9' });
+  assert.equal(calls[0], '/api/hr/company-knowledge/documents?category=policies&replaces=id-9');
+});
+
+test('replace responses and errors', () => {
+  const ok = 'The new version will be searchable in about a minute.';
+  assert.equal(
+    replaceSuccessMessage({ id: 'n', duplicate: false, replaced: { id: 'o', cleanup: 'done' } }),
+    ok,
+  );
+  assert.equal(
+    replaceSuccessMessage({ id: 'n', duplicate: false, replaced: { id: 'o', cleanup: 'pending' } }),
+    ok,
+  );
+  assert.match(replaceSuccessMessage({ id: 'o', duplicate: true, replaced: null }), /identical/);
+
+  const already = Object.assign(
+    new Error('This document was just replaced. Refresh the library and try again.'),
+    {
+      status: 409,
+      code: 'COMPANY_DOCUMENT_ALREADY_REPLACED',
+    },
+  );
+  assert.equal(knowledgeErrorMessage(already, 'replace'), already.message);
+  assert.ok(errorNeedsRefresh(already));
+  const missing = Object.assign(new Error('Not found'), {
+    status: 404,
+    code: 'WORKSPACE_DOCUMENT_NOT_FOUND',
+  });
+  assert.ok(errorNeedsRefresh(missing));
+  assert.match(knowledgeErrorMessage(missing, 'replace'), /already removed/);
+  assert.match(
+    knowledgeErrorMessage(Object.assign(new Error(''), { status: 503 }), 'replace'),
+    /could not be replaced/,
+  );
+});
+
+test('stale Ask HR note', () => {
+  const none = { role: 'assistant', coverage: 'none', text: 'x' };
+  const stale = { ...none, guardrail: { verdict: 'stale', askHr: true } };
+  assert.equal(askHrOffer(stale), 'no-answer');
+  assert.equal(
+    noAnswerNote(stale),
+    'These company documents are out of date. HR can confirm the current guidance.',
+  );
+  assert.equal(
+    noAnswerNote(none),
+    'I couldn’t find this in the company documents. HR may be able to help.',
+  );
+  assert.equal(noAnswerNote({ ...none, guardrail: null }), noAnswerNote(none));
+  assert.equal(
+    noAnswerNote({ ...none, guardrail: { verdict: 'ok', askHr: false } }),
+    noAnswerNote(none),
+  );
+});
+
+test('the stale reply text still gets the uncertain visual', () => {
+  const text =
+    "The company documents I have on this are out of date, so I won't rely on them. Please check with HR for the latest guidance.";
+  const message = {
+    role: 'assistant',
+    text,
+    reply: text,
+    category: 'onboarding',
+    coverage: 'none',
+    passages: [],
+  };
+  const scenes = answerPresentation(message).scenes;
+  const hr = scenes.find((scene) => scene.body.includes('check with HR'));
+  assert.equal(hr.label, 'Check company guidance');
+  assert.equal(hr.eyebrow, 'CONFIRM WITH YOUR COMPANY');
+});
+
+// Round 2: messages built through answerExtras, as AlyaChatPage does.
+const STALE_TEXT =
+  "The company documents I have on this are out of date, so I won't rely on them. Please check with HR for the latest guidance.";
+const staleGuardrail = { verdict: 'stale', askHr: true };
+const staleBody = {
+  answer: STALE_TEXT,
+  mode: 'gemini-memory',
+  passages: [],
+  source: 'No confirmed company source',
+  coverage: 'none',
+  category: 'onboarding',
+  proposedAction: null,
+  guardrail: staleGuardrail,
+  card: null,
+};
+const asMessage = (extras) => ({ role: 'assistant', text: STALE_TEXT, ...extras });
+
+test('stale note from the live POST body (answerExtras(body, null))', () => {
+  const message = asMessage(answerExtras(staleBody, null));
+  assert.equal(noAnswerNote(message), staleAskHrText);
+  assert.equal(askHrOffer(message), 'no-answer');
+});
+
+test('stale note from a saved message with guardrail at the top level', () => {
+  const saved = {
+    id: 'r-a',
+    role: 'assistant',
+    text: STALE_TEXT,
+    result: { ...staleBody },
+    coverage: 'none',
+    category: 'onboarding',
+    proposedAction: null,
+    guardrail: staleGuardrail,
+  };
+  const message = asMessage(answerExtras(saved, saved.result));
+  assert.equal(noAnswerNote(message), staleAskHrText);
+  assert.equal(askHrOffer(message), 'no-answer');
+});
+
+test('stale note from a saved message whose guardrail is only in result', () => {
+  const saved = {
+    role: 'assistant',
+    text: STALE_TEXT,
+    result: { ...staleBody },
+    coverage: 'none',
+    category: 'onboarding',
+    proposedAction: null,
+  };
+  const message = asMessage(answerExtras(saved, saved.result));
+  assert.equal(noAnswerNote(message), staleAskHrText);
+  assert.equal(askHrOffer(message), 'no-answer');
+});
+
+test('a normal no-coverage body keeps the old note and gets no guardrail', () => {
+  const body = { answer: 'x', coverage: 'none', category: 'onboarding', proposedAction: null };
+  const extras = answerExtras(body, null);
+  assert.equal('guardrail' in extras, false);
+  const message = asMessage(extras);
+  assert.equal(noAnswerNote(message), `${noCoverageText}. HR may be able to help.`);
+  assert.equal(askHrOffer(message), 'no-answer');
+});
+
+test('the whole stale reply gets the uncertain presentation', () => {
+  const ask = (text) =>
+    answerPresentation({ text, reply: text, referenceQuestion: 'How much leave do I get?' });
+  const sequence = ask(STALE_TEXT);
+  assert.ok(sequence.scenes.length >= 2);
+  assert.ok(sequence.scenes.every((scene) => scene.label === 'Check company guidance'));
+  assert.equal(ask(STALE_TEXT.replace("won't", 'won’t')).scenes[0].label, 'Check company guidance');
+});
+
+test('normaliseTitle strips only one trailing version token', () => {
+  assert.equal(normaliseTitle('Leave Policy (2) final'), 'leave policy (2)');
+  assert.equal(normaliseTitle('Leave Policy final (2)'), 'leave policy final');
+  assert.equal(normaliseTitle('Leave Policy (2)'), 'leave policy');
+  assert.equal(normaliseTitle('Leave Policy final'), 'leave policy');
+});
+
+test('normaliseTitle strips underscore-separated dates', () => {
+  assert.equal(normaliseTitle('leave_policy 2026_03'), 'leave policy');
+  assert.equal(normaliseTitle('leave_policy_2026_03_15.pdf'), 'leave policy');
+  assert.equal(normaliseTitle('Leave Policy 2026-03'), 'leave policy');
+});

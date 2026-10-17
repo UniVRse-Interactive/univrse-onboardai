@@ -53,7 +53,7 @@ output "cloud_run_deploy_flags" {
 }
 
 output "docs_bucket_name" {
-  description = "Bucket the team uploads documents to (gs://<name>/). Import them with import_documents_command."
+  description = "Bucket the team uploads documents to (gs://<name>/). HR uploads through the app; docs_reconcile_run_command checks the bucket, Firestore and the index against each other."
   value       = google_storage_bucket.docs.name
 }
 
@@ -72,16 +72,17 @@ output "firestore_database_id" {
   value       = google_firestore_database.default.name
 }
 
-output "import_documents_command" {
-  description = "Imports every file in this environment's documents bucket into its data store (incremental: adds and updates, never deletes). Run it after uploading; it returns a long-running operation. Needs gcloud logged in as a user with Discovery Engine Editor or Owner."
-  value = join(" \\\n  ", [
-    "curl -sS -X POST",
-    "-H \"Authorization: Bearer $(gcloud auth print-access-token)\"",
-    "-H \"X-Goog-User-Project: ${var.project_id}\"",
-    "-H \"Content-Type: application/json\"",
-    "\"https://discoveryengine.googleapis.com/v1/${local.data_store_name}/branches/default_branch/documents:import\"",
-    "-d '${local.import_request}'",
-  ])
+# Replaces import_documents_command (#79), which imported the whole bucket and so
+# put orphaned and retired files back into the index. The reconcile job only
+# ever imports the explicit URIs of active entries.
+output "docs_reconcile_run_command" {
+  description = "Runs the document reconciliation job once and waits for it (read-only while the job is in report mode, docs_reconcile_mode). Needs gcloud logged in as a user with Cloud Run Developer on the job. Read the result in Cloud Logging: event onboardai_docs_reconcile."
+  value       = "gcloud run jobs execute ${google_cloud_run_v2_job.docs_reconcile.name} --project=${var.project_id} --region=${var.region} --wait"
+}
+
+output "docs_reconcile_mode" {
+  description = "Mode of the document reconciliation job: report (reads, changes nothing) or apply (repairs drift). Set in docs_reconcile.tf."
+  value       = local.docs_reconcile_mode
 }
 
 # ---------------------------------------------------------------------------

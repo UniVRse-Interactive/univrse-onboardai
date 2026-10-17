@@ -3,6 +3,7 @@ import Icon from '../portal/Icon';
 import AvatarDisplay, { AvatarOffice } from './AvatarDisplay';
 import AutomaticPresentation from './AutomaticPresentation';
 import { answerPresentation } from './answer-presentation.mjs';
+import OnboardingChecklist from './OnboardingChecklist';
 export default function AlyaPresentationStage({
   messages,
   selectedAnswerId,
@@ -17,6 +18,9 @@ export default function AlyaPresentationStage({
   onReplay,
   // A briefing read without voice: { answerId, label, busy, onConfirm } | null.
   finishReading = null,
+  // The onboarding checklist beside Alya while no answer is being presented.
+  checklist = null,
+  navigate = null,
 }) {
   const [systemMotion, setSystemMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -98,22 +102,28 @@ export default function AlyaPresentationStage({
           finishReading={finishReading?.answerId === selected.id ? finishReading : null}
         />
       ) : (
-        <div className="ap-welcome" role="status">
-          <span className="ap-welcome-rule" />
-          <h2>
-            {thinking
-              ? 'Let’s make it clearer.'
-              : latest?.error
-                ? 'Let’s try that again.'
-                : 'A clearer start.\nAt your own pace.'}
-          </h2>
-          <p>
-            {thinking
-              ? 'Alya is finding your answer. Your visual explanation will appear here.'
-              : latest?.error
-                ? 'Your conversation is still here. Retry the question in chat.'
-                : 'Ask a question in chat. Alya will talk you through the answer, with a visual guide right beside her.'}
-          </p>
+        <div className="ap-idle-column">
+          <div className="ap-welcome" role="status">
+            <span className="ap-welcome-rule" />
+            <h2>
+              {thinking
+                ? 'Let’s make it clearer.'
+                : latest?.error
+                  ? 'Let’s try that again.'
+                  : 'A clearer start.\nAt your own pace.'}
+            </h2>
+            <p>
+              {thinking
+                ? 'Alya is finding your answer. Your visual explanation will appear here.'
+                : latest?.error
+                  ? 'Your conversation is still here. Retry the question in chat.'
+                  : 'Ask a question in chat. Alya will talk you through the answer, with a visual guide right beside her.'}
+            </p>
+          </div>
+
+          {checklist && navigate && (
+            <OnboardingChecklist checklist={checklist} navigate={navigate} />
+          )}
         </div>
       )}
       <div className="ap-stage-caption">

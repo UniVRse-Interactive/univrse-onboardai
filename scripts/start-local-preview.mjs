@@ -1,0 +1,118 @@
+import express from 'express';
+import { createServer } from 'node:http';
+import { pathToFileURL } from 'node:url';
+import { assertLocalPreview, localPreviewRequest } from './local-preview-guard.mjs';
+
+// Reuse the repository's isolated API test fixtures: real account routes and
+// migrations, pg-mem and fake Firestore. No .env, disk database or cloud client.
+// These dependencies are excluded from the production Docker image.
+export async function startLocalPreview({ env = process.env, port = 3000 } = {}) {
+  assertLocalPreview(env);
+  const { startAccountsApp, syntheticProfile } =
+    await import('../tests/server/account-harness.mjs');
+  const { avatarRoute } = await import('../server/avatar-route.mjs');
+  const { createServer: createViteServer } = await import('vite');
+  const { createMemorySubmissionFiles } = await import('../server/submission-files.mjs');
+  const fixture = await startAccountsApp({
+    mode: 'gemini-chat',
+    submissionFiles: createMemorySubmissionFiles(),
+  });
+  const hr = await fixture.hrBrowser();
+  const { browser: employee } = await fixture.readyEmployee(hr, {
+    profile: syntheticProfile('Local Preview Employee', 'Product & Engineering'),
+  });
+  const { seedPreviewSubmissions } = await import('./seed-preview-submissions.mjs');
+  await seedPreviewSubmissions(fixture, hr, employee);
+  const app = express();
+  app.use((req, res, next) => {
+    if (!localPreviewRequest(req)) return res.status(403).send('Local preview only.');
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
+  app.use('/api', async (req, res, next) => {
+    // Full-page preview links select the role independently for each tab.
+    const path = req.headers.referer ? new URL(req.headers.referer).pathname : '/dashboard';
+    const browser = path === '/hr' ? hr : employee;
+    // Preview sessions are fixed; never invalidate them through login controls.
+    if (req.path.startsWith('/auth/') && req.method !== 'GET')
+      return res
+        .status(409)
+        .json({ error: 'Local preview uses temporary accounts. Use npm run dev to test sign-in.' });
+    try {
+      const headers = { cookie: browser.cookieHeader };
+      for (const key of ['content-type', 'x-file-name', 'x-onboarding-area'])
+        if (req.headers[key]) headers[key] = req.headers[key];
+      const response = await fetch(fixture.url + req.originalUrl, {
+        method: req.method,
+        headers,
+        ...(req.method !== 'GET' && req.method !== 'HEAD' ? { body: req, duplex: 'half' } : {}),
+      });
+      res.status(response.status);
+      for (const name of [
+        'content-type',
+        'content-disposition',
+        'content-security-policy',
+        'x-content-type-options',
+      ])
+        if (response.headers.has(name)) res.set(name, response.headers.get(name));
+      res.send(Buffer.from(await response.arrayBuffer()));
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.get('/avatars/alya/alya.glb', avatarRoute('public'));
+  const server = createServer(app);
+  const vite = await createViteServer({
+    configFile: false,
+    mode: 'development',
+    optimizeDeps: { entries: ['index.html'], noDiscovery: port === 0 },
+    server: {
+      middlewareMode: true,
+      hmr: { server },
+      watch: { ignored: ['**/.cache/**', '**/agent-platform/**'] },
+    },
+    appType: 'spa',
+    plugins: [
+      {
+        name: 'local-preview-banner',
+        transformIndexHtml(html) {
+          return html.replace(
+            '</body>',
+            `<nav aria-label="Local development preview" style="position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#fff4ce;color:#241f10;padding:8px;text-align:center;font:13px sans-serif">Local preview · sample data · resets on restart &nbsp; <a href="/dashboard">Employee</a> · <a href="/hr">HR</a> · <a href="/alya">Alya</a> · <a href="/profile">Profile</a></nav></body>`,
+          );
+        },
+      },
+    ],
+  });
+  app.use(vite.middlewares);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', resolve);
+  });
+  return {
+    url: `http://localhost:${server.address().port}`,
+    close: async () => {
+      await vite.close();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      await fixture.close();
+      await fixture.database.pool.end();
+    },
+  };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const preview = await startLocalPreview();
+  console.log(
+    `Local development preview: ${preview.url} (temporary sample accounts; no real databases)`,
+  );
+  let closing = false;
+  const close = async () => {
+    if (closing) return;
+    closing = true;
+    await preview.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', close);
+  process.on('SIGTERM', close);
+}

@@ -19,6 +19,23 @@ npm.cmd run dev
 
 Open [the website](http://localhost:3000/) or [Alya's chat](http://localhost:3000/alya).
 
+### Local UI preview without sign-in
+
+Run `npm run dev:preview` and open http://localhost:3000/dashboard or
+http://localhost:3000/hr. The bottom preview bar switches between employee, HR,
+and Alya pages without login. Stop any other server on port 3000 first.
+
+This separate development server uses the existing API test fixtures with
+temporary in-memory accounts and sample data. It does not load `.env`, connect
+to real databases, or call Google services. Changes disappear on restart.
+AI answers are synthetic test responses; cloud AI, uploads to cloud storage,
+and real authentication are not exercised. Use `npm run dev` for normal login
+testing with configured local databases.
+
+The preview binds only to `127.0.0.1`, rejects remote hosts, cross-origin and
+forwarded requests, and refuses production mode or Cloud Run. The production
+entry points never import it; its test fixtures are excluded from Docker images.
+
 ### One command in Docker
 
 `npm run local` starts everything in Docker (PostgreSQL, the Firestore emulator, the API, the voice service, the onboarding checklist agent and the website), creates the tables and a local HR account, and prints the website address, the HR ID and password, and the Emulator UI address. It starts Docker Desktop on macOS if needed. `npm run local:reset-hr` sets a new HR password, `npm run local:down` stops the app containers, the checklist agent included (the databases keep running) and `npm run local:logs` follows their logs. See [Account access](docs/account-access.md#local-setup-in-docker-one-command).
@@ -90,6 +107,10 @@ Every app page needs a signed-in account; a signed-out visitor is sent to `/logi
 
 Inside UniVRse, Launchpad and the handbook page have already been removed. Their old addresses lead to Alya. Suggested checklist items and support roles are editable templates, not verified company instructions.
 
+## Employee document submissions
+
+Employees upload within the Documentation section of `/dashboard`; HR uses `/hr#submissions`. See [document submission setup and review notes](docs/document-submissions.md) for the private storage configuration, local preview behavior, and file list.
+
 ## Understand and edit the code
 
 Start with the [file guide](docs/file-guide.md). The project uses JavaScript, React and CSS. File names describe their purpose; conventional entry points such as `src/main.jsx` and `server/index.mjs` are retained.
@@ -116,6 +137,7 @@ The ALYA avatar is kept as lossless gzip. Its transfer is about 21 MiB (a 27.7 M
 | `npm.cmd run format:check`           | Check formatting without changing files                                                                       |
 | `npm.cmd run check:share`            | Check the current Git file list for private files, recognised secrets and large assets                        |
 | `npm.cmd run check:search`           | Run one Vertex AI Search query and list the matching files; Google usage billing applies                      |
+| `npm.cmd run docs:reconcile`         | Report drift between Firestore, the documents bucket and Vertex AI Search (read only; see below)              |
 | `npm.cmd run check:gemini`           | Make one small Gemini request to check model access; Google usage limits and billing apply                    |
 | `npm.cmd run check:voice`            | Synthesise and transcribe 120 Gemini voice clips; fail if any has words not in its sentence (billing applies) |
 | `npm.cmd run voice:prepare`          | Download the voice model and generate a local sample                                                          |
@@ -142,7 +164,19 @@ Successful chats are saved locally in SQLite, or in Firestore when `FIRESTORE_DA
 
 ## Company documents
 
-Signed-in HR uploads PDF, DOCX, TXT or Markdown company documents on the HR page (5 MB each, forty documents). Firestore keeps only their metadata; with `DOCS_BUCKET` and `VERTEX_SEARCH_DATA_STORE_ID` set, each file goes to the documents bucket and is imported into Vertex AI Search, and a delete removes it from both. Alya answers from Vertex AI Search only when `VERTEX_SEARCH_ENGINE_ID` is set (or from the built-in sample guide without it), never from Firestore. See [Company Documentation](docs/account-access.md#company-documentation). Gemini uses Vertex AI with Application Default Credentials and the configured project's quota; relevant passages are sent to Google. There is no model selector in the website.
+Signed-in HR uploads PDF, DOCX, TXT or Markdown company documents on the HR page (5 MB each, forty documents). Firestore keeps only their metadata; with `DOCS_BUCKET` and `VERTEX_SEARCH_DATA_STORE_ID` set, each file goes to the documents bucket and is imported into Vertex AI Search, a replace (a new version of a document) swaps it, and a delete removes it from both. Alya answers from Vertex AI Search only when `VERTEX_SEARCH_ENGINE_ID` is set (or from the built-in sample guide without it), never from Firestore, and only from documents HR currently lists: Firestore's metadata decides which search results she may use, so a deleted or replaced document leaves chat within 30 seconds even if a copy is still indexed (`DOCS_BUCKET` is then required). When the documents on a question are out of date she says so and offers Ask HR instead of answering. See [Company Documentation](docs/account-access.md#company-documentation). Gemini uses Vertex AI with Application Default Credentials and the configured project's quota; relevant passages are sent to Google. There is no model selector in the website.
+
+## Document reconciliation
+
+Firestore, the documents bucket and the Vertex AI Search data store are written one after another, so a failure can leave a file in the bucket or in search that HR no longer lists (chat ignores it, but it stays billed and indexed). `npm run docs:reconcile` compares the three and prints one JSON line per difference and one summary line. By default it only reads; `--apply` deletes orphaned search documents and bucket files and re-imports missing ones, with safety stops (`--max-deletes`, an empty-library guard) and an environment guard. It never writes Firestore and never touches files outside HR's document folders (such as production's `onboarding/` PDFs). Use your own Application Default Credentials and name the environment explicitly; it does not read `.env`:
+
+```bash
+ONBOARDAI_ENVIRONMENT=staging GOOGLE_CLOUD_PROJECT=<project> FIRESTORE_DATABASE_ID=onboardai-staging \
+  DOCS_BUCKET=<project>-onboardai-docs-staging VERTEX_SEARCH_DATA_STORE_ID=onboardai-docs-staging \
+  npm run docs:reconcile
+```
+
+Exit codes: 0 completed, 1 an apply action failed, 2 usage or configuration error, 3 safety stop, 4 a source could not be read. Flags, item kinds and log lines are in [Document reconciliation](docs/document-reconciliation.md).
 
 ## GitHub and hosting later
 

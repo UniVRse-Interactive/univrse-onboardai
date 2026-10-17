@@ -1,4 +1,5 @@
 import express from 'express';
+import { mountDocumentSubmissionRoutes } from './document-submission-routes.mjs';
 import { ChatError } from './chat-errors.mjs';
 import { accountErrors, autofillErrors } from './account-errors.mjs';
 import { companyKnowledgeRequestErrors } from './company-knowledge.mjs';
@@ -72,6 +73,7 @@ export function mountAccountRoutes(
     chatMemory = null,
     companyKnowledge = null,
     journey = null,
+    submissions = null,
   },
 ) {
   const setSession = (req, res, result) =>
@@ -175,6 +177,8 @@ export function mountAccountRoutes(
   });
   // Deletes the employee's Firestore data, then the account. Safe to retry.
   employees.delete('/employees/:id', hr, async (req, res) => {
+    await accounts.getEmployee(req.params.id);
+    await submissions?.eraseEmployee(req.params.id);
     await accounts.deleteEmployee(req.accountSession, req.params.id, {
       eraseChats: (owner) => chatMemory().eraseOwner(owner),
       // The checklist agent's sessions (#51); never fails the deletion.
@@ -206,6 +210,8 @@ export function mountAccountRoutes(
   });
   // A raw file body (application/octet-stream, X-File-Name), read into text
   // with the shared upload reader. Only the text and metadata are stored.
+  // With ?replaces=<document id> the file replaces that document (one
+  // company_document_replaced audit row, ids only); without it the upload adds.
   const rawFile = express.raw({ type: 'application/octet-stream', limit: workspaceLimits.bytes });
   employees.post(
     '/company-knowledge/documents',
@@ -232,13 +238,19 @@ export function mountAccountRoutes(
       }
       const file = await readUploadedDocument(name, req.body);
       if (req.aborted || res.destroyed) return;
-      const added = await companyKnowledge.add(
-        req.accountSession.account.id,
-        req.knowledgeTopic,
-        { ...file, content: req.body },
-        new Date(),
-      );
-      if (!res.destroyed) res.status(added.duplicate ? 200 : 201).json(added);
+      const actorId = req.accountSession.account.id;
+      const upload = { ...file, content: req.body };
+      const result = req.knowledgeTopic.replaces
+        ? await companyKnowledge.replace(
+            actorId,
+            req.knowledgeTopic,
+            upload,
+            new Date(),
+            (detail, during) =>
+              accounts.recordEvent(req.accountSession, 'company_document_replaced', detail, during),
+          )
+        : await companyKnowledge.add(actorId, req.knowledgeTopic, upload, new Date());
+      if (!res.destroyed) res.status(result.duplicate ? 200 : 201).json(result);
     },
   );
   // { category } -> { document }: moves a document to another area or to
@@ -267,6 +279,13 @@ export function mountAccountRoutes(
       actions: journey.actions ?? null,
     });
 
+  mountDocumentSubmissionRoutes({
+    me,
+    hr: employees,
+    employeeOnly: employee,
+    hrOnly: hr,
+    submissions,
+  });
   for (const [path, router] of [
     ['/api/auth', auth],
     ['/api/me', me],
