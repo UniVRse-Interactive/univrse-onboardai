@@ -1,13 +1,25 @@
-// npm run docs:import -- <local-folder> [--apply] [--full] [--prefix handbook/]
+// npm run docs:import -- <local-folder> --prefix handbook/ [--apply]
 //   [--project ID] [--bucket NAME] [--data-store ID]
-// Uploads a folder of company documents to the Cloud Storage documents bucket with
-// `gcloud storage rsync`, then imports them into the Vertex AI Search data store through
-// the Discovery Engine REST API. Without --apply it only prints what it would do.
+// Local, operator-only: uploads a folder of company documents to a named folder of the
+// Cloud Storage documents bucket with `gcloud storage rsync`, then imports that folder into
+// the Vertex AI Search data store through the Discovery Engine REST API (INCREMENTAL only).
+// Without --apply it only prints what it would do. HR's own documents live in <uuid>/
+// folders that the app manages: this tool refuses the bucket root, any <uuid>/ folder and
+// FULL reconciliation, so it can never re-import or remove them.
 import { execFile } from 'node:child_process';
 import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import {
+  SUPPORTED_EXTENSIONS,
+  companyDocumentIdPattern,
+  discoveryEngineOperationUrl,
+  extensionOf,
+  importUrl,
+} from '../server/discovery-engine-documents.mjs';
+
+export { SUPPORTED_EXTENSIONS, extensionOf, importUrl };
 
 const run = promisify(execFile);
 
@@ -16,28 +28,30 @@ export const DEFAULTS = {
   bucket: 'project-65a9b676-abdb-4393-bc1-onboardai-docs',
   dataStore: 'onboardai-docs',
 };
-const API = 'https://discoveryengine.googleapis.com/v1';
 const COLLECTION = 'default_collection';
 const BRANCH = 'default_branch';
-export const SUPPORTED_EXTENSIONS = ['pdf', 'docx', 'pptx', 'xlsx', 'html', 'htm', 'txt'];
 const POLL_INTERVAL_MS = 5000;
 const POLL_LIMIT_MS = 30 * 60 * 1000;
 
-export const USAGE = `Usage: npm run docs:import -- <local-folder> [options]
+export const USAGE = `Usage: npm run docs:import -- <local-folder> --prefix <folder/> [options]
 
-Uploads the folder to the Cloud Storage documents bucket (gcloud storage rsync, never
-deleting bucket objects) and imports it into the Vertex AI Search data store.
-Without --apply nothing is changed: the plan and the commands are printed.
+Local, operator-only. Uploads the folder into one named folder of the Cloud Storage
+documents bucket (gcloud storage rsync, never deleting bucket objects) and imports that
+folder into the Vertex AI Search data store (INCREMENTAL). Without --apply nothing is
+changed: the plan and the commands are printed. HR uploads documents on the Company
+Documentation page instead; those live in <document id>/ folders this tool never touches.
 
 Options:
+  --prefix <folder/>   Required. The bucket folder to upload into and import from. Never the
+                       bucket root and never a <document id>/ (UUID) folder.
   --apply              Run the upload and the import (default: dry run)
-  --full               Import with reconciliationMode FULL: indexed documents that are no
-                       longer in the bucket are removed. Default is INCREMENTAL.
-  --prefix <folder/>   Bucket folder to upload into and import from (default: bucket root)
   --project <id>       Default ${DEFAULTS.project} (env GOOGLE_CLOUD_PROJECT)
   --bucket <name>      Default ${DEFAULTS.bucket} (env DOCS_BUCKET)
   --data-store <id>    Default ${DEFAULTS.dataStore} (env VERTEX_SEARCH_DATA_STORE_ID)
   --help               Show this text
+
+The data store's location is VERTEX_SEARCH_LOCATION (default global). --full (FULL
+reconciliation) is refused: it would remove every indexed document outside the folder.
 
 Supported types: ${SUPPORTED_EXTENSIONS.join(', ')}. Hidden files are skipped.`;
 
@@ -46,18 +60,33 @@ export class UsageError extends Error {}
 const PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 const BUCKET = /^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$/;
 const DATA_STORE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+const LOCATION = /^[a-z0-9-]+$/;
 const PREFIX = /^([A-Za-z0-9_-][A-Za-z0-9._-]*\/)+$/;
+// The HR namespace: the first folder is a document ID (any letter case).
+const UUID_FOLDER = new RegExp(companyDocumentIdPattern.source, 'i');
 
+// A bucket folder ("handbook" -> "handbook/"). The bucket root (an empty
+// prefix) and the app's <document id>/ folders are refused (D-2): an import
+// there would re-index HR's documents, orphans included.
 export function normalizePrefix(value) {
   let prefix = String(value ?? '').trim();
-  if (!prefix) return '';
   prefix = prefix.replace(/^\/+/, '');
-  if (prefix && !prefix.endsWith('/')) prefix += '/';
+  if (!prefix)
+    throw new UsageError(
+      '--prefix is required: name the bucket folder to import, e.g. --prefix handbook/. ' +
+        'The bucket root holds the HR documents the app manages and is never imported.',
+    );
+  if (!prefix.endsWith('/')) prefix += '/';
   if (!PREFIX.test(prefix) || prefix.split('/').some((part) => part === '..')) {
     throw new UsageError(
       `Invalid --prefix "${value}": use folder names of letters, digits, ".", "_" and "-", e.g. handbook/`,
     );
   }
+  if (UUID_FOLDER.test(prefix.split('/')[0]))
+    throw new UsageError(
+      `Invalid --prefix "${value}": <document id>/ folders belong to the HR documents the app ` +
+        'manages. Upload or replace those on the Company Documentation page.',
+    );
   return prefix;
 }
 
@@ -65,12 +94,12 @@ export function parseArgs(argv, env = {}) {
   const options = {
     folder: null,
     apply: false,
-    full: false,
     help: false,
     prefix: '',
     project: env.GOOGLE_CLOUD_PROJECT || DEFAULTS.project,
     bucket: env.DOCS_BUCKET || DEFAULTS.bucket,
     dataStore: env.VERTEX_SEARCH_DATA_STORE_ID || DEFAULTS.dataStore,
+    location: String(env.VERTEX_SEARCH_LOCATION || '').trim() || 'global',
   };
   const values = {
     '--prefix': 'prefix',
@@ -82,7 +111,11 @@ export function parseArgs(argv, env = {}) {
     const arg = argv[i];
     const [flag, inline] = arg.startsWith('--') ? arg.split(/=(.*)/s, 2) : [arg];
     if (flag === '--apply') options.apply = true;
-    else if (flag === '--full') options.full = true;
+    else if (flag === '--full')
+      throw new UsageError(
+        '--full is not supported: a FULL import removes every indexed document outside the ' +
+          'imported folder, including the HR documents the app manages.',
+      );
     else if (flag === '--help' || arg === '-h') options.help = true;
     else if (values[flag]) {
       const value = inline ?? argv[++i];
@@ -101,11 +134,12 @@ export function parseArgs(argv, env = {}) {
   if (!DATA_STORE.test(options.dataStore)) {
     throw new UsageError(`Invalid data store ID "${options.dataStore}"`);
   }
+  if (!LOCATION.test(options.location))
+    throw new UsageError(`Invalid VERTEX_SEARCH_LOCATION "${options.location}"`);
   options.prefix = normalizePrefix(options.prefix);
   return options;
 }
 
-export const extensionOf = (name) => path.extname(name).slice(1).toLowerCase();
 export const isHidden = (relativePath) =>
   relativePath.split(/[\\/]/).some((part) => part.startsWith('.'));
 
@@ -155,24 +189,22 @@ export function rsyncArgs(options) {
   ];
 }
 
-export const importUrl = ({ project, dataStore }) =>
-  `${API}/projects/${project}/locations/global/collections/${COLLECTION}/dataStores/${dataStore}` +
-  `/branches/${BRANCH}/documents:import`;
+// Always INCREMENTAL, and always one named folder (normalizePrefix refuses the
+// root and the <document id>/ folders).
+export const importBody = (options) => {
+  if (!options.prefix) throw new UsageError('--prefix is required');
+  return {
+    gcsSource: { inputUris: [`${bucketUri(options)}**`], dataSchema: 'content' },
+    reconciliationMode: 'INCREMENTAL',
+  };
+};
 
-export const importBody = (options) => ({
-  gcsSource: { inputUris: [`${bucketUri(options)}**`], dataSchema: 'content' },
-  reconciliationMode: options.full ? 'FULL' : 'INCREMENTAL',
-});
-
-export const operationUrl = (name) => `${API}/${String(name).replace(/^\/+/, '')}`;
+export const operationUrl = (name, location = 'global') =>
+  discoveryEngineOperationUrl(location, name);
 
 export const publicExposureWarning =
   'The web and api services are public until IAP (#10) is in place, so indexed documents ' +
   'can be quoted to anyone who uses the chat. Upload only documents that are approved to share.';
-
-export const fullWarning =
-  'WARNING: --full uses reconciliationMode FULL. Indexed documents that are no longer in the ' +
-  'bucket (under this import path) are REMOVED from the data store.';
 
 export function buildPlan(options, classified) {
   const lines = [
@@ -181,15 +213,14 @@ export function buildPlan(options, classified) {
   lines.push(
     `Project:    ${options.project}`,
     `Bucket:     ${bucketUri(options)}`,
-    `Data store: ${options.dataStore} (global, ${COLLECTION}, ${BRANCH})`,
-    `Mode:       ${options.full ? 'FULL' : 'INCREMENTAL'}`,
+    `Data store: ${options.dataStore} (${options.location}, ${COLLECTION}, ${BRANCH})`,
+    'Mode:       INCREMENTAL',
     '',
     `Files to upload (${classified.files.length}):`,
     ...classified.files.map((file) => `  ${file}`),
   );
   if (classified.hidden.length) lines.push(`Skipped hidden files: ${classified.hidden.join(', ')}`);
   lines.push(...classified.warnings);
-  if (options.full) lines.push('', fullWarning);
   lines.push(
     '',
     'Step 1, upload (never deletes bucket objects):',
@@ -200,7 +231,7 @@ export function buildPlan(options, classified) {
     `  x-goog-user-project: ${options.project}`,
     `  ${JSON.stringify(importBody(options))}`,
     'Step 3, poll until done:',
-    '  GET https://discoveryengine.googleapis.com/v1/<operation name>',
+    `  GET ${operationUrl('<operation name>', options.location)}`,
   );
   if (options.apply) lines.push('', publicExposureWarning);
   return lines.join('\n');
@@ -279,7 +310,7 @@ async function importDocuments(options) {
     if (Date.now() > deadline)
       throw new Error(`Import still running after 30 minutes: ${started.name}`);
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    operation = await authedFetch(operationUrl(started.name), options);
+    operation = await authedFetch(operationUrl(started.name, options.location), options);
   }
   return summarizeOperation(operation);
 }

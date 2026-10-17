@@ -100,7 +100,7 @@ This makes one small structured-output Gemini request. It reports model/access s
 
 ## Company documents: Vertex AI Search
 
-Company passages come from Vertex AI Search (Discovery Engine). The team uploads files to the documents bucket and imports them into the `onboardai-docs` data store. Import is a separate step, not part of the deploy: see "Loading company documents" below. The data store uses the layout parser and layout-based chunks of 500 tokens, with ancestor headings included. The API only queries the search engine; it has no access to the bucket. Its runtime service account holds `roles/discoveryengine.viewer` on its own engine only (`onboardai-search` in production, `onboardai-search-staging` in staging), not on the project.
+Company passages come from Vertex AI Search (Discovery Engine). HR uploads files on the Company Documentation page; with `DOCS_BUCKET` and `VERTEX_SEARCH_DATA_STORE_ID` set, the API writes each one to the documents bucket and imports it into the data store (`onboardai-docs`, staging `onboardai-docs-staging`), and removes it from both on a delete or a replace (see [Account access](account-access.md#company-documentation)). The data store uses the layout parser and layout-based chunks of 500 tokens, with ancestor headings included. The API's runtime service account searches through `roles/discoveryengine.viewer` on its own engine (`onboardai-search` in production, `onboardai-search-staging` in staging), writes and deletes objects through `roles/storage.objectUser` on its own documents bucket, and imports and deletes documents through `roles/discoveryengine.editor` on the project. That project role has no condition, so it also reaches the other environment's data store (both stacks share one project); the infrastructure review tracks it.
 
 | Setting                   | Meaning                                                                                                                                       |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -141,22 +141,23 @@ To search the real engine locally, set the three settings and sign in with Appli
 
 ### Loading company documents
 
-`npm run docs:import` uploads a local folder to the documents bucket with `gcloud storage rsync` and then imports it into the `onboardai-docs` data store through the Discovery Engine REST API. It needs the gcloud CLI signed in (`gcloud auth login`). It never deletes objects in the bucket.
+HR's documents are uploaded on the Company Documentation page, not with a script. `npm run docs:import` is a local, operator-only tool for anything else: it uploads a local folder into one named folder of the documents bucket with `gcloud storage rsync` and then imports that folder into the data store through the Discovery Engine REST API. It needs the gcloud CLI signed in (`gcloud auth login`). It never deletes objects in the bucket.
 
 ```bash
 # Dry run (default): lists the files and the exact commands, changes nothing
-npm run docs:import -- ./company-docs
+npm run docs:import -- ./company-docs --prefix handbook/
 
 # Upload and import
-npm run docs:import -- ./company-docs --apply
+npm run docs:import -- ./company-docs --prefix handbook/ --apply
 
-# Options: --prefix handbook/  --full  --project ID  --bucket NAME  --data-store ID
+# Options: --project ID  --bucket NAME  --data-store ID
 ```
 
+- **`--prefix` is required.** The bucket root and any `<document id>/` folder (a UUID as the first folder, any letter case) are refused with a usage error and exit code 2: HR's documents live there, and importing them again would bring back documents HR deleted.
+- **Always INCREMENTAL:** adds new documents and updates changed ones; nothing is removed. `--full` (FULL reconciliation) is refused with a usage error, because it removes every indexed document outside the imported folder.
 - **Supported types:** pdf, docx, pptx, xlsx, html, htm, txt. Other types are uploaded with a warning and may not be indexed. Hidden files (names starting with `.`) are skipped.
-- **INCREMENTAL (default):** adds new documents and updates changed ones. Nothing is removed.
-- **`--full`:** FULL reconciliation. Indexed documents that are no longer in the bucket under the import path are removed from the data store. The tool prints a warning when it is used.
-- **Defaults** can be overridden with flags or with `GOOGLE_CLOUD_PROJECT`, `DOCS_BUCKET` and `VERTEX_SEARCH_DATA_STORE_ID`. Names are validated before any command runs.
+- **Defaults** can be overridden with flags or with `GOOGLE_CLOUD_PROJECT`, `DOCS_BUCKET`, `VERTEX_SEARCH_DATA_STORE_ID` and `VERTEX_SEARCH_LOCATION` (default `global`). Names are validated before any command runs.
+- **Files imported this way have no Firestore entry.** [Document reconciliation](document-reconciliation.md) lists them as `unmanaged` and never touches them; HR cannot see, replace or remove them.
 - **Permissions:** `storage.objects.create` on the bucket and `discoveryengine.documents.import` on the data store. Project Owner has both.
 - **Apply mode** polls the import operation until it finishes, prints the success and failure counts and any error samples, and exits non-zero on failure. New documents can take a few minutes to appear in search.
 - **Public exposure:** the web service is public until IAP (#10) is in place, so indexed documents can be quoted to anyone who uses the chat on the website. The api and tts services are private (#57): only their callers may invoke them (web's service account for the api, the api's for tts, on staging also the intake agent's for the api's `/mcp`) plus the deployer, see [Private api and tts](cloud-run-services.md#private-api-and-tts). Upload only approved documents.
