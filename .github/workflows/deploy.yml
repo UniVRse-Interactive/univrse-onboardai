@@ -291,8 +291,9 @@ jobs:
   # hands its resource name to the deploy job (CHECKLIST_AGENT_ENGINE). Same
   # shape as the intake agent job above, in the same Agent Engine region
   # (INTAKE_AGENT_LOCATION). It deploys on staging, and on production only
-  # when the repository variable CHECKLIST_AGENT_ENABLED is true (set it after
-  # staging is verified and var.checklist_agent_production is applied), and
+  # when the repository variable CHECKLIST_AGENT_ENABLED is true (set it on the
+  # production environment after var.checklist_agent_production, true by
+  # default since #81, is applied), and
   # only when the commit has the deploy command (package.json script
   # checklist-agent:deploy). Otherwise every step after the decision is
   # skipped with a notice, the job succeeds with deployed=false and no engine,

@@ -25,6 +25,14 @@ override_data {
 }
 
 override_resource {
+  target = google_service_account.checklist_agent[0]
+  values = {
+    email = "onboardai-checklist@onboardai-test-123.iam.gserviceaccount.com"
+    name  = "projects/onboardai-test-123/serviceAccounts/onboardai-checklist@onboardai-test-123.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
   target = google_service_account.deployer
   values = {
     email = "onboardai-deployer@onboardai-test-123.iam.gserviceaccount.com"
@@ -294,12 +302,11 @@ run "production_has_no_intake_agent" {
       length(google_secret_manager_secret.intake_mcp_token) == 0 &&
       length(google_secret_manager_secret_version.intake_mcp_token) == 0 &&
       length(google_secret_manager_secret_iam_member.intake_mcp_token) == 0 &&
-      length(google_project_iam_member.deployer_deploys_agents) == 0 &&
       length(google_service_account_iam_member.deployer_acts_as_intake_agent) == 0 &&
       length(google_firestore_field.employee_imports_ttl) == 0 &&
       length(google_cloud_run_v2_service_iam_member.intake_agent_invokes_api) == 0
     )
-    error_message = "Production gets none of the intake agent's resources (runtime account, Gemini role, MCP token, deployer Agent Engine roles, draft-import TTL, api invoker)."
+    error_message = "Production gets none of the intake agent's resources (runtime account, Gemini role, MCP token, act-as grant, draft-import TTL, api invoker)."
   }
 
   assert {

@@ -19,6 +19,14 @@ override_module {
 # Well-formed stand-ins for the apply run below: the provider validates service
 # account names, and the config job checks the deployer's email.
 override_resource {
+  target = google_service_account.checklist_agent[0]
+  values = {
+    email = "onboardai-checklist@onboardai-test-123.iam.gserviceaccount.com"
+    name  = "projects/onboardai-test-123/serviceAccounts/onboardai-checklist@onboardai-test-123.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
   target = google_service_account.deployer
   values = {
     email = "onboardai-deployer@onboardai-test-123.iam.gserviceaccount.com"

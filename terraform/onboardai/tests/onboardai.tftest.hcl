@@ -32,6 +32,14 @@ override_data {
 # Distinct, well-formed stand-ins (the provider validates service account IDs),
 # so a grant that points at the wrong account fails the assertions below.
 override_resource {
+  target = google_service_account.checklist_agent[0]
+  values = {
+    email = "onboardai-checklist@onboardai-test-123.iam.gserviceaccount.com"
+    name  = "projects/onboardai-test-123/serviceAccounts/onboardai-checklist@onboardai-test-123.iam.gserviceaccount.com"
+  }
+}
+
+override_resource {
   target = google_service_account.deployer
   values = {
     email = "onboardai-deployer@onboardai-test-123.iam.gserviceaccount.com"
@@ -160,16 +168,17 @@ run "deployer_holds_only_resource_level_roles" {
     error_message = "Basic roles, Cloud Run Admin, token-creator and admin roles must not appear in this module."
   }
 
-  # The only deployer role on the project is staging's Agent Engine deploy
-  # role (intake_agent.tf, #30), which production does not have.
+  # The only deployer role on the project is the Agent Engine deploy role
+  # (intake_agent.tf, #30; #81), which production has for the checklist agent.
   assert {
     condition = (
       alltrue([for f in fileset(path.module, "*.tf") : !can(regex("google_project_iam_(binding|policy)", file("${path.module}/${f}")))]) &&
       sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"deployer", file("${path.module}/${f}")))]) == 1 &&
       sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"deployer_deploys_agents\"", file("${path.module}/${f}")))]) == 1 &&
-      length(google_project_iam_member.deployer_deploys_agents) == 0
+      length(google_project_iam_member.deployer_deploys_agents) == 1 &&
+      google_project_iam_member.deployer_deploys_agents[0].role == "roles/aiplatform.user"
     )
-    error_message = "The production deployer holds no project-level role; the only deployer project binding in the module is staging's deployer_deploys_agents."
+    error_message = "The production deployer holds one project-level role, roles/aiplatform.user for the checklist agent (#81); the only deployer project binding in the module is deployer_deploys_agents."
   }
 
   assert {
@@ -257,8 +266,8 @@ run "api_runtime_holds_exactly_three_project_roles" {
   # Exactly four project-level IAM resource blocks of any flavour: the
   # api's roles (above), staging's intake agent runtime and Agent Engine
   # deploy roles (intake_agent.tf, #30), and the checklist agent's runtime
-  # roles (checklist_agent.tf, #51), which have no instance in production
-  # unless var.checklist_agent_production is set.
+  # roles (checklist_agent.tf, #51), which have instances in production
+  # unless var.checklist_agent_production is set to false (#81).
   assert {
     condition = (
       sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_", file("${path.module}/${f}")))]) == 4 &&
@@ -267,10 +276,10 @@ run "api_runtime_holds_exactly_three_project_roles" {
         sum([for f in fileset(path.module, "*.tf") : length(regexall("resource\\s+\"google_project_iam_member\"\\s+\"${name}\"", file("${path.module}/${f}")))]) == 1
       ]) &&
       length(google_project_iam_member.intake_agent_runtime) == 0 &&
-      length(google_project_iam_member.checklist_agent_runtime) == 0 &&
-      length(google_project_iam_member.deployer_deploys_agents) == 0
+      length(google_project_iam_member.checklist_agent_runtime) == 2 &&
+      length(google_project_iam_member.deployer_deploys_agents) == 1
     )
-    error_message = "The only project-level IAM resources are google_project_iam_member.api_runtime, the checklist agent's checklist_agent_runtime and staging's intake_agent_runtime and deployer_deploys_agents (no binding, policy, audit config or custom role); production has only api_runtime."
+    error_message = "The only project-level IAM resources are google_project_iam_member.api_runtime, checklist_agent_runtime, intake_agent_runtime and deployer_deploys_agents (no binding, policy, audit config or custom role); production has api_runtime, the checklist agent's two roles and the deployer's aiplatform.user, and no intake agent role."
   }
 
   assert {
