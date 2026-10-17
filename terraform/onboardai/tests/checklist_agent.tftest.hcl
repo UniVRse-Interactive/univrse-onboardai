@@ -1,7 +1,7 @@
 # Offline checks of the onboarding checklist agent (#51, F5) and the Gemini
 # voice settings of the api (#52, F6): `terraform test` in terraform/onboardai.
-# Staging always has the agent's runtime account; production only with
-# var.checklist_agent_production. Providers are mocked as in
+# Staging always has the agent's runtime account; production has it unless
+# var.checklist_agent_production is set to false (default true, #81). Providers are mocked as in
 # tests/accounts.tftest.hcl.
 
 mock_provider "google" {}
@@ -23,14 +23,17 @@ override_data {
   }
 }
 
-# --- Production, default: off ------------------------------------------------------
+# --- Production, switched off explicitly ----------------------------------------------
 
-run "production_has_no_checklist_agent_by_default" {
+run "production_has_no_checklist_agent_when_switched_off" {
   command = plan
+
+  variables {
+    checklist_agent_production = false
+  }
 
   assert {
     condition = (
-      var.checklist_agent_production == false &&
       length(google_service_account.checklist_agent) == 0 &&
       length(google_project_iam_member.checklist_agent_runtime) == 0 &&
       length(google_service_account_iam_member.deployer_acts_as_checklist_agent) == 0 &&
@@ -38,17 +41,26 @@ run "production_has_no_checklist_agent_by_default" {
       output.checklist_agent_service_account_email == null &&
       output.checklist_agent_deploy_settings == null
     )
-    error_message = "Production has no checklist agent account, grants or deployer roles until var.checklist_agent_production is true."
+    error_message = "With var.checklist_agent_production = false, production has no checklist agent account, grants or deployer roles."
   }
 }
 
-# --- Production, switched on -------------------------------------------------------
+# --- Production, default: on (#81) -----------------------------------------------------
 
-run "production_checklist_agent_when_enabled" {
+run "production_checklist_agent_by_default" {
   command = plan
 
-  variables {
-    checklist_agent_production = true
+  # Exactly the five resources the production plan adds.
+  assert {
+    condition = (
+      var.checklist_agent_production == true &&
+      length(google_service_account.checklist_agent) == 1 &&
+      length(google_project_iam_member.checklist_agent_runtime) == 2 &&
+      length(google_project_iam_member.deployer_deploys_agents) == 1 &&
+      length(google_service_account_iam_member.deployer_acts_as_checklist_agent) == 1 &&
+      google_project_iam_member.deployer_deploys_agents[0].role == "roles/aiplatform.user"
+    )
+    error_message = "Production has 5 checklist agent resources by default: the account, its two project roles, the deployer's aiplatform.user and its act-as grant."
   }
 
   assert {

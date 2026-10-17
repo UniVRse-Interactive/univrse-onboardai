@@ -3,8 +3,8 @@
 # engine with the backend's `npm run checklist-agent:deploy` (idempotent by
 # display name) and hands its resource name to the api as
 # CHECKLIST_AGENT_ENGINE. Only where local.checklist_agent is true: staging
-# always, production only once var.checklist_agent_production is set (after
-# staging is verified). The deploy workflow skips the agent while the
+# always, production unless var.checklist_agent_production is set to false
+# (default true since #81). The deploy workflow skips the agent while the
 # repository has no checklist-agent:deploy script, or, in production, while
 # the GitHub variable CHECKLIST_AGENT_ENABLED is not true; the api then
 # deploys without CHECKLIST_AGENT_ENGINE.
@@ -16,7 +16,7 @@
 # The api needs no new grant to query the agent (see intake_agent.tf).
 
 locals {
-  # Staging always; production only when the variable says so.
+  # Staging always; production unless the variable is set to false.
   checklist_agent = !local.is_production || var.checklist_agent_production
 
   checklist_agent_account_id   = "onboardai-checklist${local.name_suffix}"

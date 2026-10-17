@@ -129,9 +129,9 @@ variable "intake_mcp_token_version" {
 }
 
 variable "checklist_agent_production" {
-  description = "Creates the onboarding checklist agent's runtime account and grants in production (checklist_agent.tf, #51). Staging always has them. Leave false until staging is verified; also set the GitHub variable CHECKLIST_AGENT_ENABLED=true on production for the deploy workflow to deploy the agent."
+  description = "Creates the onboarding checklist agent's runtime account and grants in production (checklist_agent.tf, #51, #81). Staging always has them. On by default; set false to remove them from production. Also set the GitHub variable CHECKLIST_AGENT_ENABLED=true on production for the deploy workflow to deploy the agent."
   type        = bool
-  default     = false
+  default     = true
 }
 
 # ---------------------------------------------------------------------------
