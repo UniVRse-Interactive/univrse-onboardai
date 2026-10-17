@@ -671,7 +671,11 @@ test('AI proficiency self-assessment: deterministic path mapping, step status sy
   assert.equal(aiStep(viewAfterRating).status, 'done');
   const skipped = buildOnboarding(template, {
     accountId: 'synthetic',
-    aiProficiency: applyAiAssessment(null, validateAiAssessmentInput({ status: 'not_sure' }), '2026-10-17T01:00:00.000Z'),
+    aiProficiency: applyAiAssessment(
+      null,
+      validateAiAssessmentInput({ status: 'not_sure' }),
+      '2026-10-17T01:00:00.000Z',
+    ),
     steps: {},
   });
   assert.equal(aiStep(skipped).status, 'todo');

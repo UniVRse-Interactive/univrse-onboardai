@@ -163,12 +163,16 @@ export function progressEntry(progress, stepId) {
   const entry = stepRecord(progress, stepId);
   if (stepId === AI_READINESS_STEP_ID && isObject(progress?.aiProficiency)) {
     const { aiProficiency } = progress;
-    if (aiProficiency.trainingCompleted !== true && aiProficiency.status !== 'assessed') return null;
+    if (aiProficiency.trainingCompleted !== true && aiProficiency.status !== 'assessed')
+      return null;
     if (entry && entry.status === 'done') return entry;
     return {
       status: 'done',
       updatedAt:
-        aiProficiency.trainingCompletedAt || aiProficiency.assessedAt || aiProficiency.updatedAt || null,
+        aiProficiency.trainingCompletedAt ||
+        aiProficiency.assessedAt ||
+        aiProficiency.updatedAt ||
+        null,
       source: entry?.source || 'employee',
     };
   }
